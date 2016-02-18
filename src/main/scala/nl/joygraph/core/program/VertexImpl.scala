@@ -7,7 +7,7 @@ import scala.collection.mutable
 class VertexImpl[I,V,E,M] extends Vertex[I,V,E,M] {
   private[this] var _id : I = _
   private[this] var _value : V = _
-  private[this] var _edges : Iterable[E] = _
+  private[this] var _edges : Iterable[Edge[I,E]] = _
   private[this] var _messages : mutable.MultiMap[I,M] = _
   private[this] var _allMessages : mutable.Buffer[M] = _
 
@@ -20,7 +20,7 @@ class VertexImpl[I,V,E,M] extends Vertex[I,V,E,M] {
 
   override def value_=(value: V): Unit = _value = value
 
-  override def edges: Iterable[E] = _edges
+  override def edges: Iterable[Edge[I,E]] = _edges
 
   override def value: V = _value
 
@@ -33,7 +33,7 @@ class VertexImpl[I,V,E,M] extends Vertex[I,V,E,M] {
 
   override def load(is: InputStream): Unit = ???
 
-  override def load(id: I, value: V, edges: Iterable[E], messages : mutable.MultiMap[I,M], allMessages : mutable.Buffer[M]) = {
+  override   def load(id: I, value: V, edges: Iterable[Edge[I,E]], messages : mutable.MultiMap[I,M], allMessages : mutable.Buffer[M]) = {
     _id = id
     _value = value
     _edges = edges

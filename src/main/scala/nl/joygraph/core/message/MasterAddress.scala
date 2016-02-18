@@ -1,5 +1,7 @@
 package nl.joygraph.core.message
 
-case class MasterAddress(address : String) {
+import akka.actor.ActorRef
+
+case class MasterAddress(actorRef : ActorRef) {
 
 }

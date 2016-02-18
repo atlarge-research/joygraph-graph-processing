@@ -12,6 +12,7 @@ trait VertexProgram[I,V,E,M] {
 
   /**
     * Load parameters from vertex program
+    *
     * @param conf
     */
   def load(conf : Config)
@@ -20,5 +21,6 @@ trait VertexProgram[I,V,E,M] {
     * @param v
     * @return true if halting, false if not halting
     */
-  def run(v : Vertex[I,V,E,M], superStep : Int) : Boolean
+  def run(v: Vertex[I, V, E, M], messages: Iterable[M], superStep: Int): Boolean
+
 }

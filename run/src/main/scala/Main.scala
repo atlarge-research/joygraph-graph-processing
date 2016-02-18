@@ -1,8 +1,8 @@
 import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
 import com.typesafe.config.ConfigFactory
-import nl.joygraph.core.AppFactoryProvider
-import nl.joygraph.core.actor.{BaseActor, Master}
+import nl.joygraph.core.actor.{BaseActor, Master, Worker}
+import nl.joygraph.core.program.NullClass
 import nl.joygraph.programs.BFS
 
 object Main extends App{
@@ -26,11 +26,17 @@ object Main extends App{
       }
   }"""
 
+  val numWorkers = 4
+
+//  val sourceId = 99843
+//  val dataset = "/home/sietse/amazon0302.e"
+  val dataset = "/home/sietse/cit-Patents-edge.txt"
+  val sourceId = 4949326
   val jobCfg =
-    """
+    s"""
       job {
-        workers.initial = 3
-        data.path = "file:///home/sietse/cit-Patents-edge.txt"
+        workers.initial = $numWorkers
+        data.path = "file://$dataset"
       }
       input.format.class = "EdgeListFormatLong"
       fs.defaultFS = "file:///"
@@ -40,35 +46,37 @@ object Main extends App{
         input.lineProviderClass = "nl.joygraph.impl.hadoop.reader.HadoopLineProvider"
       }
       master.suffix = "master"
+      source_id = $sourceId
     """
 
   val jobConfig = ConfigFactory.parseString(jobCfg)
+  val programClass = classOf[BFS]
 
-//  val appBuilder = AppFactoryProvider.create(classOf[BFS])
-//  appBuilder.initializeTypeTags()
+  val parser : (String) => (Long, Long, NullClass) = (l : String) => {
+//    val Array(a,b) = l.split("\\s")
+//    (a.toLong, b.toLong, NullClass.SINGLETON)
+    val s = l.split("\\s")
+    (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
+  }
 
   val masterFactory = (cluster : Cluster) => {
     Master.create(classOf[nl.joygraph.impl.hadoop.actor.Master], jobConfig, cluster)
   }
 
-  val workerFactory = AppFactoryProvider.workerFactory(
+  val workerFactory = Worker.workerFactory(
     jobConfig,
-    classOf[BFS]
-//    appBuilder.clazzI,
-//    appBuilder.clazzV,
-//    appBuilder.clazzE,
-//    appBuilder.clazzM
+    parser,
+    programClass
   )
 
-  val config = ConfigFactory.parseString(cfg(2552, 2552))
-  val system = ActorSystem("clustertest", config)
-  system.actorOf(Props(classOf[BaseActor], jobConfig, masterFactory, workerFactory))
+  val seedPort = 2552
+  var port = 2552
+  for (i <- 0 until numWorkers) {
+    val config = ConfigFactory.parseString(cfg(port, seedPort))
+    val system = ActorSystem("clustertest", config)
+    system.actorOf(Props(classOf[BaseActor], jobConfig, masterFactory, workerFactory))
+    port += 1
+  }
 
-  val config2 = ConfigFactory.parseString(cfg(2553, 2552))
-  val system2 = ActorSystem("clustertest", config2)
-  system2.actorOf(Props(classOf[BaseActor], jobConfig, masterFactory, workerFactory))
 
-  val config3 = ConfigFactory.parseString(cfg(2554, 2552))
-  val system3 = ActorSystem("clustertest", config3)
-  system3.actorOf(Props(classOf[BaseActor],  jobConfig, masterFactory, workerFactory))
 }
