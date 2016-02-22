@@ -145,10 +145,10 @@ abstract class Master protected(conf : Config, cluster : Cluster) extends Actor 
         FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x ? SuperStepComplete()).mapTo[DoNextStep])) {
           implicit results =>
             log.info("Do next step ?")
-            val doNextStep = results.map(_.yes).reduce(_ && _)
+            val doNextStep = results.map(_.yes).reduce(_ || _)
             log.info(s"${results.size}")
             log.info(s"${results.map(_.toString).reduce(_ + " " + _)}")
-            log.info(s"Hell ${doNextStep}")
+            log.info(s"Hell $doNextStep")
             // set to superstep
             if (doNextStep) {
               allWorkers().foreach(_ ! RunSuperStep(currentSuperStep))
