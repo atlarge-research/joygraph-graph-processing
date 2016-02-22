@@ -46,13 +46,16 @@ class AsyncSerializerNew[T](msgType : Byte, n : Int, kryoFactory : => Kryo, val 
           val diffTake = System.currentTimeMillis() - startTake
           timeSpentTaking.addAndGet(diffTake)
           _buffers(index) = osSwap
-          // reset the osSwap, it's been used and needs to be set to pos 0
-          osSwap.resetOOS()
           serializer(kryo, osSwap, o) // TODO exception may occur here IFF object does not fit in the output...
           osSwap.increment()
           // hand it off to the output handler, which will forward it to the network stack
           // when the network stack is finished with the bytebuffer, we put it back into the bufferSwap
-          outputHandler(os.handOff()).foreach(_ => bufferSwap.add(os))// sweet I got it back!)
+          outputHandler(os.handOff()).foreach{_ =>
+            // reset the osSwap, it's been used and needs to be set to pos 0
+            os.resetOOS()
+            // buffers in bufferswap are now clean!
+            bufferSwap.add(os)
+          }// sweet I got it back!)
         case _ =>
       }
 
@@ -61,9 +64,9 @@ class AsyncSerializerNew[T](msgType : Byte, n : Int, kryoFactory : => Kryo, val 
     }
   }
 
-  def currentNonEmptyByteBuffers(): Seq[(ByteBuffer, Int)] = _buffers.filter(_.hasElements).zipWithIndex.map{
+  def sendNonEmptyByteBuffers(outputHandler : ((ByteBuffer, Int)) => Future[ByteBuffer])(implicit executionContext: ExecutionContext) : Unit = _buffers.zipWithIndex.filter(_._1.hasElements).foreach {
     case (a, b) =>
       a.writeCounter()
-      (a.handOff(), b)
+      outputHandler((a.handOff(), b)).foreach(_ => _buffers(b).resetOOS())
   }
 }

@@ -27,12 +27,12 @@ object Main extends App{
       }
   }"""
 
-  val numWorkers = 4
+  val numWorkers = 2
 
-//  val sourceId = 99843
-//  val dataset = "/home/sietse/amazon0302.e"
-  val dataset = "/home/sietse/cit-Patents-edge.txt"
-  val sourceId = 4949326
+  val sourceId = 99843
+  val dataset = "/home/sietse/amazon0302.e"
+//  val dataset = "/home/sietse/cit-Patents-edge.txt"
+//  val sourceId = 4949326
   val jobCfg =
     s"""
       job {

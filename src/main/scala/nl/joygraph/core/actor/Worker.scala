@@ -71,8 +71,8 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 
   private[this] val messageSender : MessageSender[ActorRef, ByteBuffer, ByteString] = new MessageSenderAkka(this)
 
-  private[this] var messagesSerializer : AsyncSerializer[(I, M)] = null
-  private[this] var messagesDeserializer : AsyncDeserializer[(I, M)] = null
+  private[this] var messagesSerializer : AsyncSerializerNew[(I, M)] = null
+  private[this] var messagesDeserializer : AsyncDeserializerNew[(I, M)] = null
   private[this] var allHalted = true
 
 
@@ -136,17 +136,15 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           }
         }
 
-        verticesBufferNew.currentNonEmptyByteBuffers().foreach {
-          case (byteBuffer, index) =>
-            println(s"final sending to $index, size: ${byteBuffer.remaining()}")
-            messageSender.send(self, workers(index), byteBuffer)
-        }
+        verticesBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, index : Int) =>
+          println(s"final sending to $index, size: ${byteBuffer.remaining()}")
+          messageSender.send(self, workers(index), byteBuffer)
+        })
 
-        edgeBufferNew.currentNonEmptyByteBuffers().foreach{
-          case (byteBuffer, index) =>
-            println(s"final sending to $index, size: ${byteBuffer.remaining()}")
-            messageSender.send(self, workers(index), byteBuffer)
-        }
+        edgeBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, index : Int) =>
+          println(s"final sending to $index, size: ${byteBuffer.remaining()}")
+          messageSender.send(self, workers(index), byteBuffer)
+        })
         sendingComplete()
         loadingCompleteTrigger()
       }.recover{
@@ -216,8 +214,8 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           program.load(config)
         case _ =>
       }
-      messagesSerializer = new AsyncSerializer[(I, M)](0, workers.size, new Kryo())
-      messagesDeserializer = new AsyncDeserializer[(I, M)](0, workers.size, new Kryo())
+      messagesSerializer = new AsyncSerializerNew[(I, M)](0, workers.size, new Kryo())
+      messagesDeserializer = new AsyncDeserializerNew[(I, M)](0, workers.size, new Kryo())
       sender() ! true
     case RunSuperStep(superStep) =>
       Future{
@@ -257,9 +255,8 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
                   case (dst, m) =>
                     val index = partitioner.destination(dst)
                     m.foreach {
-                      x => messagesSerializer.serialize(index, (dst, x), messageSerializer) { implicit os =>
-                        sendByteArray(workers(index), os.handOff())
-                        os.resetOOS()
+                      x => messagesSerializer.serialize(index, (dst, x), messageSerializer) { implicit byteBuffer =>
+                        messageSender.send(self, workers(index), byteBuffer)
                       }
                     }
                 }
@@ -268,30 +265,34 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
                     edgesIterable.foreach {
                       case Edge(dst, _) =>
                         val index = partitioner.destination(dst)
-                        messagesSerializer.serialize(index, (dst, m), messageSerializer) { implicit os =>
-                          sendByteArray(workers(index), os.handOff())
-                          os.resetOOS()
+                        messagesSerializer.serialize(index, (dst, m), messageSerializer) { implicit byteBuffer =>
+                          messageSender.send(self, workers(index), byteBuffer)
                         }
                     }
                 }
               }
           }
 
-        messagesSerializer.currentNonEmptyByteBuffers().foreach{
-          case (a,b) => sendByteArray(workers(b), a.handOff())
-            a.resetOOS()
+        messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>
+          messageSender.send(self, workers(index), byteBuffer)
         }
-
         sendingComplete()
         superStepCompleteTrigger()
       }.recover{
         case t : Throwable => t.printStackTrace()
       }
-    case byteArray : Array[Byte] =>
+    case byteString : ByteString =>
       val senderRef = sender()
       Future {
-        val is = new ObjectByteArrayInputStream(byteArray)
+
+        // we only copy the buffer because Akka does not allow mutability by design
+        val byteBuffer = ByteBuffer.allocate(byteString.size)
+        val numCopied = byteString.copyToBuffer(byteBuffer)
+        byteBuffer.flip()
+        println(byteBuffer.order())
+        val is = new ObjectByteBufferInputStream(byteBuffer)
         val index = workerPathsToIndex(senderRef)
+        println(s"received from $index size: ${byteString.size} numCopied: $numCopied")
         is.msgType match {
           case 0 => // edge
             messagesDeserializer.deserialize(is, index, messageDeserializer){ implicit dstMPairs =>
