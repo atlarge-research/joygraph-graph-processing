@@ -184,6 +184,8 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       incrementReceived()
       loadingCompleteTrigger()
     case AllLoadingComplete() =>
+      println(s"taking edges: ${edgeBufferNew.timeSpentTaking} " +
+        s"taking vertices: ${verticesBufferNew.timeSpentTaking}")
       println(s"serializing edges: ${edgeBufferNew.timeSpent.get() / 1000}s " +
         s"vertices: ${verticesBufferNew.timeSpent.get() / 1000}s")
       println(s"deserializing edges: ${edgesDeserializer.timeSpent.get() / 1000}s " +
@@ -261,7 +263,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
                       }
                     }
                 }
-                allMessages.foreach{
+                allMessages.foreach {
                   m =>
                     edgesIterable.foreach {
                       case Edge(dst, _) =>

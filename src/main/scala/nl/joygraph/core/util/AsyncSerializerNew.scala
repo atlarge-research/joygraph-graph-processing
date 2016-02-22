@@ -9,14 +9,16 @@ import com.esotericsoftware.kryo.{Kryo, KryoException}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Try}
 
-class AsyncSerializerNew[T](msgType : Byte, n : Int, kryoFactory : => Kryo, val bufferExceededThreshold : Int = 10 * 1024 * 1024) {
+class AsyncSerializerNew[T](msgType : Byte, n : Int, kryoFactory : => Kryo, val bufferExceededThreshold : Int = 1 * 1024 * 1024) {
 
   private[this] val _buffers : ArrayBuffer[ObjectByteBufferOutputStream] = ArrayBuffer.fill(n)(new ObjectByteBufferOutputStream(msgType, bufferExceededThreshold))
   private[this] val bufferSwaps : ArrayBuffer[BlockingQueue[ObjectByteBufferOutputStream]] = ArrayBuffer.fill(n)(new LinkedBlockingQueue[ObjectByteBufferOutputStream])
   private[this] val kryos : ArrayBuffer[Kryo] = ArrayBuffer.fill(n)(kryoFactory)
   private[this] val locks : ArrayBuffer[Object] = ArrayBuffer.fill(n)(new Object)
   val timeSpent = new AtomicLong(0)
+  val timeSpentTaking = new AtomicLong(0)
 
   // initialize bufferSwap
   bufferSwaps.foreach(_.add(new ObjectByteBufferOutputStream(msgType, bufferExceededThreshold)))
@@ -28,33 +30,34 @@ class AsyncSerializerNew[T](msgType : Byte, n : Int, kryoFactory : => Kryo, val 
       val kryo = kryos(index)
       // get original position for catch condition
       val originalPos = os.position()
-      try {
+      Try {
         serializer(kryo, os, o)
         os.increment()
-        val diff = System.currentTimeMillis() - start
-        timeSpent.addAndGet(diff)
-      } catch {
-        case e : KryoException => // overflow
-          println("KryoException " + e)
+      } match {
+        case Failure(_ : KryoException) => // overflow
           // hand off and swap buffer
           os.setPosition(originalPos)
           os.writeCounter()
 
           // by using the linkedblockingqueue we ensure that there is at most ONE ByteBuffer being processed
           val bufferSwap = bufferSwaps(index)
+          val startTake = System.currentTimeMillis()
           val osSwap = bufferSwap.take()
+          val diffTake = System.currentTimeMillis() - startTake
+          timeSpentTaking.addAndGet(diffTake)
           _buffers(index) = osSwap
           // reset the osSwap, it's been used and needs to be set to pos 0
           osSwap.resetOOS()
-          serializer(kryo, osSwap, o) // TODO exception may occur here IFF message does not fit in the output...
+          serializer(kryo, osSwap, o) // TODO exception may occur here IFF object does not fit in the output...
           osSwap.increment()
-          val diff = System.currentTimeMillis() - start
-          timeSpent.addAndGet(diff)
           // hand it off to the output handler, which will forward it to the network stack
           // when the network stack is finished with the bytebuffer, we put it back into the bufferSwap
           outputHandler(os.handOff()).foreach(_ => bufferSwap.add(os))// sweet I got it back!)
+        case _ =>
       }
 
+      val diff = System.currentTimeMillis() - start
+      timeSpent.addAndGet(diff)
     }
   }
 
