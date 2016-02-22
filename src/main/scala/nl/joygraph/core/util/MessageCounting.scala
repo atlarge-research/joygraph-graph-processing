@@ -17,7 +17,7 @@ trait MessageCounting {
     messagesReceived.incrementAndGet()
   }
 
-  protected[this] def incrementSent(): Unit = {
+  def incrementSent(): Unit = {
     messagesSent.incrementAndGet()
   }
 

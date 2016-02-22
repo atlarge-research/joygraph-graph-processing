@@ -71,6 +71,8 @@ abstract class Master protected(conf : Config, cluster : Cluster) extends Actor 
       val masterPath = cluster.selfAddress.toString + "/user/" + jobSettings.masterSuffix
       val actorSelections: ArrayBuffer[ActorRef] = allWorkers()
 
+      // TODO sometimes sendMasteraddress does not complete, probably something with the callbackonallcomplete.
+      // the latch probably only gets triggered on the moment the future is completed and not when the future has already been completed.
       FutureUtil.callbackOnAllComplete(sendMasterAddress(actorSelections, masterPath)) {
         FutureUtil.callbackOnAllComplete(sendMapping(actorSelections)) {
           sendPaths(actorSelections, jobSettings.dataPath)

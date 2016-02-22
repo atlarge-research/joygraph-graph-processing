@@ -7,7 +7,7 @@ import com.esotericsoftware.kryo.io.{Output, UnsafeMemoryOutput}
 
 import scala.collection.mutable.ArrayBuffer
 
-class AsyncSerializer[T](msgType : Char, n : Int, kryoFactory : => Kryo, val bufferExceededThreshold : Int = 1024 * 1024) {
+class AsyncSerializer[T](msgType : Byte, n : Int, kryoFactory : => Kryo, val bufferExceededThreshold : Int = 1024 * 1024) {
 
   private[this] val buffers : ArrayBuffer[ObjectByteArrayOutputStream] = ArrayBuffer.fill(n)(new ObjectByteArrayOutputStream(msgType))
   private[this] val kryos : ArrayBuffer[Kryo] = ArrayBuffer.fill(n)(kryoFactory)
@@ -33,7 +33,5 @@ class AsyncSerializer[T](msgType : Char, n : Int, kryoFactory : => Kryo, val buf
     }
   }
 
-  def buffer(index : Int): ObjectByteArrayOutputStream = {
-    buffers(index)
-  }
+  def currentNonEmptyByteBuffers(): Seq[(ObjectByteArrayOutputStream, Int)] = buffers.filter(_.hasElements).zipWithIndex
 }

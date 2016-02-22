@@ -1,15 +1,20 @@
 package nl.joygraph.core.actor
 
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentLinkedQueue
 
 import akka.actor._
+import akka.util.ByteString
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.typesafe.config.Config
+import nl.joygraph.core.actor.communication.MessageSender
+import nl.joygraph.core.actor.communication.impl.MessageSenderAkka
 import nl.joygraph.core.actor.state.GlobalState
 import nl.joygraph.core.config.JobSettings
 import nl.joygraph.core.message._
 import nl.joygraph.core.message.superstep._
+import nl.joygraph.core.partitioning.VertexPartitioner
 import nl.joygraph.core.program._
 import nl.joygraph.core.reader.LineProvider
 import nl.joygraph.core.util._
@@ -21,13 +26,21 @@ import scala.concurrent.Future
 import scala.reflect._
 
 object Worker{
-  def workerFactory[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag](config: Config, parser: (String) => (I, I, E),  clazz : Class[_ <: VertexProgram[I,V,E,M]]): () => Worker[I,V,E,M] = () => {
-    new Worker[I,V,E,M](config, parser, clazz)
+  def workerFactory[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
+  (config: Config,
+   parser: (String) => (I, I, E),
+   clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
+   partitioner : VertexPartitioner
+  ): () => Worker[I,V,E,M] = () => {
+    new Worker[I,V,E,M](config, parser, clazz, partitioner)
   }
 }
 
 class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
-(private[this] val config : Config, parser: (String) => (I, I, E), clazz : Class[_ <: VertexProgram[I,V,E,M]])
+(private[this] val config : Config,
+ parser: (String) => (I, I, E),
+ clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
+ private[this] var partitioner : VertexPartitioner)
   extends Actor with ActorLogging with MessageCounting {
 
   // TODO use different execution contexts at different places.
@@ -43,10 +56,10 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] var workerPathsToIndex : Map[ActorRef, Int] = null
 
   private[this] val jobSettings = JobSettings(config)
-  private[this] var verticesBufferNew : AsyncSerializer[I] = null
-  private[this] var edgeBufferNew : AsyncSerializer[(I,I,E)] = null
-  private[this] var verticesDeserializer : AsyncDeserializer[I] = null
-  private[this] var edgesDeserializer : AsyncDeserializer[(I,I,E)] = null
+  private[this] var verticesBufferNew : AsyncSerializerNew[I] = null
+  private[this] var edgeBufferNew : AsyncSerializerNew[(I,I,E)] = null
+  private[this] var verticesDeserializer : AsyncDeserializerNew[I] = null
+  private[this] var edgesDeserializer : AsyncDeserializerNew[(I,I,E)] = null
 
   private[this] val halted = TrieMap.empty[I, Boolean]
   private[this] val vEdges = TrieMap.empty[I, ConcurrentLinkedQueue[Edge[I,E]]]
@@ -55,6 +68,8 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] var currentMessages = TrieMap.empty[I, ConcurrentLinkedQueue[M]]
   private[this] var masterActorRef : ActorRef = null
   private[this] val vertexProgramInstance = clazz.newInstance()
+
+  private[this] val messageSender : MessageSender[ActorRef, ByteBuffer, ByteString] = new MessageSenderAkka(this)
 
   private[this] var messagesSerializer : AsyncSerializer[(I, M)] = null
   private[this] var messagesDeserializer : AsyncDeserializer[(I, M)] = null
@@ -84,10 +99,10 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] val DATA_LOADING_OPERATION : PartialFunction[Any, Unit] = {
     case PrepareLoadData() =>
       println(s"$id: prepare load data!~ $state")
-      this.edgeBufferNew = new AsyncSerializer(0, workers.length, new Kryo())
-      this.verticesBufferNew = new AsyncSerializer(1, workers.length, new Kryo())
-      this.edgesDeserializer = new AsyncDeserializer[(I,I,E)](0, workers.length, new Kryo())
-      this.verticesDeserializer = new AsyncDeserializer[I](1, workers.length, new Kryo())
+      this.edgeBufferNew = new AsyncSerializerNew(0, workers.length, new Kryo())
+      this.verticesBufferNew = new AsyncSerializerNew(1, workers.length, new Kryo())
+      this.edgesDeserializer = new AsyncDeserializerNew[(I,I,E)](0, workers.length, new Kryo())
+      this.verticesDeserializer = new AsyncDeserializerNew[I](1, workers.length, new Kryo())
       sender() ! true
     case LoadData(path, start, length) =>
       Future {
@@ -99,39 +114,56 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 
         lineProvider.foreach{ l =>
           val (src, dst, value) = parser(l)
-          val index : Int = src.hashCode() % workers.length
-          val index2 : Int = dst.hashCode() % workers.length
+          val index : Int = partitioner.destination(src)
+          val index2 : Int = partitioner.destination(dst)
           if (index == id.get) {
             addEdge(src, dst, value)
           } else {
-            edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit os =>
-              sendByteArray(workers(index), os.toByteArray)
-              os.reset()
+            edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
+
+              println(s"- sending to $index, size: ${byteBuffer.remaining()}")
+              messageSender.send(self, workers(index), byteBuffer)
             }
           }
           if (index2 == id.get) {
             addVertex(dst)
           } else {
-            verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit os =>
-              sendByteArray(workers(index2), os.toByteArray)
-              os.reset()
+            verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit byteBuffer =>
+              println(s"- sending to $index2, size: ${byteBuffer.remaining()}")
+
+              messageSender.send(self, workers(index2), byteBuffer)
             }
           }
         }
-        workers.zipWithIndex.foreach{
-          case (actorRef, index) =>
-            Iterable(verticesBufferNew.buffer(index), edgeBufferNew.buffer(index)).foreach(os => sendByteArray(actorRef, os.toByteArray))
+
+        verticesBufferNew.currentNonEmptyByteBuffers().foreach {
+          case (byteBuffer, index) =>
+            println(s"final sending to $index, size: ${byteBuffer.remaining()}")
+            messageSender.send(self, workers(index), byteBuffer)
+        }
+
+        edgeBufferNew.currentNonEmptyByteBuffers().foreach{
+          case (byteBuffer, index) =>
+            println(s"final sending to $index, size: ${byteBuffer.remaining()}")
+            messageSender.send(self, workers(index), byteBuffer)
         }
         sendingComplete()
+        loadingCompleteTrigger()
       }.recover{
         case t : Throwable =>
           t.printStackTrace()
       }
-    case byteArray : Array[Byte] =>
+    case byteString : ByteString =>
       val senderRef = sender()
       Future {
-        val is = new ObjectByteArrayInputStream(byteArray)
+        // we only copy the buffer because Akka does not allow mutability by design
+        val byteBuffer = ByteBuffer.allocate(byteString.size)
+        val numCopied = byteString.copyToBuffer(byteBuffer)
+        byteBuffer.flip()
+        println(byteBuffer.order())
+        val is = new ObjectByteBufferInputStream(byteBuffer)
         val index = workerPathsToIndex(senderRef)
+        println(s"received from $index size: ${byteString.size} numCopied: $numCopied")
         is.msgType match {
           case 0 => // edge
             edgesDeserializer.deserialize(is, index, edgeDeserializer){ implicit edges =>
@@ -142,6 +174,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
               vertices.foreach(addVertex)
             }
         }
+        println(s"processed from $index size: ${byteString.size} numCopied: $numCopied")
         senderRef ! Received()
       }.recover{
         case t : Throwable =>
@@ -149,10 +182,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       }
     case Received() =>
       incrementReceived()
-      if (doneAllSentReceived) {
-        resetSentReceived()
-        master() ! AllLoadingComplete()
-      }
+      loadingCompleteTrigger()
     case AllLoadingComplete() =>
       println(s"serializing edges: ${edgeBufferNew.timeSpent.get() / 1000}s " +
         s"vertices: ${verticesBufferNew.timeSpent.get() / 1000}s")
@@ -161,9 +191,29 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       master() ! LoadingComplete(id.get, vEdges.keys.size, vEdges.values.map(_.size()).sum)
   }
 
+  protected[this] def loadingCompleteTrigger(): Unit = {
+    if (doneAllSentReceived) {
+      resetSentReceived()
+      println(s"$id phase ended")
+      master() ! AllLoadingComplete()
+    }
+  }
+
+  protected[this] def superStepCompleteTrigger(): Unit = {
+    if (doneAllSentReceived) {
+      resetSentReceived()
+      println(s"$id phase ended")
+      master() ! SuperStepComplete()
+    }
+  }
+
   private[this] val RUN_SUPERSTEP : PartialFunction[Any, Unit] = {
     case PrepareSuperStep() =>
-      vertexProgramInstance.load(config)
+      vertexProgramInstance match {
+        case program : VertexProgram[I, V, E, M] =>
+          program.load(config)
+        case _ =>
+      }
       messagesSerializer = new AsyncSerializer[(I, M)](0, workers.size, new Kryo())
       messagesDeserializer = new AsyncDeserializer[(I, M)](0, workers.size, new Kryo())
       sender() ! true
@@ -186,7 +236,11 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
                 val messageOut : scala.collection.mutable.MultiMap[I,M] = new scala.collection.mutable.OpenHashMap[I, scala.collection.mutable.Set[M]] with scala.collection.mutable.MultiMap[I, M]
                 val allMessages = ArrayBuffer.empty[M]
                 v.load(vId, value, edgesIterable, messageOut, allMessages)
-                val hasHalted = vertexProgramInstance.run(v, vMessages, superStep)
+                val hasHalted = vertexProgramInstance match {
+                  case program : VertexProgram[I,V,E,M] => program.run(v, vMessages, superStep)
+//                  case program : PerfectHashFormat[I] => program.run(v, superStep, new Mapper())
+                  case _ => true // TODO exception
+                }
                 vValues(vId) = v.value
 
                 if (hasHalted) {
@@ -199,33 +253,35 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
                 // send messages
                 messageOut.foreach {
                   case (dst, m) =>
-                    val index = dst.hashCode() % workers.length
+                    val index = partitioner.destination(dst)
                     m.foreach {
                       x => messagesSerializer.serialize(index, (dst, x), messageSerializer) { implicit os =>
-                        sendByteArray(workers(index), os.toByteArray)
-                        os.reset()
+                        sendByteArray(workers(index), os.handOff())
+                        os.resetOOS()
                       }
                     }
                 }
-                edgesIterable.foreach{
-                  case Edge(dst, _) =>
-                    val index = dst.hashCode() % workers.length
-                    allMessages.foreach {
-                      x => messagesSerializer.serialize(index, (dst, x), messageSerializer) { implicit os =>
-                        sendByteArray(workers(index), os.toByteArray)
-                        os.reset()
-                      }
+                allMessages.foreach{
+                  m =>
+                    edgesIterable.foreach {
+                      case Edge(dst, _) =>
+                        val index = partitioner.destination(dst)
+                        messagesSerializer.serialize(index, (dst, m), messageSerializer) { implicit os =>
+                          sendByteArray(workers(index), os.handOff())
+                          os.resetOOS()
+                        }
                     }
                 }
               }
           }
-          workers.zipWithIndex.foreach{
-            case (actorRef, index) =>
-              val os = messagesSerializer.buffer(index)
-              sendByteArray(actorRef, os.toByteArray)
-              os.reset()
-          }
-          sendingComplete()
+
+        messagesSerializer.currentNonEmptyByteBuffers().foreach{
+          case (a,b) => sendByteArray(workers(b), a.handOff())
+            a.resetOOS()
+        }
+
+        sendingComplete()
+        superStepCompleteTrigger()
       }.recover{
         case t : Throwable => t.printStackTrace()
       }
@@ -242,6 +298,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
               }
             }
         }
+        println(s"$id sending reply to $index")
         senderRef ! Received()
       }.recover{
         case t : Throwable =>
@@ -259,10 +316,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       }
     case Received() =>
       incrementReceived()
-      if (doneAllSentReceived) {
-        resetSentReceived()
-        master() ! SuperStepComplete()
-      }
+      superStepCompleteTrigger()
   }
 
   def messageDeserializer(kryo : Kryo, input : Input) : (I, M) = {
@@ -311,6 +365,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   override def receive = currentReceive
 
   def sendByteArray(dst : ActorRef, bytes: Array[Byte]): Unit = {
+    println(s"$id sending to dst: $dst ${bytes.length}")
     dst ! bytes
     incrementSent()
   }

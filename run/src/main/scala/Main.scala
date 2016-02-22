@@ -2,7 +2,8 @@ import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
 import com.typesafe.config.ConfigFactory
 import nl.joygraph.core.actor.{BaseActor, Master, Worker}
-import nl.joygraph.core.program.NullClass
+import nl.joygraph.core.partitioning.impl.VertexHashPartitioner
+import nl.joygraph.core.program.{NullClass, Vertex}
 import nl.joygraph.programs.BFS
 
 object Main extends App{
@@ -14,7 +15,7 @@ object Main extends App{
       remote {
         netty.tcp {
             hostname = "127.0.0.1"
-            maximum-frame-size = 2M
+            maximum-frame-size = 10M
             port = $port
         }
       }
@@ -38,7 +39,6 @@ object Main extends App{
         workers.initial = $numWorkers
         data.path = "file://$dataset"
       }
-      input.format.class = "EdgeListFormatLong"
       fs.defaultFS = "file:///"
       vertex.program.class = "BFS"
       worker {
@@ -59,6 +59,10 @@ object Main extends App{
     (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
   }
 
+  val output = (v : Vertex[Long, Int, NullClass, Long]) => {
+    v.edges
+  }
+
   val masterFactory = (cluster : Cluster) => {
     Master.create(classOf[nl.joygraph.impl.hadoop.actor.Master], jobConfig, cluster)
   }
@@ -66,7 +70,8 @@ object Main extends App{
   val workerFactory = Worker.workerFactory(
     jobConfig,
     parser,
-    programClass
+    programClass,
+    new VertexHashPartitioner(numWorkers)
   )
 
   val seedPort = 2552

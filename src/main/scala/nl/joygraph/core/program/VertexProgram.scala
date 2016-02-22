@@ -8,7 +8,7 @@ object VertexProgram {
   }
 }
 
-trait VertexProgram[I,V,E,M] {
+trait VertexProgram[I,V,E,M] extends VertexProgramLike[I,V,E,M] {
 
   /**
     * Load parameters from vertex program
