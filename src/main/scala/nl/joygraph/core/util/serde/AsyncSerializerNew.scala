@@ -1,4 +1,4 @@
-package nl.joygraph.core.util
+package nl.joygraph.core.util.serde
 
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
@@ -6,6 +6,7 @@ import java.util.concurrent.{BlockingQueue, LinkedBlockingQueue}
 
 import com.esotericsoftware.kryo.io.Output
 import com.esotericsoftware.kryo.{Kryo, KryoException}
+import nl.joygraph.core.util.ObjectByteBufferOutputStream
 
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{ExecutionContext, Future}
