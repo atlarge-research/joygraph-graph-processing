@@ -18,6 +18,7 @@ import nl.joygraph.core.partitioning.VertexPartitioner
 import nl.joygraph.core.program._
 import nl.joygraph.core.reader.LineProvider
 import nl.joygraph.core.util._
+import nl.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
 
 import scala.collection.JavaConversions._
 import scala.collection.concurrent.TrieMap
@@ -56,10 +57,10 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] var workerPathsToIndex : Map[ActorRef, Int] = null
 
   private[this] val jobSettings = JobSettings(config)
-  private[this] var verticesBufferNew : AsyncSerializerNew[I] = null
-  private[this] var edgeBufferNew : AsyncSerializerNew[(I,I,E)] = null
-  private[this] var verticesDeserializer : AsyncDeserializerNew[I] = null
-  private[this] var edgesDeserializer : AsyncDeserializerNew[(I,I,E)] = null
+  private[this] var verticesBufferNew : AsyncSerializer[I] = null
+  private[this] var edgeBufferNew : AsyncSerializer[(I,I,E)] = null
+  private[this] var verticesDeserializer : AsyncDeserializer[I] = null
+  private[this] var edgesDeserializer : AsyncDeserializer[(I,I,E)] = null
 
   private[this] val halted = TrieMap.empty[I, Boolean]
   private[this] val vEdges = TrieMap.empty[I, ConcurrentLinkedQueue[Edge[I,E]]]
@@ -71,8 +72,8 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 
   private[this] val messageSender : MessageSender[ActorRef, ByteBuffer, ByteString] = new MessageSenderAkka(this)
 
-  private[this] var messagesSerializer : AsyncSerializerNew[(I, M)] = null
-  private[this] var messagesDeserializer : AsyncDeserializerNew[(I, M)] = null
+  private[this] var messagesSerializer : AsyncSerializer[(I, M)] = null
+  private[this] var messagesDeserializer : AsyncDeserializer[(I, M)] = null
   private[this] var allHalted = true
 
 
@@ -99,10 +100,10 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] val DATA_LOADING_OPERATION : PartialFunction[Any, Unit] = {
     case PrepareLoadData() =>
       println(s"$id: prepare load data!~ $state")
-      this.edgeBufferNew = new AsyncSerializerNew(0, workers.length, new Kryo())
-      this.verticesBufferNew = new AsyncSerializerNew(1, workers.length, new Kryo())
-      this.edgesDeserializer = new AsyncDeserializerNew[(I,I,E)](0, workers.length, new Kryo())
-      this.verticesDeserializer = new AsyncDeserializerNew[I](1, workers.length, new Kryo())
+      this.edgeBufferNew = new AsyncSerializer(0, workers.length, new Kryo())
+      this.verticesBufferNew = new AsyncSerializer(1, workers.length, new Kryo())
+      this.edgesDeserializer = new AsyncDeserializer[(I,I,E)](0, workers.length, new Kryo())
+      this.verticesDeserializer = new AsyncDeserializer[I](1, workers.length, new Kryo())
       sender() ! true
     case LoadData(path, start, length) =>
       Future {
@@ -214,8 +215,8 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           program.load(config)
         case _ =>
       }
-      messagesSerializer = new AsyncSerializerNew[(I, M)](0, workers.size, new Kryo())
-      messagesDeserializer = new AsyncDeserializerNew[(I, M)](0, workers.size, new Kryo())
+      messagesSerializer = new AsyncSerializer[(I, M)](0, workers.size, new Kryo())
+      messagesDeserializer = new AsyncDeserializer[(I, M)](0, workers.size, new Kryo())
       sender() ! true
     case RunSuperStep(superStep) =>
       Future{
