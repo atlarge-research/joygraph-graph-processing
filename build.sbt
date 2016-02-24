@@ -42,7 +42,8 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-remote" % "2.4.1",
   "com.typesafe.akka" %% "akka-cluster" % "2.4.1",
   "com.typesafe" % "config" % "1.3.0",
-  "com.esotericsoftware" % "kryo-shaded" % "3.0.3"
+  "com.esotericsoftware" % "kryo-shaded" % "3.0.3",
+  "io.netty" % "netty-all" % "4.0.34.Final"
 )
 
 val testDependencies = Seq(
