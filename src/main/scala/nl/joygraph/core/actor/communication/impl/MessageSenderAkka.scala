@@ -15,12 +15,12 @@ class MessageSenderAkka(protected[this] val msgCounting : MessageCounting) exten
     val p : Promise[ByteBuffer] = Promise[ByteBuffer]
     implicit val sender = source
     p.success{
-      destination ! transform(payload)
+      destination ! transform(source, payload)
       msgCounting.incrementSent()
       payload
     }
     p.future
   }
 
-  override def transform(i: ByteBuffer): ByteString = ByteString(i)
+  override def transform(ignored : ActorRef, i: ByteBuffer): ByteString = ByteString(i)
 }

@@ -4,8 +4,11 @@ trait ObjectOutputStream[T] {
 
   val msgType : Byte
   protected[this] var _counter = 0
-  // offset 4 for the counter and 1 for message type
-  protected[this] val offset = 5
+  // offset 4 for total length
+  // offset 4 for source
+  // offset 1 for message type
+  // offset 4 for the counter
+  protected[this] val offset = 13
 
   def increment(): Unit = {
     _counter += 1

@@ -4,16 +4,22 @@ import java.nio.ByteBuffer
 
 import io.netty.channel.ChannelInitializer
 import io.netty.channel.socket.SocketChannel
-import io.netty.handler.codec.{ByteToMessageDecoder, LengthFieldBasedFrameDecoder, LengthFieldPrepender}
+import io.netty.handler.codec.{ByteToMessageDecoder, LengthFieldBasedFrameDecoder}
 
-class MessageChannelInitializer(onMessageReceived : (ByteBuffer) => Any) extends ChannelInitializer[SocketChannel] {
+class MessageChannelInitializer extends ChannelInitializer[SocketChannel] {
+
+  private[this] val messageReceivedHandler = new MessageReceiveHandler
+
+  def setOnReceivedMessage(onMessageReceived : (ByteBuffer) => Any) = {
+    messageReceivedHandler.setOnReceivedMessage(onMessageReceived)
+  }
+
   override def initChannel(ch : SocketChannel) = {
-    val frameDecoder = new LengthFieldBasedFrameDecoder(1024 * 1024, 0, 4, 0, 4, true)
+    //TODO set max frame length
+    val frameDecoder = new LengthFieldBasedFrameDecoder(2 * 1024 * 1024, 0, 4, 0, 4, true)
     frameDecoder.setCumulator(ByteToMessageDecoder.MERGE_CUMULATOR) // merge
-    val frameEncoder = new LengthFieldPrepender(4)
     ch.pipeline()
-      .addLast(frameEncoder)
       .addLast(frameDecoder)
-      .addLast(new MessageReceiveHandler(onMessageReceived))
+      .addLast(messageReceivedHandler)
   }
 }

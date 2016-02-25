@@ -4,6 +4,7 @@ import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 
 import io.netty.bootstrap.ServerBootstrap
+import io.netty.buffer.{ByteBufAllocator, PooledByteBufAllocator}
 import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.channel.{Channel, ChannelFuture, ChannelFutureListener, ChannelOption}
@@ -11,25 +12,36 @@ import nl.joygraph.core.util.PortFinder
 
 import scala.concurrent.{Future, Promise}
 
-class MessageReceiverNetty(onMessageReceived : (ByteBuffer) => Any) {
+class MessageReceiverNetty {
 
-  val bossGroup = new NioEventLoopGroup()
-  val workerGroup = new NioEventLoopGroup()
+  val bossGroup = new NioEventLoopGroup(1)
+  val workerGroup = new NioEventLoopGroup(2)
   var currentChannel : Option[Channel] = None
+  val messageChannelInitializer = new MessageChannelInitializer
 
   val b = new ServerBootstrap()
   b.group(bossGroup, workerGroup)
     .channel(classOf[NioServerSocketChannel])
-    .childHandler(new MessageChannelInitializer(onMessageReceived))
+    .childHandler(messageChannelInitializer)
+    .option[ByteBufAllocator](ChannelOption.ALLOCATOR, new PooledByteBufAllocator(true))
     .option[java.lang.Integer](ChannelOption.SO_BACKLOG, 128)
+    .childOption[java.lang.Boolean](ChannelOption.TCP_NODELAY, true)
     .childOption[java.lang.Boolean](ChannelOption.SO_KEEPALIVE, true)
 
 
-  def connect(): Future[Boolean] = {
+  def setOnReceivedMessage(onMessageReceived : (ByteBuffer) => Any): Unit = {
+    messageChannelInitializer.setOnReceivedMessage(onMessageReceived)
+  }
+
+  private[this] def bindToFreePort(p : Promise[Boolean]) = {
     val foundPort = PortFinder.findFreePort()
-    val promise = Promise[Boolean]
-    b.bind(foundPort).addListener(new BindCompleteHandler(promise))
-    promise.future
+    b.bind(foundPort).addListener(new BindCompleteHandler(p))
+  }
+
+  def connect(): Future[Boolean] = {
+    val p = Promise[Boolean]
+    bindToFreePort(p)
+    p.future
   }
 
   def shutdown(): Unit = {
@@ -41,22 +53,41 @@ class MessageReceiverNetty(onMessageReceived : (ByteBuffer) => Any) {
     bossGroup.shutdownGracefully()
   }
 
+  def address : String = {
+    currentChannel match {
+      case Some(channel) =>
+        channel.localAddress().asInstanceOf[InetSocketAddress].getAddress.toString
+      case None => null
+    }
+  }
+
+  def host : String = {
+    currentChannel match {
+      case Some(channel) =>
+        channel.localAddress().asInstanceOf[InetSocketAddress].getHostName
+      case None => null
+    }
+  }
+
   // returns -1 if there is no channel
-  def port() : Int = {
+  def port : Int = {
     currentChannel match {
       case Some(channel) => channel.localAddress().asInstanceOf[InetSocketAddress].getPort
       case None => -1
     }
   }
 
+  // TODO add retry limit
   private class BindCompleteHandler(promise : Promise[Boolean]) extends ChannelFutureListener {
     override def operationComplete(future: ChannelFuture): Unit = {
       if (future.isSuccess) {
-        promise.success(true)
+        // set channel before setting success
         currentChannel = Some(future.channel())
+        promise.success(true)
       } else {
         // TODO error handling
         future.cause().printStackTrace()
+        bindToFreePort(promise)
       }
     }
   }

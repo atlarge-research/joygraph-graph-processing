@@ -8,8 +8,7 @@ import akka.util.ByteString
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.typesafe.config.Config
-import nl.joygraph.core.actor.communication.MessageSender
-import nl.joygraph.core.actor.communication.impl.MessageSenderAkka
+import nl.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
 import nl.joygraph.core.actor.state.GlobalState
 import nl.joygraph.core.config.JobSettings
 import nl.joygraph.core.message._
@@ -53,7 +52,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] val clazzM : Class[M] = classTag[M].runtimeClass.asInstanceOf[Class[M]]
 
   private[this] var id : Option[Int] = None
-  private[this] var workers : ArrayBuffer[ActorRef] = null
+  private[this] var workers : ArrayBuffer[AddressPair] = null
   private[this] var workerPathsToIndex : Map[ActorRef, Int] = null
 
   private[this] val jobSettings = JobSettings(config)
@@ -70,7 +69,10 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] var masterActorRef : ActorRef = null
   private[this] val vertexProgramInstance = clazz.newInstance()
 
-  private[this] val messageSender : MessageSender[ActorRef, ByteBuffer, ByteString] = new MessageSenderAkka(this)
+  private[this] var messageSender : MessageSenderNetty = _
+  private[this] var messageReceiver : MessageReceiverNetty = _
+  private[this] var nettyServers : ArrayBuffer[String] = null
+
 
   private[this] var messagesSerializer : AsyncSerializer[(I, M)] = null
   private[this] var messagesDeserializer : AsyncDeserializer[(I, M)] = null
@@ -95,6 +97,80 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   def addEdge(src :I, dst : I, value : E): Unit = {
     val neighbours = getCollection(src)
     neighbours.add(Edge(dst, value))
+  }
+
+  private[this] def _handleDataLoading(index : Int, byteBuffer : ByteBuffer): Unit = {
+    val is = new ObjectByteBufferInputStream(byteBuffer)
+    is.msgType match {
+      case 0 => // edge
+        edgesDeserializer.deserialize(is, index, edgeDeserializer){ implicit edges =>
+          edges.foreach(x => addEdge(x._1, x._2, x._3))
+        }
+      case 1 => // vertex
+        verticesDeserializer.deserialize(is, index, vertexDeserializer) { implicit vertices =>
+          vertices.foreach(addVertex)
+        }
+    }
+  }
+
+  private[this] def handleDataLoadingNetty(byteBuffer : ByteBuffer): Unit = {
+    val index = byteBuffer.getInt()
+    _handleDataLoading(index, byteBuffer)
+    workers(index).actorRef ! Received()
+  }
+
+  private[this] def handleDataLoadingAkka(senderRef : ActorRef, byteString : ByteString): Unit = {
+    Future {
+      // we only copy the buffer because Akka does not allow mutability by design
+      val byteBuffer = ByteBuffer.allocate(byteString.size)
+      val numCopied = byteString.copyToBuffer(byteBuffer)
+      byteBuffer.flip()
+      println(byteBuffer.order())
+      val index = workerPathsToIndex(senderRef)
+      println(s"received from $index size: ${byteString.size} numCopied: $numCopied")
+      _handleDataLoading(index, byteBuffer)
+      println(s"processed from $index size: ${byteString.size} numCopied: $numCopied")
+      senderRef ! Received()
+    }.recover{
+      case t : Throwable =>
+        t.printStackTrace()
+    }
+  }
+
+  private[this] def handleSuperStepNetty(byteBuffer: ByteBuffer) = {
+    val index = byteBuffer.getInt()
+    _handleSuperStep(index, byteBuffer)
+    workers(index).actorRef ! Received()
+  }
+
+  private[this] def _handleSuperStep(index : Int, byteBuffer: ByteBuffer) = {
+    val is = new ObjectByteBufferInputStream(byteBuffer)
+    is.msgType match {
+      case 0 => // edge
+        messagesDeserializer.deserialize(is, index, messageDeserializer){ implicit dstMPairs =>
+          dstMPairs.foreach{
+            case (dst, m) => nextMessages.getOrElseUpdate(dst, new ConcurrentLinkedQueue[M]()).add(m)
+          }
+        }
+    }
+  }
+
+  private[this] def handleSuperStepAkka(senderRef : ActorRef, byteString : ByteString) = {
+    Future {
+      // we only copy the buffer because Akka does not allow mutability by design
+      val byteBuffer = ByteBuffer.allocate(byteString.size)
+      val numCopied = byteString.copyToBuffer(byteBuffer)
+      byteBuffer.flip()
+      println(byteBuffer.order())
+      val index = workerPathsToIndex(senderRef)
+      println(s"received from $index size: ${byteString.size} numCopied: $numCopied")
+      _handleSuperStep(index, byteBuffer)
+      println(s"$id sending reply to $index")
+      senderRef ! Received()
+    }.recover{
+      case t : Throwable =>
+        t.printStackTrace()
+    }
   }
 
   private[this] val DATA_LOADING_OPERATION : PartialFunction[Any, Unit] = {
@@ -123,7 +199,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
             edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
 
               println(s"- sending to $index, size: ${byteBuffer.remaining()}")
-              messageSender.send(self, workers(index), byteBuffer)
+              messageSender.send(id.get, index, byteBuffer)
             }
           }
           if (index2 == id.get) {
@@ -132,19 +208,19 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
             verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit byteBuffer =>
               println(s"- sending to $index2, size: ${byteBuffer.remaining()}")
 
-              messageSender.send(self, workers(index2), byteBuffer)
+              messageSender.send(id.get, index2, byteBuffer)
             }
           }
         }
 
         verticesBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, index : Int) =>
           println(s"final sending to $index, size: ${byteBuffer.remaining()}")
-          messageSender.send(self, workers(index), byteBuffer)
+          messageSender.send(id.get, index, byteBuffer)
         })
 
         edgeBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, index : Int) =>
           println(s"final sending to $index, size: ${byteBuffer.remaining()}")
-          messageSender.send(self, workers(index), byteBuffer)
+          messageSender.send(id.get, index, byteBuffer)
         })
         sendingComplete()
         loadingCompleteTrigger()
@@ -153,32 +229,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           t.printStackTrace()
       }
     case byteString : ByteString =>
-      val senderRef = sender()
-      Future {
-        // we only copy the buffer because Akka does not allow mutability by design
-        val byteBuffer = ByteBuffer.allocate(byteString.size)
-        val numCopied = byteString.copyToBuffer(byteBuffer)
-        byteBuffer.flip()
-        println(byteBuffer.order())
-        val is = new ObjectByteBufferInputStream(byteBuffer)
-        val index = workerPathsToIndex(senderRef)
-        println(s"received from $index size: ${byteString.size} numCopied: $numCopied")
-        is.msgType match {
-          case 0 => // edge
-            edgesDeserializer.deserialize(is, index, edgeDeserializer){ implicit edges =>
-              edges.foreach(x => addEdge(x._1, x._2, x._3))
-            }
-          case 1 => // vertex
-            verticesDeserializer.deserialize(is, index, vertexDeserializer) { implicit vertices =>
-              vertices.foreach(addVertex)
-            }
-        }
-        println(s"processed from $index size: ${byteString.size} numCopied: $numCopied")
-        senderRef ! Received()
-      }.recover{
-        case t : Throwable =>
-          t.printStackTrace()
-      }
+      handleDataLoadingAkka(sender(), byteString)
     case Received() =>
       incrementReceived()
       loadingCompleteTrigger()
@@ -257,7 +308,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
                     val index = partitioner.destination(dst)
                     m.foreach {
                       x => messagesSerializer.serialize(index, (dst, x), messageSerializer) { implicit byteBuffer =>
-                        messageSender.send(self, workers(index), byteBuffer)
+                        messageSender.send(id.get, index, byteBuffer)
                       }
                     }
                 }
@@ -267,7 +318,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
                       case Edge(dst, _) =>
                         val index = partitioner.destination(dst)
                         messagesSerializer.serialize(index, (dst, m), messageSerializer) { implicit byteBuffer =>
-                          messageSender.send(self, workers(index), byteBuffer)
+                          messageSender.send(id.get, index, byteBuffer)
                         }
                     }
                 }
@@ -275,7 +326,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           }
 
         messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>
-          messageSender.send(self, workers(index), byteBuffer)
+          messageSender.send(id.get, index, byteBuffer)
         }
         sendingComplete()
         superStepCompleteTrigger()
@@ -283,31 +334,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
         case t : Throwable => t.printStackTrace()
       }
     case byteString : ByteString =>
-      val senderRef = sender()
-      Future {
-
-        // we only copy the buffer because Akka does not allow mutability by design
-        val byteBuffer = ByteBuffer.allocate(byteString.size)
-        val numCopied = byteString.copyToBuffer(byteBuffer)
-        byteBuffer.flip()
-        println(byteBuffer.order())
-        val is = new ObjectByteBufferInputStream(byteBuffer)
-        val index = workerPathsToIndex(senderRef)
-        println(s"received from $index size: ${byteString.size} numCopied: $numCopied")
-        is.msgType match {
-          case 0 => // edge
-            messagesDeserializer.deserialize(is, index, messageDeserializer){ implicit dstMPairs =>
-              dstMPairs.foreach{
-                case (dst, m) => nextMessages.getOrElseUpdate(dst, new ConcurrentLinkedQueue[M]()).add(m)
-              }
-            }
-        }
-        println(s"$id sending reply to $index")
-        senderRef ! Received()
-      }.recover{
-        case t : Throwable =>
-          t.printStackTrace()
-      }
+      handleSuperStepAkka(sender(), byteString)
     case SuperStepComplete() =>
       currentMessages = nextMessages
       nextMessages = TrieMap.empty[I, ConcurrentLinkedQueue[M]]
@@ -342,20 +369,39 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       sender() ! true
     case WorkerId(workerId) =>
       log.info(s"worker id: $workerId")
+      val senderRef = sender()
       this.id = Option(workerId)
-      sender() ! self
-      log.info(s"$workerId sent self! ?!?!")
+      messageReceiver = new MessageReceiverNetty
+      messageReceiver.connect().foreach { success =>
+        if (success) {
+          senderRef ! AddressPair(self, NettyAddress(messageReceiver.host, messageReceiver.port))
+          log.info(s"$workerId sent self! ?!?!")
+        } else {
+          log.error("Could not listen on ANY port")
+        }
+      }
+
     case WorkerMap(workers) =>
       log.info(s"workers: $workers")
       this.workers = workers
-      this.workerPathsToIndex = this.workers.zipWithIndex.toMap
-      sender() ! true
+      this.workerPathsToIndex = this.workers.map(_.actorRef).zipWithIndex.toMap
+      messageSender = new MessageSenderNetty(this)
+      val senderRef = sender()
+      FutureUtil.callbackOnAllComplete{ // TODO handle failure
+        val destinationAddressPairs = workers.zipWithIndex.map{case (addressPair, index) => (index, (addressPair.nettyAddress.host, addressPair.nettyAddress.port))}
+        messageSender.connectToAll(destinationAddressPairs)
+      } {
+        senderRef ! true
+      }
     case State(newState) =>
       state = newState
       state match {
         case GlobalState.LOAD_DATA =>
+          // set receiver
+          messageReceiver.setOnReceivedMessage(handleDataLoadingNetty)
           currentReceive = (BASE_OPERATION :: DATA_LOADING_OPERATION :: Nil).reduceLeft(_ orElse _)
         case GlobalState.SUPERSTEP =>
+          messageReceiver.setOnReceivedMessage(handleSuperStepNetty)
           currentReceive = (BASE_OPERATION :: RUN_SUPERSTEP :: Nil).reduceLeft(_ orElse _)
         case GlobalState.NONE =>
       }

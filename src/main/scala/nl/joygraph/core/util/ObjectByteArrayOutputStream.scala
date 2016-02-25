@@ -11,6 +11,8 @@ class ObjectByteArrayOutputStream(val msgType : Byte) extends ByteArrayOutputStr
     val originalCount = count
     // set the count to zero so we write at the beginning of the array
     this.count = 0
+    os.write(originalCount - 4) // -4 for the length bytes
+    os.write(0) // reserve for writeInt
     os.write(msgType)
     os.writeInt(_counter)
     this.count = originalCount

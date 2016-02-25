@@ -33,7 +33,7 @@ abstract class Master protected(conf : Config, cluster : Cluster) extends Actor 
   implicit val timeout = Timeout(30, TimeUnit.SECONDS)
 
   val jobSettings : JobSettings = JobSettings(conf)
-  var workerIdAddressMap : ArrayBuffer[ActorRef] = ArrayBuffer.fill(jobSettings.initialNumberOfWorkers)(null)
+  var workerIdAddressMap : ArrayBuffer[AddressPair] = ArrayBuffer.fill(jobSettings.initialNumberOfWorkers)(null)
   var successReceived : AtomicInteger = _
 
   private[this] var initialized: Boolean = false
@@ -61,7 +61,7 @@ abstract class Master protected(conf : Config, cluster : Cluster) extends Actor 
       log.info("Retrieving ActorRefs")
       val akkaPath = x.address.toString + "/user/" + jobSettings.workerSuffix
       // give each member an id
-      val fActorRef: Future[ActorRef] = (context.actorSelection(akkaPath) ? WorkerId(workerId)).mapTo[ActorRef]
+      val fActorRef: Future[AddressPair] = (context.actorSelection(akkaPath) ? WorkerId(workerId)).mapTo[AddressPair]
       val currentWorkerId = workerId
       fActorRef.foreach(x => workerIdAddressMap(currentWorkerId) = x)
       workerId += 1
@@ -69,7 +69,7 @@ abstract class Master protected(conf : Config, cluster : Cluster) extends Actor 
     }) {
       log.info("Distributing ActorRefs")
       val masterPath = cluster.selfAddress.toString + "/user/" + jobSettings.masterSuffix
-      val actorSelections: ArrayBuffer[ActorRef] = allWorkers()
+      val actorSelections: ArrayBuffer[ActorRef] = allWorkers().map(_.actorRef)
 
       // TODO sometimes sendMasteraddress does not complete, probably something with the callbackonallcomplete.
       // the latch probably only gets triggered on the moment the future is completed and not when the future has already been completed.
@@ -113,12 +113,12 @@ abstract class Master protected(conf : Config, cluster : Cluster) extends Actor 
   }
 
   def sendSuperStepState(): Unit = {
-    FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x ? State(GlobalState.SUPERSTEP)).mapTo[Boolean])) {
+    FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x.actorRef ? State(GlobalState.SUPERSTEP)).mapTo[Boolean])) {
       log.info("Sending prepare superstep")
-      FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x ? PrepareSuperStep()).mapTo[Boolean])) {
+      FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x.actorRef ? PrepareSuperStep()).mapTo[Boolean])) {
         log.info("Sending runsuperstep")
         successReceived = new AtomicInteger(allWorkers().size)
-        allWorkers().foreach(_ ! RunSuperStep(currentSuperStep))
+        allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
   }
@@ -132,7 +132,7 @@ abstract class Master protected(conf : Config, cluster : Cluster) extends Actor 
     case AllLoadingComplete() =>
       if (successReceived.decrementAndGet() == 0) {
         successReceived = null
-        allWorkers().foreach(_ ! AllLoadingComplete())
+        allWorkers().foreach(_.actorRef ! AllLoadingComplete())
         // set to superstep
         sendSuperStepState()
       }
@@ -142,7 +142,7 @@ abstract class Master protected(conf : Config, cluster : Cluster) extends Actor 
       if (successReceived.decrementAndGet() == 0) {
         currentSuperStep += 1
         successReceived = new AtomicInteger(allWorkers().size)
-        FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x ? SuperStepComplete()).mapTo[DoNextStep])) {
+        FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? SuperStepComplete()).mapTo[DoNextStep])) {
           implicit results =>
             log.info("Do next step ?")
             val doNextStep = results.map(_.yes).reduce(_ || _)
@@ -151,7 +151,7 @@ abstract class Master protected(conf : Config, cluster : Cluster) extends Actor 
             log.info(s"Hell $doNextStep")
             // set to superstep
             if (doNextStep) {
-              allWorkers().foreach(_ ! RunSuperStep(currentSuperStep))
+              allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
             } else {
               println(s"we're done, fuckers at ${currentSuperStep - 1}")
             }

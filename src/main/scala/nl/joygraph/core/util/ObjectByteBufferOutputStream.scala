@@ -18,6 +18,8 @@ class ObjectByteBufferOutputStream(val msgType : Byte, maxBufferSize : Int) exte
     // the ByteBuffer order is changed when Kryo is serializing objects.
     // we have to set the order to the default order when writing the counter and msg type.
     this.niobuffer.order(this.order())
+    this.writeInt(originalPos - 4)  // -4 for the length bytes
+    this.writeInt(0) // reserve for sourceId
     this.writeByte(msgType)
     this.writeInt(_counter)
     this.setPosition(originalPos) // THIS DOES NOT SET THE NIO BUFFER POSITION TO originalPos
@@ -26,10 +28,7 @@ class ObjectByteBufferOutputStream(val msgType : Byte, maxBufferSize : Int) exte
 
   // hands off the internal byte buffer
   override def handOff(): ByteBuffer = {
-    // before handing off, we need to set the limit of our buffer
-    // which is what is written as position by the wrapper.
-    // so anything between position and limit has to be written.
-    this.niobuffer.flip()
+    // common practice is to let the consumer flip the bytebuffer.
     // do not use getByteBuffer, as it does not leave the niobuffer intact.
     this.niobuffer
   }
