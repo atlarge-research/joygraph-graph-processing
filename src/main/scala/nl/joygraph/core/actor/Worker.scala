@@ -71,8 +71,6 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 
   private[this] var messageSender : MessageSenderNetty = _
   private[this] var messageReceiver : MessageReceiverNetty = _
-  private[this] var nettyServers : ArrayBuffer[String] = null
-
 
   private[this] var messagesSerializer : AsyncSerializer[(I, M)] = null
   private[this] var messagesDeserializer : AsyncDeserializer[(I, M)] = null
