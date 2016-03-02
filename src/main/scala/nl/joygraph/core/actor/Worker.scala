@@ -9,6 +9,7 @@ import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.typesafe.config.Config
 import nl.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
+import nl.joygraph.core.actor.messaging.{Messaging, TrieMapMessaging}
 import nl.joygraph.core.actor.state.GlobalState
 import nl.joygraph.core.config.JobSettings
 import nl.joygraph.core.message._
@@ -64,8 +65,9 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] val halted = TrieMap.empty[I, Boolean]
   private[this] val vEdges = TrieMap.empty[I, ConcurrentLinkedQueue[Edge[I,E]]]
   private[this] val vValues = TrieMap.empty[I, V]
-  private[this] var nextMessages = TrieMap.empty[I, ConcurrentLinkedQueue[M]]
-  private[this] var currentMessages = TrieMap.empty[I, ConcurrentLinkedQueue[M]]
+
+  private[this] val messaging : Messaging[I,M] = new TrieMapMessaging[I,M]
+
   private[this] var masterActorRef : ActorRef = null
   private[this] val vertexProgramInstance = clazz.newInstance()
 
@@ -147,7 +149,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       case 0 => // edge
         messagesDeserializer.deserialize(is, index, messageDeserializer){ implicit dstMPairs =>
           dstMPairs.foreach{
-            case (dst, m) => nextMessages.getOrElseUpdate(dst, new ConcurrentLinkedQueue[M]()).add(m)
+            case (dst, m) => messaging.add(dst, m)
           }
         }
     }
@@ -274,10 +276,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           allHalted = true
           vEdges.foreach {
             case (vId, edges) =>
-              val vMessages = currentMessages.get(vId) match {
-                case Some(x) => x.toIterable
-                case None => Iterable.empty[M]
-              }
+              val vMessages = messaging.get(vId)
               val vHalted = halted.getOrElse(vId, false)
               val hasMessage = vMessages.nonEmpty
               if (!vHalted || hasMessage) {
@@ -334,9 +333,8 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
     case byteString : ByteString =>
       handleSuperStepAkka(sender(), byteString)
     case SuperStepComplete() =>
-      currentMessages = nextMessages
-      nextMessages = TrieMap.empty[I, ConcurrentLinkedQueue[M]]
-      if (allHalted && currentMessages.isEmpty) {
+      messaging.onSuperStepComplete()
+      if (allHalted && messaging.emptyCurrentMessages) {
         log.info("Don't do next step! ")
         sender() ! DoNextStep(false)
       } else {
