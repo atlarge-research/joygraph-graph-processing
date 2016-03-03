@@ -9,7 +9,7 @@ import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.typesafe.config.Config
 import nl.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
-import nl.joygraph.core.actor.messaging.{Messaging, TrieMapMessaging}
+import nl.joygraph.core.actor.messaging.{MessageStore, TrieMapMessageStore}
 import nl.joygraph.core.actor.state.GlobalState
 import nl.joygraph.core.config.JobSettings
 import nl.joygraph.core.message._
@@ -27,22 +27,22 @@ import scala.concurrent.Future
 import scala.reflect._
 
 object Worker{
-  def workerFactory[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
+  def workerWithTrieMapMessageStore[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   (config: Config,
    parser: (String) => (I, I, E),
    clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
    partitioner : VertexPartitioner
   ): () => Worker[I,V,E,M] = () => {
-    new Worker[I,V,E,M](config, parser, clazz, partitioner)
+    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M]
   }
 }
 
-class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
+abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 (private[this] val config : Config,
  parser: (String) => (I, I, E),
  clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
  private[this] var partitioner : VertexPartitioner)
-  extends Actor with ActorLogging with MessageCounting {
+  extends Actor with ActorLogging with MessageCounting with MessageStore[I,M] {
 
   // TODO use different execution contexts at different places.
   import scala.concurrent.ExecutionContext.Implicits.global
@@ -65,8 +65,6 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] val halted = TrieMap.empty[I, Boolean]
   private[this] val vEdges = TrieMap.empty[I, ConcurrentLinkedQueue[Edge[I,E]]]
   private[this] val vValues = TrieMap.empty[I, V]
-
-  private[this] val messaging : Messaging[I,M] = new TrieMapMessaging[I,M]
 
   private[this] var masterActorRef : ActorRef = null
   private[this] val vertexProgramInstance = clazz.newInstance()
@@ -148,9 +146,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
     is.msgType match {
       case 0 => // edge
         messagesDeserializer.deserialize(is, index, messageDeserializer){ implicit dstMPairs =>
-          dstMPairs.foreach{
-            case (dst, m) => messaging.add(dst, m)
-          }
+          dstMPairs.foreach(_handleMessage(index, _))
         }
     }
   }
@@ -276,7 +272,7 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           allHalted = true
           vEdges.foreach {
             case (vId, edges) =>
-              val vMessages = messaging.get(vId)
+              val vMessages = messages(vId)
               val vHalted = halted.getOrElse(vId, false)
               val hasMessage = vMessages.nonEmpty
               if (!vHalted || hasMessage) {
@@ -333,8 +329,8 @@ class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
     case byteString : ByteString =>
       handleSuperStepAkka(sender(), byteString)
     case SuperStepComplete() =>
-      messaging.onSuperStepComplete()
-      if (allHalted && messaging.emptyCurrentMessages) {
+      messagesOnSuperStepComplete()
+      if (allHalted && emptyCurrentMessages) {
         log.info("Don't do next step! ")
         sender() ! DoNextStep(false)
       } else {

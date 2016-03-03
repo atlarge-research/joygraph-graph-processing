@@ -70,7 +70,7 @@ object Main extends App{
     Master.initialize(master)
   }
 
-  val workerFactory = Worker.workerFactory(
+  val workerFactory = Worker.workerWithTrieMapMessageStore(
     jobConfig,
     parser,
     programClass,

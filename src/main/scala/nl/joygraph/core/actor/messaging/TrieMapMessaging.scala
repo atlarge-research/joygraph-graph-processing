@@ -21,7 +21,7 @@ class TrieMapMessaging[I,M] extends Messaging[I,M] {
   override def get(source: I): Iterable[M] = {
     currentMessages.get(source) match {
       case Some(x) => x.toIterable
-      case None => Iterable.empty[M]
+      case None => EMPTY_MESSAGES
     }
   }
 

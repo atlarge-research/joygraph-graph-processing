@@ -6,6 +6,8 @@ package nl.joygraph.core.actor.messaging
   */
 trait Messaging[I,M] {
 
+  protected[this] val EMPTY_MESSAGES = Iterable.empty[M]
+
   def onSuperStepComplete()
 
   /**
