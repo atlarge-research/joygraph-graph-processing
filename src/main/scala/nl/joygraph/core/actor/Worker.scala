@@ -9,7 +9,7 @@ import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.typesafe.config.Config
 import nl.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
-import nl.joygraph.core.actor.messaging.{MessageStore, TrieMapMessageStore}
+import nl.joygraph.core.actor.messaging.{MessageStore, TrieMapMessageStore, TrieMapSerializedMessageStore}
 import nl.joygraph.core.actor.state.GlobalState
 import nl.joygraph.core.config.JobSettings
 import nl.joygraph.core.message._
@@ -35,13 +35,22 @@ object Worker{
   ): () => Worker[I,V,E,M] = () => {
     new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M]
   }
+
+  def workerWithSerializedTrieMapMessageStore[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
+  (config: Config,
+   parser: (String) => (I, I, E),
+   clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
+   partitioner : VertexPartitioner
+  ): () => Worker[I,V,E,M] = () => {
+    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapSerializedMessageStore[I,M]
+  }
 }
 
 abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 (private[this] val config : Config,
  parser: (String) => (I, I, E),
  clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
- private[this] var partitioner : VertexPartitioner)
+ protected[this] var partitioner : VertexPartitioner)
   extends Actor with ActorLogging with MessageCounting with MessageStore[I,M] {
 
   // TODO use different execution contexts at different places.
@@ -50,7 +59,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] val clazzI : Class[I] = classTag[I].runtimeClass.asInstanceOf[Class[I]]
   private[this] val clazzV : Class[V] = classTag[V].runtimeClass.asInstanceOf[Class[V]]
   private[this] val clazzE : Class[E] = classTag[E].runtimeClass.asInstanceOf[Class[E]]
-  private[this] val clazzM : Class[M] = classTag[M].runtimeClass.asInstanceOf[Class[M]]
+  protected[this] val clazzM : Class[M] = classTag[M].runtimeClass.asInstanceOf[Class[M]]
 
   private[this] var id : Option[Int] = None
   private[this] var workers : ArrayBuffer[AddressPair] = null
@@ -136,9 +145,12 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   }
 
   private[this] def handleSuperStepNetty(byteBuffer: ByteBuffer) = {
+    try {
     val index = byteBuffer.getInt()
     _handleSuperStep(index, byteBuffer)
     workers(index).actorRef ! Received()
+    } catch { case t : Throwable => t.printStackTrace()
+    }
   }
 
   private[this] def _handleSuperStep(index : Int, byteBuffer: ByteBuffer) = {
@@ -252,6 +264,8 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       resetSentReceived()
       println(s"$id phase ended")
       master() ! SuperStepComplete()
+    } else {
+      log.info(s"${id} Triggered but not completed : $numMessagesSent $numMessagesReceived")
     }
   }
 

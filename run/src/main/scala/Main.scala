@@ -29,12 +29,12 @@ object Main extends App{
       }
   }"""
 
-  val numWorkers = 2
+  val numWorkers = 4
 
-  val sourceId = 99843
-  val dataset = "/home/sietse/amazon0302.e"
-//  val dataset = "/home/sietse/cit-Patents-edge.txt"
-//  val sourceId = 4949326
+//  val sourceId = 99843
+//  val dataset = "/home/sietse/amazon0302.e"
+  val dataset = "/home/sietse/cit-Patents-edge.txt"
+  val sourceId = 4949326
   val jobCfg =
     s"""
       job {
@@ -70,7 +70,8 @@ object Main extends App{
     Master.initialize(master)
   }
 
-  val workerFactory = Worker.workerWithTrieMapMessageStore(
+//    val workerFactory = Worker.workerWithTrieMapMessageStore(
+  val workerFactory = Worker.workerWithSerializedTrieMapMessageStore(
     jobConfig,
     parser,
     programClass,

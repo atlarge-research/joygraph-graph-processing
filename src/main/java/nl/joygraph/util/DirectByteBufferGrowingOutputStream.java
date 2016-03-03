@@ -48,7 +48,7 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
         buf = byteBuffer;
     }
 
-    public void write(ByteBuffer byteBuffer) {
+    public synchronized void write(ByteBuffer byteBuffer) {
         // reserve bytes
         ensureCapacity(buf.position() + byteBuffer.remaining());
         buf.put(byteBuffer);
@@ -60,7 +60,18 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
 
     @Override
     public void write(int b) throws IOException {
-        ensureCapacity(buf.position() + 1);
-        buf.put((byte) b);
+        throw new UnsupportedOperationException("Unsupported write(int), use write(ByteBuffer)");
+    }
+
+    synchronized public void trim() {
+        // if it's not full, we can trim to save space
+        if (buf.position() < buf.capacity()) {
+            ByteBuffer newBuf = ByteBuffer.allocateDirect(buf.position());
+            ByteBuffer dup = buf.duplicate();
+            dup.flip();
+            newBuf.put(dup);
+            PlatformDependent.freeDirectBuffer(buf);
+            buf = newBuf;
+        }
     }
 }
