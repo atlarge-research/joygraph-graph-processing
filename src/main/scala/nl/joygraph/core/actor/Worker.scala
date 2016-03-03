@@ -1,7 +1,6 @@
 package nl.joygraph.core.actor
 
 import java.nio.ByteBuffer
-import java.util.concurrent.ConcurrentLinkedQueue
 
 import akka.actor._
 import akka.util.ByteString
@@ -11,6 +10,7 @@ import com.typesafe.config.Config
 import nl.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
 import nl.joygraph.core.actor.messaging.{MessageStore, TrieMapMessageStore, TrieMapSerializedMessageStore}
 import nl.joygraph.core.actor.state.GlobalState
+import nl.joygraph.core.actor.vertices.{TrieMapVerticesStore, VerticesStore}
 import nl.joygraph.core.config.JobSettings
 import nl.joygraph.core.message._
 import nl.joygraph.core.message.superstep._
@@ -20,8 +20,6 @@ import nl.joygraph.core.reader.LineProvider
 import nl.joygraph.core.util._
 import nl.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
 
-import scala.collection.JavaConversions._
-import scala.collection.concurrent.TrieMap
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Future
 import scala.reflect._
@@ -33,7 +31,7 @@ object Worker{
    clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
    partitioner : VertexPartitioner
   ): () => Worker[I,V,E,M] = () => {
-    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M]
+    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapVerticesStore[I,V,E]
   }
 
   def workerWithSerializedTrieMapMessageStore[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
@@ -42,7 +40,7 @@ object Worker{
    clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
    partitioner : VertexPartitioner
   ): () => Worker[I,V,E,M] = () => {
-    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapSerializedMessageStore[I,M]
+    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapVerticesStore[I,V,E]
   }
 }
 
@@ -51,7 +49,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
  parser: (String) => (I, I, E),
  clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
  protected[this] var partitioner : VertexPartitioner)
-  extends Actor with ActorLogging with MessageCounting with MessageStore[I,M] {
+  extends Actor with ActorLogging with MessageCounting with MessageStore[I,M] with VerticesStore[I,V,E] {
 
   // TODO use different execution contexts at different places.
   import scala.concurrent.ExecutionContext.Implicits.global
@@ -71,10 +69,6 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] var verticesDeserializer : AsyncDeserializer[I] = null
   private[this] var edgesDeserializer : AsyncDeserializer[(I,I,E)] = null
 
-  private[this] val halted = TrieMap.empty[I, Boolean]
-  private[this] val vEdges = TrieMap.empty[I, ConcurrentLinkedQueue[Edge[I,E]]]
-  private[this] val vValues = TrieMap.empty[I, V]
-
   private[this] var masterActorRef : ActorRef = null
   private[this] val vertexProgramInstance = clazz.newInstance()
 
@@ -93,17 +87,6 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   def state = _state
   def state_=(state : GlobalState.Value): Unit = {
     _state = state
-  }
-
-  def getCollection(vertex : I) : ConcurrentLinkedQueue[Edge[I,E]] = {
-    vEdges.getOrElseUpdate(vertex, new ConcurrentLinkedQueue[Edge[I,E]])
-  }
-
-  def addVertex(vertex : I) : Unit = getCollection(vertex)
-
-  def addEdge(src :I, dst : I, value : E): Unit = {
-    val neighbours = getCollection(src)
-    neighbours.add(Edge(dst, value))
   }
 
   private[this] def _handleDataLoading(index : Int, byteBuffer : ByteBuffer): Unit = {
@@ -248,7 +231,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
         s"vertices: ${verticesBufferNew.timeSpent.get() / 1000}s")
       println(s"deserializing edges: ${edgesDeserializer.timeSpent.get() / 1000}s " +
         s"vertices: ${verticesDeserializer.timeSpent.get() / 1000}s")
-      master() ! LoadingComplete(id.get, vEdges.keys.size, vEdges.values.map(_.size()).sum)
+      master() ! LoadingComplete(id.get, numVertices, numEdges)
   }
 
   protected[this] def loadingCompleteTrigger(): Unit = {
@@ -284,14 +267,13 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
         log.info(s"Running superstep $superStep")
           val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M]
           allHalted = true
-          vEdges.foreach {
-            case (vId, edges) =>
+          vertices.foreach { vId =>
               val vMessages = messages(vId)
-              val vHalted = halted.getOrElse(vId, false)
+              val vHalted = halted(vId)
               val hasMessage = vMessages.nonEmpty
               if (!vHalted || hasMessage) {
-                val value : V = vValues.getOrElse(vId, null.asInstanceOf[V])
-                val edgesIterable : Iterable[Edge[I,E]] = edges.toIterable
+                val value : V = vertexValue(vId)
+                val edgesIterable : Iterable[Edge[I,E]] = edges(vId)
                 val messageOut : scala.collection.mutable.MultiMap[I,M] = new scala.collection.mutable.OpenHashMap[I, scala.collection.mutable.Set[M]] with scala.collection.mutable.MultiMap[I, M]
                 val allMessages = ArrayBuffer.empty[M]
                 v.load(vId, value, edgesIterable, messageOut, allMessages)
@@ -300,12 +282,10 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 //                  case program : PerfectHashFormat[I] => program.run(v, superStep, new Mapper())
                   case _ => true // TODO exception
                 }
-                vValues(vId) = v.value
+                setVertexValue(vId, v.value)
+                setHalted(vId, hasHalted)
 
-                if (hasHalted) {
-                  halted(vId) = true
-                } else {
-                  halted.remove(vId)
+                if (!hasHalted) {
                   allHalted = false
                 }
 
