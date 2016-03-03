@@ -19,15 +19,14 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Future
 
 object Master {
-  def create(clazz : Class[_ <: Master], conf : Config, cluster : Cluster) : Master = {
+  def initialize(master : Master) : Master = {
     // assumes one constructor
-    val master = clazz.getConstructor(classOf[Config], classOf[Cluster]).newInstance(conf, cluster)
     master.initialize()
     master
   }
 }
 
-abstract class Master protected(conf : Config, cluster : Cluster) extends Actor with ActorLogging {
+abstract class Master(protected[this] val conf : Config, cluster : Cluster) extends Actor with ActorLogging {
 
   import scala.concurrent.ExecutionContext.Implicits.global
   implicit val timeout = Timeout(30, TimeUnit.SECONDS)

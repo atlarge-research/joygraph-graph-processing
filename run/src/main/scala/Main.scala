@@ -4,6 +4,7 @@ import com.typesafe.config.ConfigFactory
 import nl.joygraph.core.actor.{BaseActor, Master, Worker}
 import nl.joygraph.core.partitioning.impl.VertexHashPartitioner
 import nl.joygraph.core.program.{NullClass, Vertex}
+import nl.joygraph.impl.hadoop.actor.HadoopMaster
 import nl.joygraph.programs.BFS
 
 object Main extends App{
@@ -13,6 +14,7 @@ object Main extends App{
         provider = "akka.cluster.ClusterActorRefProvider"
       }
       remote {
+        watch-failure-detector.acceptable-heartbeat-pause = 10
         netty.tcp {
             hostname = "127.0.0.1"
             maximum-frame-size = 10M
@@ -64,7 +66,8 @@ object Main extends App{
   }
 
   val masterFactory = (cluster : Cluster) => {
-    Master.create(classOf[nl.joygraph.impl.hadoop.actor.Master], jobConfig, cluster)
+    val master = new Master(jobConfig, cluster) with HadoopMaster
+    Master.initialize(master)
   }
 
   val workerFactory = Worker.workerFactory(

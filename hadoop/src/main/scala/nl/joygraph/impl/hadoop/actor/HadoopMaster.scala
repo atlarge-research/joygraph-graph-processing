@@ -1,11 +1,12 @@
 package nl.joygraph.impl.hadoop.actor
 
-import akka.cluster.Cluster
 import com.typesafe.config.Config
+import nl.joygraph.core.actor.Master
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem}
 
-class Master(conf : Config, cluster : Cluster) extends nl.joygraph.core.actor.Master(conf, cluster) {
+trait HadoopMaster extends Master {
+  protected[this] val conf : Config
   val hadoopConfiguration = new Configuration(false)
   hadoopConfiguration.set("fs.defaultFS", conf.getString("fs.defaultFS"))
   private[this] val fs = FileSystem.get(hadoopConfiguration)
