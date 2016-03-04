@@ -16,6 +16,9 @@ trait TrieMapVerticesStore[I,V,E] extends VerticesStore[I,V,E] {
 
   protected[this] def addVertex(vertex : I) : Unit = getCollection(vertex)
 
+  protected[this] def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]]) = {
+    // noop
+  }
 
   protected[this] def addEdge(src :I, dst : I, value : E): Unit = {
     val neighbours = getCollection(src)

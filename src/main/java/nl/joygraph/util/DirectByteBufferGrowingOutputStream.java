@@ -15,6 +15,10 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
         buf = ByteBuffer.allocateDirect(byteBufferSize);
     }
 
+    public boolean isEmpty() {
+        return buf.position() == 0;
+    }
+
     private static int hugeCapacity(int minCapacity) {
         if (minCapacity < 0) // overflow
             throw new OutOfMemoryError();

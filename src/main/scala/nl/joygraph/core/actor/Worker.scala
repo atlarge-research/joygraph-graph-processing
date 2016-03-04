@@ -10,7 +10,7 @@ import com.typesafe.config.Config
 import nl.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
 import nl.joygraph.core.actor.messaging.{MessageStore, TrieMapMessageStore, TrieMapSerializedMessageStore}
 import nl.joygraph.core.actor.state.GlobalState
-import nl.joygraph.core.actor.vertices.{TrieMapVerticesStore, VerticesStore}
+import nl.joygraph.core.actor.vertices.{TrieMapSerializedVerticesStore, TrieMapVerticesStore, VerticesStore}
 import nl.joygraph.core.config.JobSettings
 import nl.joygraph.core.message._
 import nl.joygraph.core.message.superstep._
@@ -40,7 +40,8 @@ object Worker{
    clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
    partitioner : VertexPartitioner
   ): () => Worker[I,V,E,M] = () => {
-    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapVerticesStore[I,V,E]
+    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
+//    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
   }
 }
 
@@ -54,9 +55,9 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   // TODO use different execution contexts at different places.
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  private[this] val clazzI : Class[I] = classTag[I].runtimeClass.asInstanceOf[Class[I]]
-  private[this] val clazzV : Class[V] = classTag[V].runtimeClass.asInstanceOf[Class[V]]
-  private[this] val clazzE : Class[E] = classTag[E].runtimeClass.asInstanceOf[Class[E]]
+  protected[this] val clazzI : Class[I] = classTag[I].runtimeClass.asInstanceOf[Class[I]]
+  protected[this] val clazzV : Class[V] = classTag[V].runtimeClass.asInstanceOf[Class[V]]
+  protected[this] val clazzE : Class[E] = classTag[E].runtimeClass.asInstanceOf[Class[E]]
   protected[this] val clazzM : Class[M] = classTag[M].runtimeClass.asInstanceOf[Class[M]]
 
   private[this] var id : Option[Int] = None
@@ -309,7 +310,9 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
                         }
                     }
                 }
+                releaseEdgesIterable(edgesIterable)
               }
+            releaseMessages(vMessages)
           }
 
         messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>

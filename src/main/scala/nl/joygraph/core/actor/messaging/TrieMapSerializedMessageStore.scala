@@ -1,35 +1,27 @@
 package nl.joygraph.core.actor.messaging
 
-import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
 import nl.joygraph.core.partitioning.VertexPartitioner
+import nl.joygraph.core.util.{KryoSerialization, SimplePool}
 
-import scala.collection.concurrent.TrieMap
-
-trait TrieMapSerializedMessageStore[I,M] extends MessageStore[I,M] {
+trait TrieMapSerializedMessageStore[I,M] extends MessageStore[I,M] with KryoSerialization {
 
   private[this] val messaging = new TrieMapSerializedMessaging[I,M]
-  private[this] val kryos : TrieMap[Int, Kryo] = TrieMap.empty
-  private[this] val kryoOutputs : TrieMap[Int, KryoOutput] = TrieMap.empty
-  private[this] val reusableIterables : TrieMap[Int, ReusableIterable[M]] = TrieMap.empty
-  private[this] var _maxMessageSize : Option[Int] = None
   protected[this] var partitioner : VertexPartitioner
   protected[this] val clazzM : Class[M]
+  private[this] val reusableIterablePool = new SimplePool[ReusableIterable[M]]({
+    val reusableIterable = new ReusableIterable[M] {
+      override protected[this] def deserializeObject(): M = _kryo.readObject(_input, clazzM)
+    }
+    reusableIterable.input(new ByteBufferInput(maxMessageSize))
+    reusableIterable
+  })
 
-  private[this] def maxMessageSize : Int = _maxMessageSize match {
-    case Some(x) => x
-    case None => 4096
-  }
-  def maxMessageSize_=(maxMessageSize : Int) = _maxMessageSize = Some(maxMessageSize)
-
-  private[this] def kryo(index : Int) : Kryo = {
-    kryos.getOrElseUpdate(index, new Kryo)
-  }
 
   override protected[this] def _handleMessage(index : Int, dstMPair : (I, M)): Unit = {
     implicit val kryoInstance = kryo(index)
     kryoInstance.synchronized {
-      implicit val kryoOutput = kryoOutputs.getOrElseUpdate(index, new KryoOutput(maxMessageSize, maxMessageSize))
+      implicit val kryoOutputInstance = kryoOutput(index)
       val (dst, m) = dstMPair
       messaging.add(dst, m)
     }
@@ -37,17 +29,23 @@ trait TrieMapSerializedMessageStore[I,M] extends MessageStore[I,M] {
 
   override protected[this] def messages(dst : I) : Iterable[M] = {
     val index = partitioner.destination(dst)
-    implicit val iterable = reusableIterables.getOrElseUpdate(index, {
-      val reusableIterable = new ReusableIterable[M]
-      reusableIterable.clazz(clazzM)
-      reusableIterable.input(new ByteBufferInput(maxMessageSize, maxMessageSize))
-      reusableIterable
-    })
-    iterable.synchronized{
-      iterable.kryo(kryo(index))
-      messaging.get(dst)
+    implicit val iterable = reusableIterablePool.borrow()
+    iterable.kryo(kryo(index))
+    val messages = messaging.get(dst)
+    if(messages.isEmpty) {
+      releaseMessages(iterable)
+    }
+    messages
+  }
+
+  override protected[this] def releaseMessages(messages : Iterable[M]) = {
+    messages match {
+      case reusableIterable : ReusableIterable[M] =>
+        reusableIterablePool.release(reusableIterable)
+      case _ => // noop
     }
   }
+
   override protected[this] def messagesOnSuperStepComplete() = {
     messaging.onSuperStepComplete()
   }

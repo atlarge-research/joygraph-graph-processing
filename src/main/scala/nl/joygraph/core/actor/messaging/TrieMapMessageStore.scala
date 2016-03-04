@@ -20,4 +20,8 @@ trait TrieMapMessageStore[I,M] extends MessageStore[I,M]{
     messaging.emptyCurrentMessages
   }
 
+  protected[this] def releaseMessages(messages : Iterable[M]): Unit = {
+    //noop
+  }
+
 }
