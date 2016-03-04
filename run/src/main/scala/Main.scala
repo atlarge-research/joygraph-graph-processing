@@ -5,7 +5,7 @@ import nl.joygraph.core.actor.{BaseActor, Master, Worker}
 import nl.joygraph.core.partitioning.impl.VertexHashPartitioner
 import nl.joygraph.core.program.{NullClass, Vertex}
 import nl.joygraph.impl.hadoop.actor.HadoopMaster
-import nl.joygraph.programs.BFS
+import nl.joygraph.programs.ConnectedComponents
 
 object Main extends App{
   val cfg = (port : Int, seedPort : Int) => s"""
@@ -52,7 +52,8 @@ object Main extends App{
     """
 
   val jobConfig = ConfigFactory.parseString(jobCfg)
-  val programClass = classOf[BFS]
+//  val programClass = classOf[BFS]
+  val programClass = classOf[ConnectedComponents]
 
   val parser : (String) => (Long, Long, NullClass) = (l : String) => {
 //    val Array(a,b) = l.split("\\s")

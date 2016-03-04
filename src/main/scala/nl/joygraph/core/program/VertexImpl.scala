@@ -4,17 +4,12 @@ import java.io.InputStream
 
 import scala.collection.mutable
 
-class VertexImpl[I,V,E,M] extends Vertex[I,V,E,M] {
+abstract class VertexImpl[I,V,E,M] extends Vertex[I,V,E,M] {
   private[this] var _id : I = _
   private[this] var _value : V = _
   private[this] var _edges : Iterable[Edge[I,E]] = _
   private[this] var _messages : mutable.MultiMap[I,M] = _
   private[this] var _allMessages : mutable.Buffer[M] = _
-
-//  private[this] def resetMessages(): Unit = {
-//    _messages = new mutable.OpenHashMap[I, ArrayBuffer[M]] with mutable.MultiMap[I, M]
-//    _allMessages = new mutable.ArrayBuffer[M]
-//  }
 
   override def id: I = _id
 

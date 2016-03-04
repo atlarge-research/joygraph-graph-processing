@@ -271,10 +271,17 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
     case RunSuperStep(superStep) =>
       Future{
         log.info(s"Running superstep $superStep")
-          val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M]
-          allHalted = true
-          vertices.foreach { vId =>
-              val vMessages = messages(vId)
+        def addEdgeVertex : (I, I, E) => Unit = addEdge
+
+        val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M] {
+          override def addEdge(dst: I, e: E): Unit = {
+            addEdgeVertex(id, dst, e)
+          }
+        }
+
+        allHalted = true
+        vertices.foreach { vId =>
+          val vMessages = messages(vId)
               val vHalted = halted(vId)
               val hasMessage = vMessages.nonEmpty
               if (!vHalted || hasMessage) {
