@@ -1,4 +1,6 @@
-package nl.joygraph.core.actor.messaging
+package nl.joygraph.core.actor.messaging.impl
+
+import nl.joygraph.core.actor.messaging.{MessageStore, Messaging}
 
 trait TrieMapMessageStore[I,M] extends MessageStore[I,M]{
   private[this] val messaging : Messaging[I,M] = new TrieMapMessaging[I,M]

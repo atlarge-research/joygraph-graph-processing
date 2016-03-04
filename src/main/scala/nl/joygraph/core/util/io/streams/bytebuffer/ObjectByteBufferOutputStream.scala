@@ -1,8 +1,9 @@
-package nl.joygraph.core.util
+package nl.joygraph.core.util.io.streams.bytebuffer
 
 import java.nio.ByteBuffer
 
 import com.esotericsoftware.kryo.io.ByteBufferOutput
+import nl.joygraph.core.util.io.streams.ObjectOutputStream
 
 class ObjectByteBufferOutputStream(val msgType : Byte, maxBufferSize : Int) extends ByteBufferOutput(maxBufferSize, maxBufferSize) with ObjectOutputStream[ByteBuffer] {
   resetOOS()

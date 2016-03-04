@@ -1,8 +1,9 @@
-package nl.joygraph.core.util
+package nl.joygraph.core.util.io.streams.bytebuffer
 
 import java.nio.ByteBuffer
 
 import com.esotericsoftware.kryo.io.ByteBufferInput
+import nl.joygraph.core.util.io.streams.ObjectInputStream
 
 class ObjectByteBufferInputStream(byteBuffer : ByteBuffer) extends ByteBufferInput(byteBuffer) with ObjectInputStream {
 //  this.varIntsEnabled = false

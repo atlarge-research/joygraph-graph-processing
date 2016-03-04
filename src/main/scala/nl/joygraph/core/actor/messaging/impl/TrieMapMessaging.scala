@@ -1,6 +1,8 @@
-package nl.joygraph.core.actor.messaging
+package nl.joygraph.core.actor.messaging.impl
 
 import java.util.concurrent.ConcurrentLinkedQueue
+
+import nl.joygraph.core.actor.messaging.Messaging
 
 import scala.collection.JavaConversions._
 import scala.collection.concurrent.TrieMap

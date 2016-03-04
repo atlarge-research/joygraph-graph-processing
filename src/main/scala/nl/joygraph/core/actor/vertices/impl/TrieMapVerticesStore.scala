@@ -1,7 +1,8 @@
-package nl.joygraph.core.actor.vertices
+package nl.joygraph.core.actor.vertices.impl
 
 import java.util.concurrent.ConcurrentLinkedQueue
 
+import nl.joygraph.core.actor.vertices.VerticesStore
 import nl.joygraph.core.program.Edge
 
 import scala.collection.JavaConversions._

@@ -8,9 +8,13 @@ import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.typesafe.config.Config
 import nl.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
-import nl.joygraph.core.actor.messaging.{MessageStore, TrieMapMessageStore, TrieMapSerializedMessageStore}
+import nl.joygraph.core.actor.messaging.MessageStore
+import nl.joygraph.core.actor.messaging.impl.TrieMapMessageStore
+import nl.joygraph.core.actor.messaging.impl.serialized.TrieMapSerializedMessageStore
 import nl.joygraph.core.actor.state.GlobalState
-import nl.joygraph.core.actor.vertices.{TrieMapSerializedVerticesStore, TrieMapVerticesStore, VerticesStore}
+import nl.joygraph.core.actor.vertices.VerticesStore
+import nl.joygraph.core.actor.vertices.impl.TrieMapVerticesStore
+import nl.joygraph.core.actor.vertices.impl.serialized.TrieMapSerializedVerticesStore
 import nl.joygraph.core.config.JobSettings
 import nl.joygraph.core.message._
 import nl.joygraph.core.message.superstep._
@@ -18,6 +22,7 @@ import nl.joygraph.core.partitioning.VertexPartitioner
 import nl.joygraph.core.program._
 import nl.joygraph.core.reader.LineProvider
 import nl.joygraph.core.util._
+import nl.joygraph.core.util.io.streams.bytebuffer.ObjectByteBufferInputStream
 import nl.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
 
 import scala.collection.mutable.ArrayBuffer

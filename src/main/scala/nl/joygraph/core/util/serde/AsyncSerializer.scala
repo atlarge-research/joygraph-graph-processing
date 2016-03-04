@@ -6,7 +6,7 @@ import java.util.concurrent.{BlockingQueue, LinkedBlockingQueue}
 
 import com.esotericsoftware.kryo.io.Output
 import com.esotericsoftware.kryo.{Kryo, KryoException}
-import nl.joygraph.core.util.ObjectByteBufferOutputStream
+import nl.joygraph.core.util.io.streams.bytebuffer.ObjectByteBufferOutputStream
 
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{ExecutionContext, Future}

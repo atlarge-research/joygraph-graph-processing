@@ -1,6 +1,8 @@
-package nl.joygraph.core.actor.messaging
+package nl.joygraph.core.actor.messaging.impl.serialized
 
 import com.esotericsoftware.kryo.Kryo
+import nl.joygraph.core.util.collection.ReusableIterable
+import nl.joygraph.core.util.io.KryoOutput
 
 trait SerializedMessaging[I,M]  {
   protected[this] val EMPTY_MESSAGES = Iterable.empty[M]

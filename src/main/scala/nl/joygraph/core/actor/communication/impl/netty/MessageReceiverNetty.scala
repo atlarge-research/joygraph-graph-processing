@@ -8,7 +8,7 @@ import io.netty.buffer.{ByteBufAllocator, PooledByteBufAllocator}
 import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.channel.{Channel, ChannelFuture, ChannelFutureListener, ChannelOption}
-import nl.joygraph.core.util.PortFinder
+import nl.joygraph.core.util.net.PortFinder
 
 import scala.concurrent.{Future, Promise}
 

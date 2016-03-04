@@ -1,7 +1,9 @@
-package nl.joygraph.core.actor.messaging
+package nl.joygraph.core.actor.messaging.impl.serialized
 
 import com.esotericsoftware.kryo.io.ByteBufferInput
+import nl.joygraph.core.actor.messaging.MessageStore
 import nl.joygraph.core.partitioning.VertexPartitioner
+import nl.joygraph.core.util.collection.ReusableIterable
 import nl.joygraph.core.util.{KryoSerialization, SimplePool}
 
 trait TrieMapSerializedMessageStore[I,M] extends MessageStore[I,M] with KryoSerialization {

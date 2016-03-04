@@ -1,4 +1,4 @@
-package nl.joygraph.core.actor.messaging
+package nl.joygraph.core.util.collection
 
 import java.nio.ByteBuffer
 

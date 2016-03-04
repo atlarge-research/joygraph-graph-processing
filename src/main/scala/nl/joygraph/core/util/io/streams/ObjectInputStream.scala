@@ -1,4 +1,4 @@
-package nl.joygraph.core.util
+package nl.joygraph.core.util.io.streams
 
 trait ObjectInputStream {
   val msgType : Byte

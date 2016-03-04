@@ -1,7 +1,7 @@
 package nl.joygraph.core.util
 
 import com.esotericsoftware.kryo.Kryo
-import nl.joygraph.core.actor.messaging.KryoOutput
+import nl.joygraph.core.util.io.KryoOutput
 
 import scala.collection.concurrent.TrieMap
 

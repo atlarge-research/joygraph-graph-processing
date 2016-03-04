@@ -4,7 +4,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.Input
-import nl.joygraph.core.util.ObjectByteBufferInputStream
+import nl.joygraph.core.util.io.streams.bytebuffer.ObjectByteBufferInputStream
 
 import scala.collection.mutable.ArrayBuffer
 

@@ -2,7 +2,8 @@ package nl.joygraph.util
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
-import nl.joygraph.core.actor.messaging.{KryoOutput, ReusableIterable}
+import nl.joygraph.core.util.collection.ReusableIterable
+import nl.joygraph.core.util.io.KryoOutput
 import org.scalatest.FunSuite
 
 class ReusableIterableTest extends FunSuite {

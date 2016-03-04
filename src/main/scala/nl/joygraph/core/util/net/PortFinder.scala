@@ -1,4 +1,4 @@
-package nl.joygraph.core.util
+package nl.joygraph.core.util.net
 
 import java.net.ServerSocket
 

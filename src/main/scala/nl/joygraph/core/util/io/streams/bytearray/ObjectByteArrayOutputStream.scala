@@ -1,6 +1,8 @@
-package nl.joygraph.core.util
+package nl.joygraph.core.util.io.streams.bytearray
 
 import java.io.{ByteArrayOutputStream, DataOutputStream}
+
+import nl.joygraph.core.util.io.streams.ObjectOutputStream
 
 class ObjectByteArrayOutputStream(val msgType : Byte) extends ByteArrayOutputStream with ObjectOutputStream[Array[Byte]] {
 

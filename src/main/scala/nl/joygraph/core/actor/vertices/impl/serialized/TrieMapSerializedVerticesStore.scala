@@ -1,13 +1,14 @@
-package nl.joygraph.core.actor.vertices
+package nl.joygraph.core.actor.vertices.impl.serialized
 
 import java.util.concurrent.atomic.AtomicLong
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
 import com.esotericsoftware.kryo.pool.{KryoFactory, KryoPool}
-import nl.joygraph.core.actor.messaging.ReusableIterable
+import nl.joygraph.core.actor.vertices.VerticesStore
 import nl.joygraph.core.partitioning.VertexPartitioner
 import nl.joygraph.core.program.{Edge, NullClass}
+import nl.joygraph.core.util.collection.ReusableIterable
 import nl.joygraph.core.util.{KryoSerialization, SimplePool}
 import nl.joygraph.util.DirectByteBufferGrowingOutputStream
 
