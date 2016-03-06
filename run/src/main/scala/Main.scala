@@ -1,6 +1,6 @@
 import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
-import com.typesafe.config.ConfigFactory
+import com.typesafe.config.{Config, ConfigFactory}
 import nl.joygraph.core.actor.{BaseActor, Master, Worker}
 import nl.joygraph.core.partitioning.impl.VertexHashPartitioner
 import nl.joygraph.core.program.{NullClass, Vertex}
@@ -66,7 +66,7 @@ object Main extends App{
     v.edges
   }
 
-  val masterFactory = (cluster : Cluster) => {
+  val masterFactory = (jobConfig : Config, cluster : Cluster) => {
     val master = new Master(jobConfig, cluster) with HadoopMaster
     Master.initialize(master)
   }

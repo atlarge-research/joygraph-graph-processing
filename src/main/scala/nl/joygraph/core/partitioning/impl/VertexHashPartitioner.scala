@@ -15,6 +15,8 @@ class VertexHashPartitioner extends VertexPartitioner {
     _numWorkers = numWorkers
   }
 
+  def numWorkers(numWorkers : Int) = _numWorkers = numWorkers
+
   def init(conf : Config): Unit = {
     _numWorkers = conf.getInt(VertexHashPartitioner.NUM_TOTAL_WORKERS)
   }

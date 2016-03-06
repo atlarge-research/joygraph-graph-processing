@@ -5,6 +5,7 @@ lazy val commonSettings = Seq(
   organization := "io.joygraph",
   version := "0.1.0",
   scalaVersion := "2.12.0-M3"
+//  checksums := Seq("")
 )
 
 lazy val programs = (project in file("programs")).
@@ -17,6 +18,7 @@ lazy val run = (project in file("run")).
   settings(commonSettings: _*).
   settings(
     // other settings
+    libraryDependencies ++= testDependencies
   ).dependsOn(joygraph)
   .dependsOn(hadoop).dependsOn(programs)
 
@@ -44,9 +46,10 @@ libraryDependencies ++= Seq(
   "com.typesafe" % "config" % "1.3.0",
   "com.esotericsoftware" % "kryo-shaded" % "3.0.3",
   "io.netty" % "netty-all" % "4.0.34.Final"
+//  "net.openhft" % "chronicle-map" % "3.4.2-beta"
 )
 
-val testDependencies = Seq(
+lazy val testDependencies = Seq(
   "org.scalatest" %% "scalatest" % "3.0.0-M12" % "test"
 )
 

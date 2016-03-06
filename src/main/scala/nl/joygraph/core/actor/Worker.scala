@@ -35,7 +35,7 @@ object Worker{
    parser: (String) => (I, I, E),
    clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
    partitioner : VertexPartitioner
-  ): () => Worker[I,V,E,M] = () => {
+  ): Worker[I,V,E,M] = {
     new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapVerticesStore[I,V,E]
   }
 
@@ -44,7 +44,7 @@ object Worker{
    parser: (String) => (I, I, E),
    clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
    partitioner : VertexPartitioner
-  ): () => Worker[I,V,E,M] = () => {
+  ): Worker[I,V,E,M] = {
     new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
 //    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
   }
