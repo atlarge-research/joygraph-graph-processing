@@ -34,6 +34,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   val jobSettings : JobSettings = JobSettings(conf)
   var workerIdAddressMap : ArrayBuffer[AddressPair] = ArrayBuffer.fill(jobSettings.initialNumberOfWorkers)(null)
   var successReceived : AtomicInteger = _
+  var doneDoOutput : AtomicInteger = _
 
   private[this] var initialized: Boolean = false
   val numVertices = new AtomicLong(0)
@@ -122,6 +123,14 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     }
   }
 
+  def sendDoOutput() : Unit = {
+
+    FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x.actorRef ? State(GlobalState.POST_SUPERSTEP)).mapTo[Boolean])) {
+      doneDoOutput = new AtomicInteger(allWorkers().size)
+      allWorkers().zipWithIndex.foreach{case (worker, index) => worker.actorRef ! DoOutput(s"${jobSettings.outputPath}/$index.part")}
+    }
+  }
+
   override def receive = {
     case MemberUp(member) =>
       initialize()
@@ -152,9 +161,15 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
             if (doNextStep) {
               allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
             } else {
+              sendDoOutput()
               println(s"we're done, fuckers at ${currentSuperStep - 1}")
             }
         }
+      }
+    case DoneOutput() =>
+      log.info(s"Output left: ${doneDoOutput.get}")
+      if (doneDoOutput.decrementAndGet() == 0) {
+        log.info("All output done, send shutdown.")
       }
   }
 

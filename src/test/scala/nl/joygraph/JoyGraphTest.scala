@@ -1,12 +1,14 @@
 package nl.joygraph
 
+import java.io.OutputStream
+
 import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
 import com.typesafe.config.{Config, ConfigFactory}
 import nl.joygraph.core.actor.{BaseActor, Master, Worker}
 import nl.joygraph.core.partitioning.VertexPartitioner
 import nl.joygraph.core.partitioning.impl.VertexHashPartitioner
-import nl.joygraph.core.program.VertexProgramLike
+import nl.joygraph.core.program.{Vertex, VertexProgramLike}
 import nl.joygraph.core.util.net.PortFinder
 
 object JoyGraphTestBuilder {
@@ -21,13 +23,20 @@ class JoyGraphTestBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I
   private[this] var _workers : Option[Int] = None
   private[this] var _dataPath : Option[String] = None
   private[this] var _parser : Option[(String) => (I,I,E)] = None
-  private[this] var _workerFactory : Option[(Config, (String) => (I, I, E), Class[_ <: VertexProgramLike[I,V,E,M]], VertexPartitioner) => Worker[I,V,E,M]] = None
+  private[this] var _workerFactory : Option[(Config, (String) => (I, I, E), (Vertex[I,V,E,M], OutputStream) => Any, Class[_ <: VertexProgramLike[I,V,E,M]], VertexPartitioner) => Worker[I,V,E,M]] = None
   private[this] var _masterFactory : Option[(Config, Cluster) => Master] = None
   private[this] var _partitioner : Option[VertexPartitioner] = None
   private[this] var _programParameters : Option[(String, String)] = None
+  private[this] var _outputPath : Option[String] = None
+  private[this] var _writer : Option[(Vertex[I,V,E,M], OutputStream) => Any] = None
 
   def programParameters(keyValue: (String, String)) : BuilderType = {
     _programParameters = Option(keyValue)
+    this
+  }
+
+  def outputPath(path: String) : BuilderType = {
+    _outputPath = Option(path)
     this
   }
 
@@ -38,6 +47,11 @@ class JoyGraphTestBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I
 
   def dataPath(path : String) : BuilderType = {
     _dataPath = Option(path)
+    this
+  }
+
+  def writer(f : (Vertex[I,V,E,M], OutputStream) => Any) : BuilderType = {
+    _writer = Option(f)
     this
   }
 
@@ -55,6 +69,7 @@ class JoyGraphTestBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I
   def workerFactory(workerFactory :
                     (Config,
                       (String) => (I, I, E),
+                      (Vertex[I,V,E,M], OutputStream) => Any,
                       Class[_ <: VertexProgramLike[I,V,E,M]],
                       VertexPartitioner) => Worker[I,V,E,M]) : BuilderType = {
     _workerFactory = Option(workerFactory)
@@ -84,6 +99,11 @@ class JoyGraphTestBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I
       case None => throw new IllegalArgumentException("Missing line parser")
     }
 
+    _writer match {
+      case Some(writer) => graphTestInstance.writer(writer)
+      case None => throw new IllegalArgumentException("Missing writer")
+    }
+
     _masterFactory match {
       case Some(masterFactory) => graphTestInstance.masterFactory(masterFactory)
       case None => throw new IllegalArgumentException("Missing master factory")
@@ -104,6 +124,11 @@ class JoyGraphTestBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I
       case None => // emit some warning
     }
 
+    _outputPath match {
+      case Some(outputPath) => graphTestInstance.outputPath(outputPath)
+      case None => throw new IllegalArgumentException("Missing output path")
+    }
+
     graphTestInstance
   }
 }
@@ -113,10 +138,12 @@ protected[this] class JoyGraphTest[I,V,E,M](programClazz : Class[_ <: VertexProg
   private[this] var _workers : Int = _
   private[this] var _dataPath : String = _
   private[this] var _parser : (String) => (I,I,E) = _
-  private[this] var _workerFactory : (Config, (String) => (I, I, E), Class[_ <: VertexProgramLike[I,V,E,M]], VertexPartitioner) => Worker[I,V,E,M] = _
+  private[this] var _writer : (Vertex[I,V,E,M], OutputStream) => Any = _
+  private[this] var _workerFactory : (Config, (String) => (I, I, E), (Vertex[I,V,E,M], OutputStream) => Any, Class[_ <: VertexProgramLike[I,V,E,M]], VertexPartitioner) => Worker[I,V,E,M] = _
   private[this] var _masterFactory : (Config, Cluster) => Master = _
   private[this] var _partitioner : VertexPartitioner = _
   private[this] var _programParameters : Option[(String, String)] = None
+  private[this] var _outputPath : String = _
 
   def programParameters(keyValue : (String, String)) : Type = {
     _programParameters = Option(keyValue)
@@ -133,8 +160,18 @@ protected[this] class JoyGraphTest[I,V,E,M](programClazz : Class[_ <: VertexProg
     this
   }
 
+  def outputPath(path: String) : Type = {
+    _outputPath = path
+    this
+  }
+
   def parser(f : (String) => (I, I, E)) : Type = {
     _parser = f
+    this
+  }
+
+  def writer(f : (Vertex[I,V,E,M], OutputStream) => Any) : Type = {
+    _writer = f
     this
   }
 
@@ -146,6 +183,7 @@ protected[this] class JoyGraphTest[I,V,E,M](programClazz : Class[_ <: VertexProg
   def workerFactory(workerFactory :
                     (Config,
                       (String) => (I, I, E),
+                      (Vertex[I,V,E,M], OutputStream) => Any,
                       Class[_ <: VertexProgramLike[I,V,E,M]],
                       VertexPartitioner) => Worker[I,V,E,M]) : Type = {
     _workerFactory = workerFactory
@@ -186,10 +224,12 @@ protected[this] class JoyGraphTest[I,V,E,M](programClazz : Class[_ <: VertexProg
       job {
         workers.initial = ${_workers}
         data.path = "file://${_dataPath}"
+        output.path = "file://${_outputPath}"
       }
       fs.defaultFS = "file:///"
       worker {
         suffix = "worker"
+        output.lineWriterClass = "nl.joygraph.impl.hadoop.writer.HadoopLineWriter"
         input.lineProviderClass = "nl.joygraph.impl.hadoop.reader.HadoopLineProvider"
       }
       master.suffix = "master"
@@ -210,7 +250,7 @@ protected[this] class JoyGraphTest[I,V,E,M](programClazz : Class[_ <: VertexProg
     for (i <- 0 until _workers) {
       val config = ConfigFactory.parseString(cfg(port, seedPort))
       val system = ActorSystem(actorSystemName, config)
-      system.actorOf(Props(classOf[BaseActor], jobConfig, _masterFactory, () => _workerFactory(jobConfig, _parser, programClazz, _partitioner)))
+      system.actorOf(Props(classOf[BaseActor], jobConfig, _masterFactory, () => _workerFactory(jobConfig, _parser, _writer, programClazz, _partitioner)))
       port = PortFinder.findFreePort(port + 1)
     }
     Thread.sleep(100000L)

@@ -21,6 +21,7 @@ trait Vertex[I,V,E,M] {
   def sendAll(m : M)
   def addEdge(dst : I, e : E)
   def load(id: I, value: V, edges: Iterable[Edge[I,E]], messages : mutable.MultiMap[I,M], allMessages : mutable.Buffer[M])
+  def load(id: I, value: V, edges: Iterable[Edge[I,E]])
   def load(bytes: Array[Byte])
   def load(is : InputStream)
 

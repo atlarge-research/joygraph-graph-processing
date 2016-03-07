@@ -1,5 +1,6 @@
 package nl.joygraph.core.actor
 
+import java.io.OutputStream
 import java.nio.ByteBuffer
 
 import akka.actor._
@@ -33,19 +34,21 @@ object Worker{
   def workerWithTrieMapMessageStore[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   (config: Config,
    parser: (String) => (I, I, E),
+   outputWriter: (Vertex[I,V,E,M], OutputStream) => Any,
    clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
    partitioner : VertexPartitioner
   ): Worker[I,V,E,M] = {
-    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapVerticesStore[I,V,E]
+    new Worker[I,V,E,M](config, parser, outputWriter, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapVerticesStore[I,V,E]
   }
 
   def workerWithSerializedTrieMapMessageStore[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   (config: Config,
    parser: (String) => (I, I, E),
+   outputWriter: (Vertex[I,V,E,M], OutputStream) => Any,
    clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
    partitioner : VertexPartitioner
   ): Worker[I,V,E,M] = {
-    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
+    new Worker[I,V,E,M](config, parser, outputWriter, clazz, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
 //    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
   }
 }
@@ -53,6 +56,7 @@ object Worker{
 abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 (private[this] val config : Config,
  parser: (String) => (I, I, E),
+ outputWriter: (Vertex[I,V,E,M], OutputStream) => Any,
  clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
  protected[this] var partitioner : VertexPartitioner)
   extends Actor with ActorLogging with MessageCounting with MessageStore[I,M] with VerticesStore[I,V,E] {
@@ -181,31 +185,28 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
     case LoadData(path, start, length) =>
       Future {
         val lineProvider : LineProvider = jobSettings.inputDataLineProvider.newInstance()
-        lineProvider.path = jobSettings.dataPath
-        lineProvider.start = start
-        lineProvider.length = length
-        lineProvider.initialize(config)
+        lineProvider.read(config, path, start, length) {
+          _.foreach{ l =>
+            val (src, dst, value) = parser(l)
+            val index : Int = partitioner.destination(src)
+            val index2 : Int = partitioner.destination(dst)
+            if (index == id.get) {
+              addEdge(src, dst, value)
+            } else {
+              edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
 
-        lineProvider.foreach{ l =>
-          val (src, dst, value) = parser(l)
-          val index : Int = partitioner.destination(src)
-          val index2 : Int = partitioner.destination(dst)
-          if (index == id.get) {
-            addEdge(src, dst, value)
-          } else {
-            edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
-
-              println(s"- sending to $index, size: ${byteBuffer.remaining()}")
-              messageSender.send(id.get, index, byteBuffer)
+                println(s"- sending to $index, size: ${byteBuffer.remaining()}")
+                messageSender.send(id.get, index, byteBuffer)
+              }
             }
-          }
-          if (index2 == id.get) {
-            addVertex(dst)
-          } else {
-            verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit byteBuffer =>
-              println(s"- sending to $index2, size: ${byteBuffer.remaining()}")
+            if (index2 == id.get) {
+              addVertex(dst)
+            } else {
+              verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit byteBuffer =>
+                println(s"- sending to $index2, size: ${byteBuffer.remaining()}")
 
-              messageSender.send(id.get, index2, byteBuffer)
+                messageSender.send(id.get, index2, byteBuffer)
+              }
             }
           }
         }
@@ -364,6 +365,27 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] def currentReceive : PartialFunction[Any, Unit] = _currentReceive
   private[this] def currentReceive_=(that : PartialFunction[Any, Unit]) = _currentReceive = that
 
+  private[this] val POST_SUPERSTEP_OPERATION : PartialFunction[Any, Unit] = {
+    case DoOutput(outputPath) =>
+      Future {
+        log.info(s"Writing output to ${outputPath}")
+        jobSettings.outputDataLineWriter.newInstance().write(config, outputPath, (outputStream) => {
+
+          val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M] {
+            override def addEdge(dst: I, e: E): Unit = {} // noop
+          }
+          vertices.foreach { vId =>
+            v.load(vId, vertexValue(vId), edges(vId))
+            outputWriter(v, outputStream)
+          }
+        })
+        log.info(s"Done writing output ${outputPath}")
+        master() ! DoneOutput()
+      }.recover{
+        case t : Throwable => t.printStackTrace()
+      }
+  }
+
   private[this] val BASE_OPERATION : PartialFunction[Any, Unit] = {
     case MasterAddress(address) =>
       masterActorRef = address
@@ -404,6 +426,9 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
         case GlobalState.SUPERSTEP =>
           messageReceiver.setOnReceivedMessage(handleSuperStepNetty)
           currentReceive = (BASE_OPERATION :: RUN_SUPERSTEP :: Nil).reduceLeft(_ orElse _)
+        case GlobalState.POST_SUPERSTEP =>
+          messageReceiver.setOnReceivedMessage(handleDataLoadingNetty)
+          currentReceive = (BASE_OPERATION :: POST_SUPERSTEP_OPERATION :: Nil).reduceLeft(_ orElse _)
         case GlobalState.NONE =>
       }
       context.become(currentReceive, true)

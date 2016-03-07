@@ -28,10 +28,15 @@ abstract class VertexImpl[I,V,E,M] extends Vertex[I,V,E,M] {
 
   override def load(is: InputStream): Unit = ???
 
-  override   def load(id: I, value: V, edges: Iterable[Edge[I,E]], messages : mutable.MultiMap[I,M], allMessages : mutable.Buffer[M]) = {
+
+  override def load(id: I, value: V, edges: Iterable[Edge[I,E]]) = {
     _id = id
     _value = value
     _edges = edges
+  }
+
+  override def load(id: I, value: V, edges: Iterable[Edge[I,E]], messages : mutable.MultiMap[I,M], allMessages : mutable.Buffer[M]) = {
+    load(id, value, edges)
     _messages = messages
     _allMessages = allMessages
   }
