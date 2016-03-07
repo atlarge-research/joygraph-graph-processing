@@ -3,23 +3,24 @@ import sbt._
 
 lazy val commonSettings = Seq(
   organization := "io.joygraph",
-  version := "0.1.0",
-  scalaVersion := "2.12.0-M3"
-//  checksums := Seq("")
+  version := "0.1-SNAPSHOT",
+  scalaVersion := "2.12.0-M3",
+  publishTo := Some(Resolver.file("file",  new File(Path.userHome.absolutePath+"/.m2/repository")))
+  //  checksums := Seq("")
 )
 
 lazy val programs = (project in file("programs")).
   settings(commonSettings: _*).
   settings(
     // other settings
-  ).dependsOn(joygraph)
+  ).dependsOn(core)
 
 lazy val run = (project in file("run")).
   settings(commonSettings: _*).
   settings(
     // other settings
     libraryDependencies ++= testDependencies
-  ).dependsOn(joygraph)
+  ).dependsOn(core)
   .dependsOn(hadoop).dependsOn(programs)
 
 lazy val hadoop = (project in file("hadoop")).
@@ -30,10 +31,10 @@ lazy val hadoop = (project in file("hadoop")).
       "org.apache.hadoop" % "hadoop-mapreduce-client-core" % "2.7.1" exclude("jline", "jline"),
       "org.apache.hadoop" % "hadoop-common" % "2.7.1" exclude("jline", "jline")
     )
-  ).dependsOn(joygraph)
+  ).dependsOn(core)
 
 
-lazy val joygraph = (project in file("."))
+lazy val core = (project in file("."))
   .settings(commonSettings: _*)
 
 
