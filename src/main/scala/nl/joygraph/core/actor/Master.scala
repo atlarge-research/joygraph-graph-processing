@@ -170,6 +170,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       log.info(s"Output left: ${doneDoOutput.get}")
       if (doneDoOutput.decrementAndGet() == 0) {
         log.info("All output done, send shutdown.")
+        allWorkers().foreach(_.actorRef ! Terminate())
       }
   }
 

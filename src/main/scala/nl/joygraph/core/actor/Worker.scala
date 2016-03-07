@@ -434,6 +434,8 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       context.become(currentReceive, true)
       log.info(s"Set state to $newState")
       sender() ! true
+    case Terminate() =>
+      context.system.terminate()
   }
 
   private[this] var _currentReceive : PartialFunction[Any, Unit] = BASE_OPERATION

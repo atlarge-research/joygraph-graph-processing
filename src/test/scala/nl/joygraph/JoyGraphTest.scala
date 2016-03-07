@@ -1,6 +1,7 @@
 package nl.joygraph
 
 import java.io.OutputStream
+import java.util.concurrent.TimeUnit
 
 import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
@@ -10,6 +11,9 @@ import nl.joygraph.core.partitioning.VertexPartitioner
 import nl.joygraph.core.partitioning.impl.VertexHashPartitioner
 import nl.joygraph.core.program.{Vertex, VertexProgramLike}
 import nl.joygraph.core.util.net.PortFinder
+
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 
 object JoyGraphTestBuilder {
   def apply[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) : JoyGraphTestBuilder[I,V,E,M] = {
@@ -247,12 +251,12 @@ protected[this] class JoyGraphTest[I,V,E,M](programClazz : Class[_ <: VertexProg
 
     val seedPort = PortFinder.findFreePort(2552)
     var port = seedPort
-    for (i <- 0 until _workers) {
+    (0 until _workers).map { _ =>
       val config = ConfigFactory.parseString(cfg(port, seedPort))
       val system = ActorSystem(actorSystemName, config)
       system.actorOf(Props(classOf[BaseActor], jobConfig, _masterFactory, () => _workerFactory(jobConfig, _parser, _writer, programClazz, _partitioner)))
       port = PortFinder.findFreePort(port + 1)
-    }
-    Thread.sleep(100000L)
+      system.whenTerminated
+    }.foreach(Await.ready(_, Duration(Int.MaxValue, TimeUnit.MILLISECONDS)))
   }
 }
