@@ -276,7 +276,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 
         val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M] {
           override def addEdge(dst: I, e: E): Unit = {
-            addEdgeVertex(id, dst, e)
+            addEdgeVertex(id, dst, e) // NOTE edges are added immediately to the existing collection
           }
         }
 
@@ -290,7 +290,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
                 val edgesIterable : Iterable[Edge[I,E]] = edges(vId)
                 val messageOut : scala.collection.mutable.MultiMap[I,M] = new scala.collection.mutable.OpenHashMap[I, scala.collection.mutable.Set[M]] with scala.collection.mutable.MultiMap[I, M]
                 val allMessages = ArrayBuffer.empty[M]
-                v.load(vId, value, edgesIterable, messageOut, allMessages)
+                v.load(vId, value, edgesIterable, (m, i) => messageOut.addBinding(i, m), (m) => allMessages += m)
                 val hasHalted = vertexProgramInstance match {
                   case program : VertexProgram[I,V,E,M] => program.run(v, vMessages, superStep)
 //                  case program : PerfectHashFormat[I] => program.run(v, superStep, new Mapper())
