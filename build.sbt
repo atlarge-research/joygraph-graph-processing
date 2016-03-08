@@ -21,7 +21,8 @@ lazy val run = (project in file("run")).
     // other settings
     libraryDependencies ++= testDependencies
   ).dependsOn(core)
-  .dependsOn(hadoop).dependsOn(programs)
+  .dependsOn(hadoop)
+  .dependsOn(programs)
 
 lazy val hadoop = (project in file("hadoop")).
   settings(commonSettings: _*).
@@ -34,24 +35,28 @@ lazy val hadoop = (project in file("hadoop")).
   ).dependsOn(core)
 
 
-lazy val core = (project in file("."))
+lazy val core = (project in file("core"))
   .settings(commonSettings: _*)
-
-
-libraryDependencies ++= Seq(
-  "org.scala-lang" % "scala-reflect" % "2.12.0-M3",
-  "it.unimi.dsi" % "fastutil" % "7.0.10",
-  "com.typesafe.akka" %% "akka-actor" % "2.4.1",
-  "com.typesafe.akka" %% "akka-remote" % "2.4.1",
-  "com.typesafe.akka" %% "akka-cluster" % "2.4.1",
-  "com.typesafe" % "config" % "1.3.0",
-  "com.esotericsoftware" % "kryo-shaded" % "3.0.3",
-  "io.netty" % "netty-all" % "4.0.34.Final"
-//  "net.openhft" % "chronicle-map" % "3.4.2-beta"
-)
+  .settings(name := "core")
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.scala-lang" % "scala-reflect" % "2.12.0-M3",
+      "it.unimi.dsi" % "fastutil" % "7.0.10",
+      "com.typesafe.akka" %% "akka-actor" % "2.4.1",
+      "com.typesafe.akka" %% "akka-remote" % "2.4.1",
+      "com.typesafe.akka" %% "akka-cluster" % "2.4.1",
+      "com.typesafe" % "config" % "1.3.0",
+      "com.esotericsoftware" % "kryo-shaded" % "3.0.3",
+      "io.netty" % "netty-all" % "4.0.34.Final"
+      //  "net.openhft" % "chronicle-map" % "3.4.2-beta"
+    ))
+  .settings(
+    libraryDependencies ++= testDependencies
+  )
+  .settings(
+    scalacOptions += "-feature"
+  )
 
 lazy val testDependencies = Seq(
   "org.scalatest" %% "scalatest" % "3.0.0-M12" % "test"
 )
-
-libraryDependencies ++= testDependencies
