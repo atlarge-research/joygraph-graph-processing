@@ -27,6 +27,11 @@ class ObjectByteBufferOutputStream(val msgType : Byte, maxBufferSize : Int) exte
     this.niobuffer.position(originalPos)
   }
 
+  def write(byteBuffer: ByteBuffer) = {
+    this.niobuffer.put(byteBuffer)
+    this.setPosition(niobuffer.position())
+  }
+
   // hands off the internal byte buffer
   override def handOff(): ByteBuffer = {
     // common practice is to let the consumer flip the bytebuffer.

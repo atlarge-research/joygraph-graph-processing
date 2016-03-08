@@ -8,7 +8,7 @@ import java.nio.ByteBuffer;
 
 public class DirectByteBufferGrowingOutputStream extends OutputStream {
 
-    private ByteBuffer buf;
+    protected ByteBuffer buf;
     private static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8;
 
     public DirectByteBufferGrowingOutputStream(int byteBufferSize) {
@@ -77,5 +77,9 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
             PlatformDependent.freeDirectBuffer(buf);
             buf = newBuf;
         }
+    }
+
+    public int size() {
+        return buf.duplicate().flip().remaining();
     }
 }

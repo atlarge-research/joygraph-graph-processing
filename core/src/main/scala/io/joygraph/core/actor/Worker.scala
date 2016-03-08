@@ -23,7 +23,7 @@ import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program._
 import io.joygraph.core.reader.LineProvider
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
-import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
+import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer, CombinableAsyncSerializer}
 import io.joygraph.core.util.{FutureUtil, MessageCounting}
 
 import scala.collection.mutable.ArrayBuffer
@@ -49,7 +49,7 @@ object Worker{
    partitioner : VertexPartitioner
   ): Worker[I,V,E,M] = {
     new Worker[I,V,E,M](config, parser, outputWriter, clazz, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
-//    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
+    //    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
   }
 }
 
@@ -86,6 +86,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] var messageReceiver : MessageReceiverNetty = _
 
   private[this] var messagesSerializer : AsyncSerializer[(I, M)] = null
+  private[this] var messagesCombinableSerializer : CombinableAsyncSerializer[I,M] = null
   private[this] var messagesDeserializer : AsyncDeserializer[(I, M)] = null
   private[this] var allHalted = true
 
@@ -139,9 +140,9 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 
   private[this] def handleSuperStepNetty(byteBuffer: ByteBuffer) = {
     try {
-    val index = byteBuffer.getInt()
-    _handleSuperStep(index, byteBuffer)
-    workers(index).actorRef ! Received()
+      val index = byteBuffer.getInt()
+      _handleSuperStep(index, byteBuffer)
+      workers(index).actorRef ! Received()
     } catch { case t : Throwable => t.printStackTrace()
     }
   }
@@ -150,7 +151,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
     val is = new ObjectByteBufferInputStream(byteBuffer)
     is.msgType match {
       case 0 => // edge
-        messagesDeserializer.deserialize(is, index, messageDeserializer){ implicit dstMPairs =>
+        messagesDeserializer.deserialize(is, index, messagePairDeserializer){ implicit dstMPairs =>
           dstMPairs.foreach(_handleMessage(index, _))
         }
     }
@@ -266,7 +267,13 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           program.load(config)
         case _ =>
       }
-      messagesSerializer = new AsyncSerializer[(I, M)](0, workers.size, new Kryo())
+      vertexProgramInstance match {
+        case combinable: Combinable[M] =>
+          messagesCombinableSerializer = new CombinableAsyncSerializer[I,M](0, workers.size, new Kryo(),
+            combinable, vertexSerializer, messageSerializer, messageDeserializer)
+        case _ =>
+          messagesSerializer = new AsyncSerializer[(I, M)](0, workers.size, new Kryo())
+      }
       messagesDeserializer = new AsyncDeserializer[(I, M)](0, workers.size, new Kryo())
       sender() ! true
     case RunSuperStep(superStep) =>
@@ -276,61 +283,87 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
 
         val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M] {
           override def addEdge(dst: I, e: E): Unit = {
-            addEdgeVertex(id, dst, e) // NOTE edges are added immediately to the existing collection
+            addEdgeVertex(id, dst, e) // NOTE edges are added immediately to the existing collection, but won't be accessible until a new instance has been created.
           }
+        }
+
+        val combinable: Option[Combinable[M]] = vertexProgramInstance match {
+          case combinable : Combinable[M] => Some(combinable)
+          case _ => None
         }
 
         allHalted = true
         vertices.foreach { vId =>
           val vMessages = messages(vId)
-              val vHalted = halted(vId)
-              val hasMessage = vMessages.nonEmpty
-              if (!vHalted || hasMessage) {
-                val value : V = vertexValue(vId)
-                val edgesIterable : Iterable[Edge[I,E]] = edges(vId)
-                val messageOut : scala.collection.mutable.MultiMap[I,M] = new scala.collection.mutable.OpenHashMap[I, scala.collection.mutable.Set[M]] with scala.collection.mutable.MultiMap[I, M]
-                val allMessages = ArrayBuffer.empty[M]
-                v.load(vId, value, edgesIterable, (m, i) => messageOut.addBinding(i, m), (m) => allMessages += m)
-                val hasHalted = vertexProgramInstance match {
-                  case program : VertexProgram[I,V,E,M] => program.run(v, vMessages, superStep)
-//                  case program : PerfectHashFormat[I] => program.run(v, superStep, new Mapper())
-                  case _ => true // TODO exception
-                }
-                setVertexValue(vId, v.value)
-                setHalted(vId, hasHalted)
+          val vHalted = halted(vId)
+          val hasMessage = vMessages.nonEmpty
+          if (!vHalted || hasMessage) {
+            val value : V = vertexValue(vId)
+            val edgesIterable : Iterable[Edge[I,E]] = edges(vId)
 
-                if (!hasHalted) {
-                  allHalted = false
-                }
-
-                // send messages
-                messageOut.foreach {
-                  case (dst, m) =>
-                    val index = partitioner.destination(dst)
-                    m.foreach {
-                      x => messagesSerializer.serialize(index, (dst, x), messageSerializer) { implicit byteBuffer =>
+            if (combinable.isDefined) {
+              v.load(vId, value, edgesIterable,
+                (m, dst ) => {
+                  val index = partitioner.destination(dst)
+                  messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
+                    messageSender.send(id.get, index, byteBuffer)
+                  }
+                },
+                (m) => {
+                  edgesIterable.foreach {
+                    case Edge(dst, _) =>
+                      val index = partitioner.destination(dst)
+                      messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
                         messageSender.send(id.get, index, byteBuffer)
                       }
-                    }
+                  }
                 }
-                allMessages.foreach {
-                  m =>
-                    edgesIterable.foreach {
-                      case Edge(dst, _) =>
-                        val index = partitioner.destination(dst)
-                        messagesSerializer.serialize(index, (dst, m), messageSerializer) { implicit byteBuffer =>
-                          messageSender.send(id.get, index, byteBuffer)
-                        }
-                    }
-                }
-                releaseEdgesIterable(edgesIterable)
-              }
-            releaseMessages(vMessages)
-          }
+              )
+            } else {
+              v.load(vId, value, edgesIterable,
+                (m, dst) => {
+                  val index = partitioner.destination(dst)
+                  messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                    messageSender.send(id.get, index, byteBuffer)
+                  }
+                },
+                (m) => {
+                  edgesIterable.foreach {
+                    case Edge(dst, _) =>
+                      val index = partitioner.destination(dst)
+                      messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                        messageSender.send(id.get, index, byteBuffer)
+                      }
+                  }
+                })
+            }
+            val hasHalted = vertexProgramInstance match {
+              case program : VertexProgram[I,V,E,M] => program.run(v, vMessages, superStep)
+              //                  case program : PerfectHashFormat[I] => program.run(v, superStep, new Mapper())
+              case _ => true // TODO exception
+            }
+            setVertexValue(vId, v.value)
+            setHalted(vId, hasHalted)
 
-        messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>
-          messageSender.send(id.get, index, byteBuffer)
+            if (!hasHalted) {
+              allHalted = false
+            }
+
+            releaseEdgesIterable(edgesIterable)
+          }
+          releaseMessages(vMessages)
         }
+
+        if (combinable.isDefined) {
+          messagesCombinableSerializer.sendNonEmptyByteBuffers{ case (byteBuffer : ByteBuffer, index : Int) =>
+            messageSender.send(id.get, index, byteBuffer)
+          }
+        } else {
+          messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>
+            messageSender.send(id.get, index, byteBuffer)
+          }
+        }
+
         sendingComplete()
         superStepCompleteTrigger()
       }.recover{
@@ -352,14 +385,22 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       superStepCompleteTrigger()
   }
 
-  def messageDeserializer(kryo : Kryo, input : Input) : (I, M) = {
+  def messagePairDeserializer(kryo : Kryo, input : Input) : (I, M) = {
     (kryo.readObject(input, clazzI),
-    kryo.readObject(input, clazzM))
+      kryo.readObject(input, clazzM))
   }
 
-  def messageSerializer(kryo : Kryo, output : Output, o : (I,M) ) = {
+  def messagePairSerializer(kryo : Kryo, output : Output, o : (I,M) ) = {
     kryo.writeObject(output, o._1)
     kryo.writeObject(output, o._2)
+  }
+
+  def messageSerializer(kryo : Kryo, output : Output, m : M) = {
+    kryo.writeObject(output, m)
+  }
+
+  def messageDeserializer(kryo : Kryo, input : Input) : M = {
+    kryo.readObject(input, clazzM)
   }
 
   private[this] def currentReceive : PartialFunction[Any, Unit] = _currentReceive
@@ -411,7 +452,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       messageSender = new MessageSenderNetty(this)
       val senderRef = sender()
       FutureUtil.callbackOnAllComplete{ // TODO handle failure
-        val destinationAddressPairs = workers.zipWithIndex.map{case (addressPair, index) => (index, (addressPair.nettyAddress.host, addressPair.nettyAddress.port))}
+      val destinationAddressPairs = workers.zipWithIndex.map{case (addressPair, index) => (index, (addressPair.nettyAddress.host, addressPair.nettyAddress.port))}
         messageSender.connectToAll(destinationAddressPairs)
       } {
         senderRef ! true

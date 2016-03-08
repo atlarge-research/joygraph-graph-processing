@@ -26,4 +26,5 @@ class BFS extends VertexProgram[Long,Int, NullClass, Int] {
     }
     true
   }
+
 }
