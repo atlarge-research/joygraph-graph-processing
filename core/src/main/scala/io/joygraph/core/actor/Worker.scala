@@ -18,6 +18,7 @@ import io.joygraph.core.actor.vertices.impl.TrieMapVerticesStore
 import io.joygraph.core.actor.vertices.impl.serialized.TrieMapSerializedVerticesStore
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
+import io.joygraph.core.message.aggregate.Aggregators
 import io.joygraph.core.message.superstep._
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program._
@@ -292,6 +293,11 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           case _ => None
         }
 
+        val aggregatable : Option[Aggregatable] = vertexProgramInstance match {
+          case aggregatable : Aggregatable => Some(aggregatable)
+          case _ => None
+        }
+
         allHalted = true
         vertices.foreach { vId =>
           val vMessages = messages(vId)
@@ -362,6 +368,14 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>
             messageSender.send(id.get, index, byteBuffer)
           }
+        }
+
+        aggregatable match {
+          case Some(x) =>
+            x.printAggregatedValues()
+            master() ! Aggregators(x.aggregators())
+            // send it to the master
+          case None =>
         }
 
         sendingComplete()

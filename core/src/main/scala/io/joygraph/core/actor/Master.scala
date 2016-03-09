@@ -12,9 +12,12 @@ import com.typesafe.config.Config
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
+import io.joygraph.core.message.aggregate.Aggregators
 import io.joygraph.core.message.superstep.{DoNextStep, PrepareSuperStep, RunSuperStep, SuperStepComplete}
+import io.joygraph.core.program.Aggregator
 import io.joygraph.core.util.FutureUtil
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Future
 
@@ -37,6 +40,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   var doneDoOutput : AtomicInteger = _
 
   private[this] var initialized: Boolean = false
+  private[this] val _aggregatorMapping : scala.collection.mutable.Map[String, Aggregator[_]] = mutable.OpenHashMap.empty
   val numVertices = new AtomicLong(0)
   val numEdges = new AtomicLong(0)
 
@@ -169,9 +173,21 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     case DoneOutput() =>
       log.info(s"Output left: ${doneDoOutput.get}")
       if (doneDoOutput.decrementAndGet() == 0) {
+        // print dem aggregators
+        _aggregatorMapping.foreach{case (name, aggregator) => println(s"$name: ${aggregator.value}")}
         log.info("All output done, send shutdown.")
         allWorkers().foreach(_.actorRef ! Terminate())
       }
+    case Aggregators(aggregatorMapping) => {
+      if (_aggregatorMapping.isEmpty) {
+        _aggregatorMapping ++= aggregatorMapping
+      } else {
+        aggregatorMapping.foreach{
+          case (name, aggregator) =>
+            _aggregatorMapping(name).aggregate(aggregator)
+        }
+      }
+    }
   }
 
 }
