@@ -94,6 +94,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   }
 
   protected[this] def split(workerId : Int, totalNumNodes : Int, path : String) : (Long, Long)
+  protected[this] def mkdirs(path : String) : Boolean
 
   def sendPaths(actorRefs : Iterable[ActorRef], dataPath : String) = {
     successReceived = new AtomicInteger(actorRefs.size)
@@ -128,7 +129,8 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   }
 
   def sendDoOutput() : Unit = {
-
+    // TODO maybe create output dir up front
+    mkdirs(jobSettings.outputPath)
     FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x.actorRef ? State(GlobalState.POST_SUPERSTEP)).mapTo[Boolean])) {
       doneDoOutput = new AtomicInteger(allWorkers().size)
       allWorkers().zipWithIndex.foreach{case (worker, index) => worker.actorRef ! DoOutput(s"${jobSettings.outputPath}/$index.part")}

@@ -3,13 +3,17 @@ package io.joygraph.impl.hadoop.actor
 import com.typesafe.config.Config
 import io.joygraph.core.actor.Master
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem}
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 trait HadoopMaster extends Master {
   protected[this] val conf : Config
   val hadoopConfiguration = new Configuration(false)
   hadoopConfiguration.set("fs.defaultFS", conf.getString("fs.defaultFS"))
   private[this] val fs = FileSystem.get(hadoopConfiguration)
+
+  override protected[this] def mkdirs(path : String) : Boolean = {
+    fs.mkdirs(new Path(path))
+  }
 
   override protected[this] def split(workerId: Int, totalNumNodes : Int, path : String): (Long, Long) = {
     var fileStatus : FileStatus = null
