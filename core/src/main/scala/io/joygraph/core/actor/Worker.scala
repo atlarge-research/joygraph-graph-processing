@@ -196,8 +196,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
               addEdge(src, dst, value)
             } else {
               edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
-
-                println(s"- sending to $index, size: ${byteBuffer.remaining()}")
+                println(s"- sending to $index, size: ${byteBuffer.position()}")
                 messageSender.send(id.get, index, byteBuffer)
               }
             }
@@ -205,7 +204,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
               addVertex(dst)
             } else {
               verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit byteBuffer =>
-                println(s"- sending to $index2, size: ${byteBuffer.remaining()}")
+                println(s"- sending to $index2, size: ${byteBuffer.position()}")
 
                 messageSender.send(id.get, index2, byteBuffer)
               }
@@ -214,12 +213,12 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
         }
 
         verticesBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, index : Int) =>
-          println(s"final sending to $index, size: ${byteBuffer.remaining()}")
+          println(s"final sending to $index, size: ${byteBuffer.position()}")
           messageSender.send(id.get, index, byteBuffer)
         })
 
         edgeBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, index : Int) =>
-          println(s"final sending to $index, size: ${byteBuffer.remaining()}")
+          println(s"final sending to $index, size: ${byteBuffer.position()}")
           messageSender.send(id.get, index, byteBuffer)
         })
         sendingComplete()
