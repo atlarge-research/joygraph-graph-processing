@@ -1,4 +1,4 @@
-package io.joygraph
+package io.joygraph.core.runner
 
 import java.io.OutputStream
 import java.util.concurrent.TimeUnit
@@ -15,15 +15,15 @@ import io.joygraph.core.util.net.PortFinder
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
-object JoyGraphTestBuilder {
-  def apply[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) : JoyGraphTestBuilder[I,V,E,M] = {
-    new JoyGraphTestBuilder[I,V,E,M](programClazz)
+object JoyGraphLocalInstanceBuilder {
+  def apply[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) : JoyGraphLocalInstanceBuilder[I,V,E,M] = {
+    new JoyGraphLocalInstanceBuilder[I,V,E,M](programClazz)
   }
 }
 
-class JoyGraphTestBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) {
+class JoyGraphLocalInstanceBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) {
 
-  private[this] type BuilderType = JoyGraphTestBuilder[I,V,E,M]
+  private[this] type BuilderType = JoyGraphLocalInstanceBuilder[I,V,E,M]
   private[this] var _workers : Option[Int] = None
   private[this] var _dataPath : Option[String] = None
   private[this] var _parser : Option[(String) => (I,I,E)] = None
@@ -85,8 +85,8 @@ class JoyGraphTestBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I
     this
   }
 
-  def build() : JoyGraphTest[I,V,E,M] = {
-    val graphTestInstance = new JoyGraphTest[I,V,E,M](programClazz)
+  def build() : JoyGraphLocalInstance[I,V,E,M] = {
+    val graphTestInstance = new JoyGraphLocalInstance[I,V,E,M](programClazz)
 
     _dataPath match {
       case Some(dataPath) => graphTestInstance.dataPath(dataPath)
@@ -137,8 +137,8 @@ class JoyGraphTestBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I
   }
 }
 
-protected[this] class JoyGraphTest[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) {
-  private[this] type Type = JoyGraphTest[I,V,E,M]
+protected[this] class JoyGraphLocalInstance[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) {
+  private[this] type Type = JoyGraphLocalInstance[I,V,E,M]
   private[this] var _workers : Int = _
   private[this] var _dataPath : String = _
   private[this] var _parser : (String) => (I,I,E) = _
