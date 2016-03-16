@@ -11,26 +11,11 @@ lazy val commonSettings = Seq(
   //  checksums := Seq("")
 )
 
-lazy val programs = (project in file("programs")).
-  settings(commonSettings: _*).
-  settings(
-    // other settings
-  ).dependsOn(core)
-
-lazy val run = (project in file("run")).
-  settings(commonSettings: _*).
-  settings(
-    // other settings
-    libraryDependencies ++= testDependencies ++ hadoopTestDependencies
-  ).dependsOn(core)
-  .dependsOn(hadoop)
-  .dependsOn(programs)
-
 lazy val hadoop = (project in file("hadoop")).
   settings(commonSettings: _*).
   settings(
     libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client" % HADOOP_VERSION % Provided,
+      "org.apache.hadoop" % "hadoop-client" % HADOOP_VERSION % Provided exclude("jline", "jline"),
       "org.apache.hadoop" % "hadoop-mapreduce-client-core" % HADOOP_VERSION % Provided exclude("jline", "jline"),
       "org.apache.hadoop" % "hadoop-common" % HADOOP_VERSION % Provided exclude("jline", "jline"),
       "org.apache.hadoop" % "hadoop-hdfs" % HADOOP_VERSION % Provided exclude("jline", "jline")
@@ -47,7 +32,6 @@ lazy val core = (project in file("core"))
   .settings(
     libraryDependencies ++= Seq(
       "org.scala-lang" % "scala-reflect" % "2.12.0-M3",
-      "it.unimi.dsi" % "fastutil" % "7.0.10", // TODO remove if unused
       "com.typesafe.akka" %% "akka-actor" % "2.4.1",
       "com.typesafe.akka" %% "akka-remote" % "2.4.1",
       "com.typesafe.akka" %% "akka-cluster" % "2.4.1",
@@ -68,7 +52,7 @@ lazy val core = (project in file("core"))
 //
 
 lazy val hadoopTestDependencies = Seq(
-  "org.apache.hadoop" % "hadoop-client" % HADOOP_VERSION % Test,
+  "org.apache.hadoop" % "hadoop-client" % HADOOP_VERSION % Test exclude("jline", "jline"),
   "org.apache.hadoop" % "hadoop-mapreduce-client-core" % HADOOP_VERSION % Test exclude("jline", "jline"),
   "org.apache.hadoop" % "hadoop-common" % HADOOP_VERSION % Test exclude("jline", "jline"),
   "org.apache.hadoop" % "hadoop-hdfs" % HADOOP_VERSION % Test exclude("jline", "jline") classifier "tests",
