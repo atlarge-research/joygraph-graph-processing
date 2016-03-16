@@ -3,7 +3,7 @@ package io.joygraph.core.actor
 import akka.actor._
 import akka.cluster.Cluster
 import akka.cluster.ClusterEvent._
-import com.typesafe.config.Config
+import com.typesafe.config._
 import io.joygraph.core.config.JobSettings
 
 class BaseActor(private[this] val jobConf : Config, masterFactory : (Config, Cluster) => _ <: Master, workerFactory : () => Worker[_,_,_,_]) extends Actor with ActorLogging {
@@ -51,7 +51,7 @@ class BaseActor(private[this] val jobConf : Config, masterFactory : (Config, Clu
           leader = address
           leader.foreach( x =>
             if(x == cluster.selfAddress) {
-              spawnWorkerMaster(x)
+              spawnMaster(x)
             } else {
               spawnWorker(x)
             }
@@ -75,9 +75,8 @@ class BaseActor(private[this] val jobConf : Config, masterFactory : (Config, Clu
     workerRef = Option(context.system.actorOf(workerProps, JobSettings(jobConf).workerSuffix))
   }
 
-  def spawnWorkerMaster(leader : Address) : Unit = {
+  def spawnMaster(leader : Address) : Unit = {
     masterRef = Option(context.system.actorOf(masterProps, JobSettings(jobConf).masterSuffix))
-    workerRef = Option(context.system.actorOf(workerProps, JobSettings(jobConf).workerSuffix))
   }
 
 }

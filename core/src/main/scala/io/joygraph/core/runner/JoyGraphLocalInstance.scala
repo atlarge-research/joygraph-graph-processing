@@ -1,6 +1,5 @@
 package io.joygraph.core.runner
 
-import java.io.OutputStream
 import java.util.concurrent.TimeUnit
 
 import akka.actor.{ActorSystem, Props}
@@ -8,31 +7,28 @@ import akka.cluster.Cluster
 import com.typesafe.config.{Config, ConfigFactory}
 import io.joygraph.core.actor.{BaseActor, Master, Worker}
 import io.joygraph.core.partitioning.VertexPartitioner
-import io.joygraph.core.partitioning.impl.VertexHashPartitioner
-import io.joygraph.core.program.{Vertex, VertexProgramLike}
+import io.joygraph.core.program.ProgramDefinition
 import io.joygraph.core.util.net.PortFinder
 
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
 object JoyGraphLocalInstanceBuilder {
-  def apply[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) : JoyGraphLocalInstanceBuilder[I,V,E,M] = {
-    new JoyGraphLocalInstanceBuilder[I,V,E,M](programClazz)
+  def apply[I,V,E,M](programDefinition: ProgramDefinition[String, I,V,E,M]) : JoyGraphLocalInstanceBuilder[I,V,E,M] = {
+    new JoyGraphLocalInstanceBuilder[I,V,E,M](programDefinition)
   }
 }
 
-class JoyGraphLocalInstanceBuilder[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) {
+class JoyGraphLocalInstanceBuilder[I,V,E,M](programDefinition: ProgramDefinition[String, I,V,E,M]) {
 
   private[this] type BuilderType = JoyGraphLocalInstanceBuilder[I,V,E,M]
   private[this] var _workers : Option[Int] = None
   private[this] var _dataPath : Option[String] = None
-  private[this] var _parser : Option[(String) => (I,I,E)] = None
-  private[this] var _workerFactory : Option[(Config, (String) => (I, I, E), (Vertex[I,V,E,M], OutputStream) => Any, Class[_ <: VertexProgramLike[I,V,E,M]], VertexPartitioner) => Worker[I,V,E,M]] = None
+  private[this] var _workerFactory : Option[(Config, ProgramDefinition[String, _,_,_,_], VertexPartitioner) => Worker[_,_,_,_]] = None
   private[this] var _masterFactory : Option[(Config, Cluster) => Master] = None
   private[this] var _partitioner : Option[VertexPartitioner] = None
   private[this] var _programParameters : Option[(String, String)] = None
   private[this] var _outputPath : Option[String] = None
-  private[this] var _writer : Option[(Vertex[I,V,E,M], OutputStream) => Any] = None
 
   def programParameters(keyValue: (String, String)) : BuilderType = {
     _programParameters = Option(keyValue)
@@ -54,17 +50,6 @@ class JoyGraphLocalInstanceBuilder[I,V,E,M](programClazz : Class[_ <: VertexProg
     this
   }
 
-  def writer(f : (Vertex[I,V,E,M], OutputStream) => Any) : BuilderType = {
-    _writer = Option(f)
-    this
-  }
-
-  def parser(f : (String) => (I, I, E)) : BuilderType = {
-    _parser = Option(f)
-    this
-  }
-
-
   def masterFactory(masterFactory : (Config, Cluster) => Master)  : BuilderType = {
     _masterFactory = Option(masterFactory)
     this
@@ -72,10 +57,8 @@ class JoyGraphLocalInstanceBuilder[I,V,E,M](programClazz : Class[_ <: VertexProg
 
   def workerFactory(workerFactory :
                     (Config,
-                      (String) => (I, I, E),
-                      (Vertex[I,V,E,M], OutputStream) => Any,
-                      Class[_ <: VertexProgramLike[I,V,E,M]],
-                      VertexPartitioner) => Worker[I,V,E,M]) : BuilderType = {
+                      ProgramDefinition[String, _,_,_,_],
+                      VertexPartitioner) => Worker[_,_,_,_]) : BuilderType = {
     _workerFactory = Option(workerFactory)
     this
   }
@@ -85,8 +68,8 @@ class JoyGraphLocalInstanceBuilder[I,V,E,M](programClazz : Class[_ <: VertexProg
     this
   }
 
-  def build() : JoyGraphLocalInstance[I,V,E,M] = {
-    val graphTestInstance = new JoyGraphLocalInstance[I,V,E,M](programClazz)
+  def build() : JoyGraphLocalInstance = {
+    val graphTestInstance = new JoyGraphLocalInstance(programDefinition)
 
     _dataPath match {
       case Some(dataPath) => graphTestInstance.dataPath(dataPath)
@@ -96,16 +79,6 @@ class JoyGraphLocalInstanceBuilder[I,V,E,M](programClazz : Class[_ <: VertexProg
     _workers match {
       case Some(workers) => graphTestInstance.numWorkers(workers)
       case None => throw new IllegalArgumentException("Missing number of workers")
-    }
-
-    _parser match {
-      case Some(parser) => graphTestInstance.parser(parser)
-      case None => throw new IllegalArgumentException("Missing line parser")
-    }
-
-    _writer match {
-      case Some(writer) => graphTestInstance.writer(writer)
-      case None => throw new IllegalArgumentException("Missing writer")
     }
 
     _masterFactory match {
@@ -137,13 +110,11 @@ class JoyGraphLocalInstanceBuilder[I,V,E,M](programClazz : Class[_ <: VertexProg
   }
 }
 
-protected[this] class JoyGraphLocalInstance[I,V,E,M](programClazz : Class[_ <: VertexProgramLike[I,V,E,M]]) {
-  private[this] type Type = JoyGraphLocalInstance[I,V,E,M]
+protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinition[String, _,_,_,_]) {
+  private[this] type Type = JoyGraphLocalInstance
   private[this] var _workers : Int = _
   private[this] var _dataPath : String = _
-  private[this] var _parser : (String) => (I,I,E) = _
-  private[this] var _writer : (Vertex[I,V,E,M], OutputStream) => Any = _
-  private[this] var _workerFactory : (Config, (String) => (I, I, E), (Vertex[I,V,E,M], OutputStream) => Any, Class[_ <: VertexProgramLike[I,V,E,M]], VertexPartitioner) => Worker[I,V,E,M] = _
+  private[this] var _workerFactory : (Config, ProgramDefinition[String, _,_,_,_], VertexPartitioner) => Worker[_,_,_,_] = _
   private[this] var _masterFactory : (Config, Cluster) => Master = _
   private[this] var _partitioner : VertexPartitioner = _
   private[this] var _programParameters : Option[(String, String)] = None
@@ -169,16 +140,6 @@ protected[this] class JoyGraphLocalInstance[I,V,E,M](programClazz : Class[_ <: V
     this
   }
 
-  def parser(f : (String) => (I, I, E)) : Type = {
-    _parser = f
-    this
-  }
-
-  def writer(f : (Vertex[I,V,E,M], OutputStream) => Any) : Type = {
-    _writer = f
-    this
-  }
-
   def masterFactory(masterFactory : (Config, Cluster) => Master)  : Type = {
     _masterFactory = masterFactory
     this
@@ -186,10 +147,8 @@ protected[this] class JoyGraphLocalInstance[I,V,E,M](programClazz : Class[_ <: V
 
   def workerFactory(workerFactory :
                     (Config,
-                      (String) => (I, I, E),
-                      (Vertex[I,V,E,M], OutputStream) => Any,
-                      Class[_ <: VertexProgramLike[I,V,E,M]],
-                      VertexPartitioner) => Worker[I,V,E,M]) : Type = {
+                      ProgramDefinition[String, _,_,_,_],
+                      VertexPartitioner) => Worker[_,_,_,_]) : Type = {
     _workerFactory = workerFactory
     this
   }
@@ -226,6 +185,11 @@ protected[this] class JoyGraphLocalInstance[I,V,E,M](programClazz : Class[_ <: V
     val jobCfg =
       s"""
       job {
+        program.definition.class = ${programDefinition.getClass.getName}
+        master.memory = 1000
+        master.cores = 1
+        worker.memory = 2000
+        worker.cores = 1
         workers.initial = ${_workers}
         data.path = "file://${_dataPath}"
         output.path = "file://${_outputPath}"
@@ -244,17 +208,12 @@ protected[this] class JoyGraphLocalInstance[I,V,E,M](programClazz : Class[_ <: V
 
     val jobConfig = ConfigFactory.parseString(jobCfg)
 
-    _partitioner match {
-      case hashPartitioner : VertexHashPartitioner => hashPartitioner.numWorkers(_workers)
-      case _ => // noop
-    }
-
     val seedPort = PortFinder.findFreePort(2552)
     var port = seedPort
-    (0 until _workers).map { _ =>
+    (0 until (_workers + 1)).map { _ =>
       val config = ConfigFactory.parseString(cfg(port, seedPort))
       val system = ActorSystem(actorSystemName, config)
-      system.actorOf(Props(classOf[BaseActor], jobConfig, _masterFactory, () => _workerFactory(jobConfig, _parser, _writer, programClazz, _partitioner)))
+      system.actorOf(Props(classOf[BaseActor], jobConfig, _masterFactory, () => _workerFactory(jobConfig, programDefinition, _partitioner)))
       port = PortFinder.findFreePort(port + 1)
       system.whenTerminated
     }.foreach(Await.ready(_, Duration(Int.MaxValue, TimeUnit.MILLISECONDS)))

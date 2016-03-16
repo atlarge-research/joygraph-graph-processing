@@ -46,8 +46,11 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   var currentSuperStep = 0
 
+  def workerMembers() = cluster.state.members.filterNot(_.address == cluster.selfAddress)
+
   def initialize() : Unit = synchronized {
-    if (cluster.state.members.size < jobSettings.initialNumberOfWorkers) {
+    // <= includes master
+    if (cluster.state.members.size <= jobSettings.initialNumberOfWorkers) {
       return
     }
     if (initialized) {
@@ -60,8 +63,8 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
     // we are up
     var workerId = 0
-
-    FutureUtil.callbackOnAllComplete(cluster.state.members.map { x =>
+    // cluster state members includes itself, have to exclude self.
+    FutureUtil.callbackOnAllComplete(workerMembers().map { x =>
       log.info("Retrieving ActorRefs")
       val akkaPath = x.address.toString + "/user/" + jobSettings.workerSuffix
       // give each member an id
@@ -105,7 +108,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       FutureUtil.callbackOnAllComplete(actorRefs.map(x => (x ? PrepareLoadData()).mapTo[Boolean])) {
         actorRefs.zipWithIndex.foreach {
           case (actor, index) =>
-            val (position, length) = split(index, cluster.state.members.size, dataPath)
+            val (position, length) = split(index, workerMembers().size, dataPath)
             actor ! LoadData(dataPath, position, length)
         }
       }
@@ -179,6 +182,8 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         _aggregatorMapping.foreach{case (name, aggregator) => println(s"$name: ${aggregator.value}")}
         log.info("All output done, send shutdown.")
         allWorkers().foreach(_.actorRef ! Terminate())
+        log.info("Shutting down.")
+        context.system.terminate()
       }
     case Aggregators(aggregatorMapping) => {
       if (_aggregatorMapping.isEmpty) {

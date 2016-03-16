@@ -1,6 +1,5 @@
 package io.joygraph.core.actor
 
-import java.io.OutputStream
 import java.nio.ByteBuffer
 
 import akka.actor._
@@ -29,46 +28,42 @@ import io.joygraph.core.util.{FutureUtil, MessageCounting}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Future
-import scala.reflect._
 
 object Worker{
-  def workerWithTrieMapMessageStore[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
+  def workerWithTrieMapMessageStore[I ,V ,E ,M ]
   (config: Config,
-   parser: (String) => (I, I, E),
-   outputWriter: (Vertex[I,V,E,M], OutputStream) => Any,
-   clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
+   programDefinition: ProgramDefinition[String, I,V,E,M],
    partitioner : VertexPartitioner
   ): Worker[I,V,E,M] = {
-    new Worker[I,V,E,M](config, parser, outputWriter, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapVerticesStore[I,V,E]
+    new Worker[I,V,E,M](config, programDefinition, partitioner) with TrieMapMessageStore[I,M] with TrieMapVerticesStore[I,V,E]
   }
 
-  def workerWithSerializedTrieMapMessageStore[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
+  def workerWithSerializedTrieMapMessageStore[I ,V ,E ,M ]
   (config: Config,
-   parser: (String) => (I, I, E),
-   outputWriter: (Vertex[I,V,E,M], OutputStream) => Any,
-   clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
+   programDefinition: ProgramDefinition[String, I,V,E,M],
    partitioner : VertexPartitioner
   ): Worker[I,V,E,M] = {
-    new Worker[I,V,E,M](config, parser, outputWriter, clazz, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
+    new Worker[I,V,E,M](config, programDefinition, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
     //    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
   }
 }
 
-abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
+abstract class Worker[I ,V ,E ,M ]
 (private[this] val config : Config,
- parser: (String) => (I, I, E),
- outputWriter: (Vertex[I,V,E,M], OutputStream) => Any,
- clazz : Class[_ <: VertexProgramLike[I,V,E,M]],
+ programDefinition: ProgramDefinition[String, I,V,E,M],
  protected[this] var partitioner : VertexPartitioner)
   extends Actor with ActorLogging with MessageCounting with MessageStore[I,M] with VerticesStore[I,V,E] {
+
+  // TODO move this in an initialization function maybe
+  partitioner.init(config)
 
   // TODO use different execution contexts at different places.
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  protected[this] val clazzI : Class[I] = classTag[I].runtimeClass.asInstanceOf[Class[I]]
-  protected[this] val clazzV : Class[V] = classTag[V].runtimeClass.asInstanceOf[Class[V]]
-  protected[this] val clazzE : Class[E] = classTag[E].runtimeClass.asInstanceOf[Class[E]]
-  protected[this] val clazzM : Class[M] = classTag[M].runtimeClass.asInstanceOf[Class[M]]
+  protected[this] val clazzI : Class[I] = programDefinition.clazzI
+  protected[this] val clazzV : Class[V] = programDefinition.clazzV
+  protected[this] val clazzE : Class[E] = programDefinition.clazzE
+  protected[this] val clazzM : Class[M] = programDefinition.clazzM
 
   private[this] var id : Option[Int] = None
   private[this] var workers : ArrayBuffer[AddressPair] = null
@@ -81,7 +76,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
   private[this] var edgesDeserializer : AsyncDeserializer[(I,I,E)] = null
 
   private[this] var masterActorRef : ActorRef = null
-  private[this] val vertexProgramInstance = clazz.newInstance()
+  private[this] val vertexProgramInstance = programDefinition.program.newInstance()
 
   private[this] var messageSender : MessageSenderNetty = _
   private[this] var messageReceiver : MessageReceiverNetty = _
@@ -189,7 +184,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
         val lineProvider : LineProvider = jobSettings.inputDataLineProvider.newInstance()
         lineProvider.read(config, path, start, length) {
           _.foreach{ l =>
-            val (src, dst, value) = parser(l)
+            val (src, dst, value) = programDefinition.inputParser(l)
             val index : Int = partitioner.destination(src)
             val index2 : Int = partitioner.destination(dst)
             if (index == id.get) {
@@ -279,6 +274,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
     case RunSuperStep(superStep) =>
       Future{
         log.info(s"Running superstep $superStep")
+//        log.info(s"$clazzI $clazzV $clazzE $clazzM")
         def addEdgeVertex : (I, I, E) => Unit = addEdge
 
         val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M] {
@@ -430,7 +426,7 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
           }
           vertices.foreach { vId =>
             v.load(vId, vertexValue(vId), edges(vId))
-            outputWriter(v, outputStream)
+            programDefinition.outputWriter(v, outputStream)
           }
         })
         log.info(s"Done writing output ${outputPath}")
@@ -489,6 +485,10 @@ abstract class Worker[I : ClassTag,V : ClassTag,E : ClassTag,M : ClassTag]
       log.info(s"Set state to $newState")
       sender() ! true
     case Terminate() =>
+      //terminate netty
+      messageSender.shutDown()
+      messageReceiver.shutdown()
+      // terminate akka
       context.system.terminate()
   }
 

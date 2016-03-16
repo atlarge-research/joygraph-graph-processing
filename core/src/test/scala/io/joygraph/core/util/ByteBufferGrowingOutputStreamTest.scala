@@ -49,31 +49,31 @@ class ByteBufferGrowingOutputStreamTest extends FunSuite {
   }
 
 
-
-  test("DirectBuffer write and read") {
-    val boutputStream = new DirectByteBufferGrowingOutputStream(32)
-    val numElements = 1000000
-    time {
-      val dataOutputStream = new DataOutputStream(boutputStream)
-      for(i <- 1 to numElements) {
-        dataOutputStream.writeInt(i)
-      }
-      dataOutputStream.flush()
-    }
-    val dup = boutputStream.getBuf.duplicate()
-    dup.flip()
-    val a = new com.esotericsoftware.kryo.io.ByteBufferInputStream(dup) {
-      override def read() = {
-        super.read() & 0xFF
-      }
-    }
-    time {
-      val dataInputStream = new DataInputStream(a)
-      for (i <- 1 to numElements) {
-        assertResult(i)(dataInputStream.readInt())
-      }
-    }
-  }
+// TODO replace with another test as writeInt is not supported anymore
+//  test("DirectBuffer write and read") {
+//    val boutputStream = new DirectByteBufferGrowingOutputStream(32)
+//    val numElements = 1000000
+//    time {
+//      val dataOutputStream = new DataOutputStream(boutputStream)
+//      for(i <- 1 to numElements) {
+//        dataOutputStream.writeInt(i)
+//      }
+//      dataOutputStream.flush()
+//    }
+//    val dup = boutputStream.getBuf.duplicate()
+//    dup.flip()
+//    val a = new com.esotericsoftware.kryo.io.ByteBufferInputStream(dup) {
+//      override def read() = {
+//        super.read() & 0xFF
+//      }
+//    }
+//    time {
+//      val dataInputStream = new DataInputStream(a)
+//      for (i <- 1 to numElements) {
+//        assertResult(i)(dataInputStream.readInt())
+//      }
+//    }
+//  }
 
 
 //  test("ByteArray write and read") {

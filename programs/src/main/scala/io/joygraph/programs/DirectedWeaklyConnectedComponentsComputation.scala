@@ -2,14 +2,19 @@ package io.joygraph.programs
 
 import com.typesafe.config.Config
 import io.joygraph.core.program.{Edge, NullClass, Vertex, VertexProgram}
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet
 
-class ConnectedComponents extends VertexProgram[Long, Long, NullClass, Long] {
+import scala.collection.JavaConversions._
+// TODO WIP
+class DirectedWeaklyConnectedComponentsComputation extends VertexProgram[Long, Long, NullClass, Long] {
   /**
     * Load parameters from vertex program
     *
     * @param conf
     */
   override def load(conf: Config): Unit = {}//noop
+
+  private val edgeSet = new LongOpenHashSet()
 
   /**
     * @param v
@@ -20,12 +25,13 @@ class ConnectedComponents extends VertexProgram[Long, Long, NullClass, Long] {
 
     // Weakly connected components algorithm treats a directed graph as undirected, so we create the missing edges
     if (superStep == 0) {
-      v.value = v.id
       v.sendAll(v.id)
       return false
     }
     else if (superStep == 1) {
-      messages.foreach(m => v.addEdge(m, NullClass.SINGLETON))
+      v.edges.foreach(existingEdge => edgeSet += existingEdge.dst)
+      messages.foreach(m => if(!edgeSet.contains(m)) v.addEdge(m, NullClass.SINGLETON))
+      
       return false
     }
     else if (superStep == 2) {
