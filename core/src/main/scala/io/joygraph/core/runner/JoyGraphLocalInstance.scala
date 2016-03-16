@@ -194,7 +194,6 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
         data.path = "file://${_dataPath}"
         output.path = "file://${_outputPath}"
       }
-      fs.defaultFS = "file:///"
       worker {
         suffix = "worker"
         output.lineWriterClass = "io.joygraph.impl.hadoop.writer.HadoopLineWriter"

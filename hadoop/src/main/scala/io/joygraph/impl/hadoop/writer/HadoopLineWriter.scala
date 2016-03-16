@@ -4,20 +4,22 @@ import java.io.{IOException, OutputStream}
 
 import com.typesafe.config.Config
 import io.joygraph.core.writer.LineWriter
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
+import io.joygraph.impl.hadoop.util.FileSystemMap
+import org.apache.hadoop.fs.{FSDataOutputStream, FileSystem, Path}
+import org.apache.hadoop.hdfs.HdfsConfiguration
 
-class HadoopLineWriter extends LineWriter {
+class HadoopLineWriter extends LineWriter with FileSystemMap {
 
   override def write(conf : Config, path : String, streamWriter: (OutputStream) => Any): Unit = {
-    val newConf = new Configuration(false)
-    newConf.set("fs.defaultFS", conf.getString("fs.defaultFS"))
-    newConf.setInt("io.file.buffer.size", 65536)
+    implicit val hdfsConf = new HdfsConfiguration() // load from classpath
+    hdfsConf.setInt("io.file.buffer.size", 65536)
     val dfsPath = new Path(path)
 
-    val fs = FileSystem.get(newConf)
-    val os = fs.create(dfsPath, true)
+    var os : FSDataOutputStream = null
+    var fileSystem : FileSystem = null
     try {
+      fileSystem = fs(dfsPath)
+      os = fileSystem.create(dfsPath, true)
       // consume
       streamWriter(os)
     } catch {
@@ -32,8 +34,8 @@ class HadoopLineWriter extends LineWriter {
         os.hflush()
         os.close()
       }
-      if (fs != null) {
-        fs.close()
+      if (fileSystem != null) {
+        fileSystem.close()
       }
     }
   }

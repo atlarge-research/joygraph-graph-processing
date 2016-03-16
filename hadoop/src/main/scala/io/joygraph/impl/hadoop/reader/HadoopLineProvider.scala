@@ -4,8 +4,8 @@ import java.io.IOException
 
 import com.typesafe.config.Config
 import io.joygraph.core.reader.LineProvider
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.hdfs.HdfsConfiguration
 import org.apache.hadoop.io.{LongWritable, Text}
 import org.apache.hadoop.mapreduce
 import org.apache.hadoop.mapreduce.TaskAttemptID
@@ -17,10 +17,10 @@ class HadoopLineProvider extends LineProvider {
   def read(conf: Config, path : String, start : Long, length : Long)(f : (Iterator[String]) => Any): Unit = {
     val textInputFormat = new TextInputFormat()
     val taskAttemptId = new TaskAttemptID()
-    val newConf = new Configuration(false)
-    newConf.set("fs.defaultFS", conf.getString("fs.defaultFS"))
-    newConf.setInt("io.file.buffer.size", 65536)
-    val taskAttemptContext = new TaskAttemptContextImpl(newConf, taskAttemptId)
+    // load from classpath
+    val hdfsConf = new HdfsConfiguration()
+    hdfsConf.setInt("io.file.buffer.size", 65536)
+    val taskAttemptContext = new TaskAttemptContextImpl(hdfsConf, taskAttemptId)
     val lineReader : mapreduce.RecordReader[LongWritable, Text] = textInputFormat.createRecordReader(null, taskAttemptContext)
     try {
       val dfsPath = new Path(path)
