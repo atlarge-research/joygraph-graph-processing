@@ -12,7 +12,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Try}
 
-class AsyncSerializer[T](msgType : Byte, n : Int, kryoFactory : => Kryo, val bufferExceededThreshold : Int = 1 * 1024 * 1024) {
+class AsyncSerializer(msgType : Byte, n : Int, kryoFactory : => Kryo, val bufferExceededThreshold : Int = 1 * 1024 * 1024) {
 
   private[this] val _buffers : ArrayBuffer[ObjectByteBufferOutputStream] = ArrayBuffer.fill(n)(new ObjectByteBufferOutputStream(msgType, bufferExceededThreshold))
   private[this] val bufferSwaps : ArrayBuffer[BlockingQueue[ObjectByteBufferOutputStream]] = ArrayBuffer.fill(n)(new LinkedBlockingQueue[ObjectByteBufferOutputStream])
@@ -24,7 +24,7 @@ class AsyncSerializer[T](msgType : Byte, n : Int, kryoFactory : => Kryo, val buf
   // initialize bufferSwap
   bufferSwaps.foreach(_.add(new ObjectByteBufferOutputStream(msgType, bufferExceededThreshold)))
 
-  def serialize(index : Int, o: T, serializer : (Kryo, Output, T) => Unit)(outputHandler : ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext) : Unit = {
+  def serialize[T](index : Int, o: T, serializer : (Kryo, Output, T) => Unit)(outputHandler : ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext) : Unit = {
     locks(index).synchronized {
       val start = System.currentTimeMillis()
       val os = _buffers(index)

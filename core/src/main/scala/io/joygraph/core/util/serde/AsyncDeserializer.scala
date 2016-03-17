@@ -8,13 +8,13 @@ import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStr
 
 import scala.collection.mutable.ArrayBuffer
 
-class AsyncDeserializer[T](msgType : Char, n : Int, kryoFactory : => Kryo) {
+class AsyncDeserializer(msgType : Char, n : Int, kryoFactory : => Kryo) {
   private[this] val kryos : ArrayBuffer[Kryo] = ArrayBuffer.fill(n)(kryoFactory)
   private[this] val locks : ArrayBuffer[Object] = ArrayBuffer.fill(n)(new Object)
 
   val timeSpent = new AtomicLong(0)
 
-  def deserialize(is : ObjectByteBufferInputStream, index : Int, deserializer : (Kryo, Input) => T)(any : Iterator[T] => Unit) : Unit = {
+  def deserialize[T](is : ObjectByteBufferInputStream, index : Int, deserializer : (Kryo, Input) => T)(any : Iterator[T] => Unit) : Unit = {
     Predef.assert(is.msgType == msgType)
     locks(index).synchronized{
       val kryo = kryos(index)

@@ -70,10 +70,10 @@ abstract class Worker[I ,V ,E ,M ]
   private[this] var workerPathsToIndex : Map[ActorRef, Int] = null
 
   private[this] val jobSettings = JobSettings(config)
-  private[this] var verticesBufferNew : AsyncSerializer[I] = null
-  private[this] var edgeBufferNew : AsyncSerializer[(I,I,E)] = null
-  private[this] var verticesDeserializer : AsyncDeserializer[I] = null
-  private[this] var edgesDeserializer : AsyncDeserializer[(I,I,E)] = null
+  private[this] var verticesBufferNew : AsyncSerializer = null
+  private[this] var edgeBufferNew : AsyncSerializer = null
+  private[this] var verticesDeserializer : AsyncDeserializer = null
+  private[this] var edgesDeserializer : AsyncDeserializer = null
 
   private[this] var masterActorRef : ActorRef = null
   private[this] val vertexProgramInstance = programDefinition.program.newInstance()
@@ -81,9 +81,9 @@ abstract class Worker[I ,V ,E ,M ]
   private[this] var messageSender : MessageSenderNetty = _
   private[this] var messageReceiver : MessageReceiverNetty = _
 
-  private[this] var messagesSerializer : AsyncSerializer[(I, M)] = null
+  private[this] var messagesSerializer : AsyncSerializer = null
   private[this] var messagesCombinableSerializer : CombinableAsyncSerializer[I,M] = null
-  private[this] var messagesDeserializer : AsyncDeserializer[(I, M)] = null
+  private[this] var messagesDeserializer : AsyncDeserializer = null
   private[this] var allHalted = true
 
 
@@ -176,8 +176,8 @@ abstract class Worker[I ,V ,E ,M ]
       println(s"$id: prepare load data!~ $state")
       this.edgeBufferNew = new AsyncSerializer(0, workers.length, new Kryo())
       this.verticesBufferNew = new AsyncSerializer(1, workers.length, new Kryo())
-      this.edgesDeserializer = new AsyncDeserializer[(I,I,E)](0, workers.length, new Kryo())
-      this.verticesDeserializer = new AsyncDeserializer[I](1, workers.length, new Kryo())
+      this.edgesDeserializer = new AsyncDeserializer(0, workers.length, new Kryo())
+      this.verticesDeserializer = new AsyncDeserializer(1, workers.length, new Kryo())
       sender() ! true
     case LoadData(path, start, length) =>
       Future {
@@ -275,9 +275,9 @@ abstract class Worker[I ,V ,E ,M ]
           messagesCombinableSerializer = new CombinableAsyncSerializer[I,M](0, workers.size, new Kryo(),
             combinable, vertexSerializer, messageSerializer, messageDeserializer)
         case _ =>
-          messagesSerializer = new AsyncSerializer[(I, M)](0, workers.size, new Kryo())
+          messagesSerializer = new AsyncSerializer(0, workers.size, new Kryo())
       }
-      messagesDeserializer = new AsyncDeserializer[(I, M)](0, workers.size, new Kryo())
+      messagesDeserializer = new AsyncDeserializer(0, workers.size, new Kryo())
       sender() ! true
     case RunSuperStep(superStep) =>
       Future{
