@@ -23,9 +23,7 @@ class TrieMapSerializedMessaging[I,M] extends SerializedMessaging[I,M] {
   override def get(source: I)(implicit reusableIterable: ReusableIterable[M]): Iterable[M] = {
     currentMessages.get(source) match {
       case Some(os) =>
-        val bb = os.getBuf
-        bb.flip()
-        reusableIterable.buffer(bb)
+        reusableIterable.bufferProvider(() => os.getBuf)
       case None => EMPTY_MESSAGES
     }
   }

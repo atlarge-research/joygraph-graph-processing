@@ -26,11 +26,9 @@ class ReusableIterableTest extends FunSuite {
       byteBufferOutputStream.trim()
     }
 
-    val dup = byteBufferOutputStream.getBuf
-    dup.flip()
     reusableIterable.input(input)
     reusableIterable.kryo(kryo)
-    reusableIterable.buffer(dup)
+    reusableIterable.bufferProvider(() => byteBufferOutputStream.getBuf)
 
     assertResult((10000L * (10000L + 1L)) / 2)(reusableIterable.sum)
   }

@@ -10,14 +10,15 @@ abstract class ReusableIterable[T] extends Iterable[T] {
   protected[this] var _input : ByteBufferInput = _
   protected[this] var _kryo : Kryo = _
   protected[this] val _iterator : ReusableIterator = new ReusableIterator
+  protected[this] var _bufferProvider : () => ByteBuffer = _
 
   def input(input : ByteBufferInput): ReusableIterable[T] = {
     _input = input
     this
   }
 
-  def buffer(byteBuffer : ByteBuffer): ReusableIterable[T] = {
-    _input.setBuffer(byteBuffer)
+  def bufferProvider(byteBufferProvider : () => ByteBuffer): ReusableIterable[T] = {
+    _bufferProvider = byteBufferProvider
     this
   }
 
@@ -33,7 +34,9 @@ abstract class ReusableIterable[T] extends Iterable[T] {
   protected[this] def deserializeObject() : T
 
   override def iterator: Iterator[T] = {
-    _input.setPosition(0) // reset
+    val bb = _bufferProvider()
+    bb.flip()
+    _input.setBuffer(bb) // reset
     _iterator
   }
 

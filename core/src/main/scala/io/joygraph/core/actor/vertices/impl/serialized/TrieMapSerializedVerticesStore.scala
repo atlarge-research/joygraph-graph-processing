@@ -87,11 +87,9 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
         if (os.isEmpty) {
           NO_EDGES
         } else {
-          val bb = os.getBuf
-          bb.flip()
           reusableIterablePool.borrow()
             .kryo(kryoPool.borrow())
-            .buffer(bb)
+            .bufferProvider(() => os.getBuf)
         }
       case None =>
         NO_EDGES

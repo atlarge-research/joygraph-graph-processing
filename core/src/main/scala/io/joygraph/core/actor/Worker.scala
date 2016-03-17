@@ -279,7 +279,7 @@ abstract class Worker[I ,V ,E ,M ]
 
         val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M] {
           override def addEdge(dst: I, e: E): Unit = {
-            addEdgeVertex(id, dst, e) // NOTE edges are added immediately to the existing collection, but won't be accessible until a new instance has been created.
+            addEdgeVertex(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
           }
         }
 
