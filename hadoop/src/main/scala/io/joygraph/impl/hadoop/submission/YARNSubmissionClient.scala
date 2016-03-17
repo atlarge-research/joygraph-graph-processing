@@ -14,6 +14,7 @@ import org.apache.hadoop.yarn.api.records._
 import org.apache.hadoop.yarn.client.api.YarnClient
 import org.apache.hadoop.yarn.conf.YarnConfiguration
 
+import scala.annotation.tailrec
 import scala.collection.JavaConversions._
 object YARNSubmissionClient {
 
@@ -145,7 +146,7 @@ class YARNSubmissionClient protected(
     localResources += pathsLocalResource
   }
 
-  def submit(): Unit = {
+  private[this] def _submitApplication() : ApplicationId = {
     val application = yarnClient.createApplication()
     val context = application.getApplicationSubmissionContext
     context.setApplicationName(applicationName)
@@ -166,10 +167,44 @@ class YARNSubmissionClient protected(
     context.setResource(capability)
     context.setQueue(queue)
 
-    val appId = yarnClient.submitApplication(context)
+    yarnClient.submitApplication(context)
+  }
+
+  override def submit(): Unit = {
+    val appId = _submitApplication()
     // TODO report is unused at the moment as there's no use for it.
     val report = yarnClient.getApplicationReport(appId)
     // submit and forget?
   }
 
+  @tailrec
+  private[this] def pollForCompletion(appId: ApplicationId, waitTime : Long = 1000) : FinalApplicationStatus= {
+    val report = yarnClient.getApplicationReport(appId)
+    if (report.getYarnApplicationState match {
+      case yarnAppState @ YarnApplicationState.FINISHED |
+           YarnApplicationState.FAILED |
+           YarnApplicationState.KILLED =>
+        report.getFinalApplicationStatus match {
+          case FinalApplicationStatus.UNDEFINED => println("UNDEFINED after YarnApplicationState " + yarnAppState )
+          case finalAppStatus @ FinalApplicationStatus.SUCCEEDED |
+               FinalApplicationStatus.FAILED |
+               FinalApplicationStatus.KILLED => println("application finished with " + finalAppStatus)
+        }
+        true
+      case _ =>
+        false
+    }) {
+      synchronized{
+        wait(waitTime)
+      }
+      pollForCompletion(appId)
+    } else {
+      report.getFinalApplicationStatus
+    }
+  }
+
+  override def submitBlocking(): Unit = {
+    val appId = _submitApplication()
+    pollForCompletion(appId)
+  }
 }
