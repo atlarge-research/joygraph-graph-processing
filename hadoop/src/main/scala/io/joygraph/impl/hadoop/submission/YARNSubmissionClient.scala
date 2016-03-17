@@ -181,14 +181,16 @@ class YARNSubmissionClient protected(
   private[this] def pollForCompletion(appId: ApplicationId, waitTime : Long = 1000) : FinalApplicationStatus= {
     val report = yarnClient.getApplicationReport(appId)
     if (report.getYarnApplicationState match {
-      case yarnAppState @ YarnApplicationState.FINISHED |
-           YarnApplicationState.FAILED |
-           YarnApplicationState.KILLED =>
+      case yarnAppState @
+        (YarnApplicationState.FINISHED |
+         YarnApplicationState.FAILED |
+         YarnApplicationState.KILLED) =>
         report.getFinalApplicationStatus match {
           case FinalApplicationStatus.UNDEFINED => println("UNDEFINED after YarnApplicationState " + yarnAppState )
-          case finalAppStatus @ FinalApplicationStatus.SUCCEEDED |
-               FinalApplicationStatus.FAILED |
-               FinalApplicationStatus.KILLED => println("application finished with " + finalAppStatus)
+          case finalAppStatus @
+            (FinalApplicationStatus.SUCCEEDED |
+             FinalApplicationStatus.FAILED |
+             FinalApplicationStatus.KILLED)=> println("application finished with " + finalAppStatus)
         }
         true
       case _ =>
