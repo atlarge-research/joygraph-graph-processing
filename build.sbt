@@ -16,7 +16,7 @@ libraryDependencies ++= Seq(
 )
 
 // uncomment if skipping tests in assembly task
-//test in assembly := {}
+test in assembly := {}
 
 //assemblyShadeRules in assembly := Seq(
 //  ShadeRule.rename("org.apache.commons.beanutils.**" -> "shade1.beanutils.@1").inLibrary("commons-beanutils" % "commons-beanutils" % "1.7.0"),
