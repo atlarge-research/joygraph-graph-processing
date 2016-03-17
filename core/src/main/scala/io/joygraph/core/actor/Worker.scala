@@ -474,11 +474,9 @@ abstract class Worker[I ,V ,E ,M ]
       this.workerPathsToIndex = this.workers.map(_.actorRef).zipWithIndex.toMap
       messageSender = new MessageSenderNetty(this)
       val senderRef = sender()
-      FutureUtil.callbackOnAllComplete { // TODO handle failure
+      FutureUtil.callbackOnAllComplete{ // TODO handle failure
       val destinationAddressPairs = workers.zipWithIndex.map{case (addressPair, index) => (index, (addressPair.nettyAddress.host, addressPair.nettyAddress.port))}
-        destinationAddressPairs.map{
-          case (destination, hostPort) => () => messageSender.connectTo(destination, hostPort)
-        }
+        messageSender.connectToAll(destinationAddressPairs)
       } {
         senderRef ! true
       }
