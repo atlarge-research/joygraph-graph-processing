@@ -192,9 +192,9 @@ class YARNSubmissionClient protected(
              FinalApplicationStatus.FAILED |
              FinalApplicationStatus.KILLED)=> println("application finished with " + finalAppStatus)
         }
-        true
-      case _ =>
         false
+      case _ =>
+        true
     }) {
       synchronized{
         wait(waitTime)
