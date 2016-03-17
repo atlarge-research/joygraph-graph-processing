@@ -5,6 +5,8 @@ import scala.collection.mutable
 trait Aggregatable {
   private[this] val _aggregators : scala.collection.mutable.Map[String, Aggregator[_]] = mutable.OpenHashMap.empty
 
+  def initializeAggregators(): Unit
+
   protected[this] def aggregate[T](name : String, value : T) = {
     _aggregators(name).asInstanceOf[Aggregator[T]].aggregate(value)
   }

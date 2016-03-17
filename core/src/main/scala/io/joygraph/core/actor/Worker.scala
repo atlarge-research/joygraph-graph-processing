@@ -256,10 +256,18 @@ abstract class Worker[I ,V ,E ,M ]
   }
 
   private[this] val RUN_SUPERSTEP : PartialFunction[Any, Unit] = {
-    case PrepareSuperStep() =>
+    case PrepareSuperStep(numVertices, numEdges) =>
       vertexProgramInstance match {
         case program : VertexProgram[I, V, E, M] =>
           program.load(config)
+          program.totalNumVertices(numVertices)
+          program.totalNumEdges(numEdges)
+          vertexProgramInstance match {
+            case aggregatable : Aggregatable => {
+              aggregatable.initializeAggregators()
+            }
+            case _ =>
+          }
         case _ =>
       }
       vertexProgramInstance match {
@@ -289,7 +297,9 @@ abstract class Worker[I ,V ,E ,M ]
         }
 
         val aggregatable : Option[Aggregatable] = vertexProgramInstance match {
-          case aggregatable : Aggregatable => Some(aggregatable)
+          case aggregatable : Aggregatable => {
+            Some(aggregatable)
+          }
           case _ => None
         }
 
@@ -365,11 +375,15 @@ abstract class Worker[I ,V ,E ,M ]
           }
         }
 
+        // trigger oncomplete
+        vertexProgramInstance.onSuperStepComplete()
+
         aggregatable match {
           case Some(x) =>
-            x.printAggregatedValues()
-            master() ! Aggregators(x.aggregators())
             // send it to the master
+            master() ! Aggregators(x.aggregators())
+            x.aggregators().values.foreach(_.workerOnStepComplete())
+            x.printAggregatedValues()
           case None =>
         }
 

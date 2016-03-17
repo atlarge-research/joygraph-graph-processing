@@ -10,6 +10,7 @@ import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program.ProgramDefinition
 import io.joygraph.core.util.net.PortFinder
 
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
@@ -27,11 +28,11 @@ class JoyGraphLocalInstanceBuilder[I,V,E,M](programDefinition: ProgramDefinition
   private[this] var _workerFactory : Option[(Config, ProgramDefinition[String, _,_,_,_], VertexPartitioner) => Worker[_,_,_,_]] = None
   private[this] var _masterFactory : Option[(Config, Cluster) => Master] = None
   private[this] var _partitioner : Option[VertexPartitioner] = None
-  private[this] var _programParameters : Option[(String, String)] = None
+  private[this] var _programParameters : ArrayBuffer[(String,String)] = ArrayBuffer.empty
   private[this] var _outputPath : Option[String] = None
 
   def programParameters(keyValue: (String, String)) : BuilderType = {
-    _programParameters = Option(keyValue)
+    _programParameters += keyValue
     this
   }
 
@@ -96,10 +97,7 @@ class JoyGraphLocalInstanceBuilder[I,V,E,M](programDefinition: ProgramDefinition
       case None => throw new IllegalArgumentException("Missing vertex partitioner")
     }
 
-    _programParameters match {
-      case Some(programParameters) => graphTestInstance.programParameters(programParameters)
-      case None => // emit some warning
-    }
+    graphTestInstance.programParameters(_programParameters)
 
     _outputPath match {
       case Some(outputPath) => graphTestInstance.outputPath(outputPath)
@@ -117,11 +115,11 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
   private[this] var _workerFactory : (Config, ProgramDefinition[String, _,_,_,_], VertexPartitioner) => Worker[_,_,_,_] = _
   private[this] var _masterFactory : (Config, Cluster) => Master = _
   private[this] var _partitioner : VertexPartitioner = _
-  private[this] var _programParameters : Option[(String, String)] = None
+  private[this] var _programParameters : ArrayBuffer[(String, String)] = _
   private[this] var _outputPath : String = _
 
-  def programParameters(keyValue : (String, String)) : Type = {
-    _programParameters = Option(keyValue)
+  def programParameters(programParameters : ArrayBuffer[(String, String)]) : Type = {
+    _programParameters = programParameters
     this
   }
 
@@ -200,11 +198,12 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
         input.lineProviderClass = "io.joygraph.impl.hadoop.reader.HadoopLineProvider"
       }
       master.suffix = "master"
-    """ + (_programParameters match {
-        case Some(kv) => s"""${kv._1} = ${kv._2}\n"""
-        case None =>
-      })
-
+    """ + {
+        if (_programParameters.isEmpty)
+          "\n"
+        else
+          _programParameters.map(kv => s"""${kv._1} = ${kv._2}\n""").reduce(_ + "" + _)
+      }
     val jobConfig = ConfigFactory.parseString(jobCfg)
 
     val seedPort = PortFinder.findFreePort(2552)
