@@ -68,18 +68,18 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       log.info("Retrieving ActorRefs")
       val akkaPath = x.address.toString + "/user/" + jobSettings.workerSuffix
       // give each member an id
-      val fActorRef: Future[AddressPair] = (context.actorSelection(akkaPath) ? WorkerId(workerId)).mapTo[AddressPair]
-      val currentWorkerId = workerId
-      fActorRef.foreach(x => workerIdAddressMap(currentWorkerId) = x)
-      workerId += 1
-      fActorRef
+      () => {
+        val fActorRef: Future[AddressPair] = (context.actorSelection(akkaPath) ? WorkerId(workerId)).mapTo[AddressPair]
+        val currentWorkerId = workerId
+        fActorRef.foreach(x => workerIdAddressMap(currentWorkerId) = x)
+        workerId += 1
+        fActorRef
+      }
     }) {
       log.info("Distributing ActorRefs")
       val masterPath = cluster.selfAddress.toString + "/user/" + jobSettings.masterSuffix
       val actorSelections: ArrayBuffer[ActorRef] = allWorkers().map(_.actorRef)
 
-      // TODO sometimes sendMasteraddress does not complete, probably something with the callbackonallcomplete.
-      // the latch probably only gets triggered on the moment the future is completed and not when the future has already been completed.
       FutureUtil.callbackOnAllComplete(sendMasterAddress(actorSelections, masterPath)) {
         FutureUtil.callbackOnAllComplete(sendMapping(actorSelections)) {
           sendPaths(actorSelections, jobSettings.dataPath)
@@ -93,7 +93,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   def sendMasterAddress(actorRefs : Iterable[ActorRef], masterPath : String) = {
     log.info("Sending master address")
-    actorRefs.map(x => (x ? MasterAddress(self)).mapTo[Boolean])
+    actorRefs.map(x => () => (x ? MasterAddress(self)).mapTo[Boolean])
   }
 
   protected[this] def split(workerId : Int, totalNumNodes : Int, path : String) : (Long, Long)
@@ -102,10 +102,10 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   def sendPaths(actorRefs : Iterable[ActorRef], dataPath : String) = {
     successReceived = new AtomicInteger(actorRefs.size)
     // set the state
-    FutureUtil.callbackOnAllComplete(actorRefs.map(x => (x ? State(GlobalState.LOAD_DATA)).mapTo[Boolean])) {
+    FutureUtil.callbackOnAllComplete(actorRefs.map(x => () => (x ? State(GlobalState.LOAD_DATA)).mapTo[Boolean])) {
       log.info("State set to LOAD_DATA")
       log.info("Sending PrepareLoadData")
-      FutureUtil.callbackOnAllComplete(actorRefs.map(x => (x ? PrepareLoadData()).mapTo[Boolean])) {
+      FutureUtil.callbackOnAllComplete(actorRefs.map(x => () => (x ? PrepareLoadData()).mapTo[Boolean])) {
         actorRefs.zipWithIndex.foreach {
           case (actor, index) =>
             val (position, length) = split(index, workerMembers().size, dataPath)
@@ -115,15 +115,15 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     }
   }
 
-  def sendMapping(actorRefs : Iterable[ActorRef]): Iterable[Future[Boolean]] = {
+  def sendMapping(actorRefs : Iterable[ActorRef]): Iterable[() => Future[Boolean]] = {
     log.info("Sending address mapping")
-    actorRefs.map(x => (x ? WorkerMap(workerIdAddressMap)).mapTo[Boolean])
+    actorRefs.map(x => () => (x ? WorkerMap(workerIdAddressMap)).mapTo[Boolean])
   }
 
   def sendSuperStepState(numVertices : Long, numEdges : Long): Unit = {
-    FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x.actorRef ? State(GlobalState.SUPERSTEP)).mapTo[Boolean])) {
+    FutureUtil.callbackOnAllComplete(allWorkers().map(x => () => (x.actorRef ? State(GlobalState.SUPERSTEP)).mapTo[Boolean])) {
       log.info("Sending prepare superstep")
-      FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x.actorRef ? PrepareSuperStep(numVertices, numEdges)).mapTo[Boolean])) {
+      FutureUtil.callbackOnAllComplete(allWorkers().map(x => () => (x.actorRef ? PrepareSuperStep(numVertices, numEdges)).mapTo[Boolean])) {
         log.info("Sending runsuperstep")
         successReceived = new AtomicInteger(allWorkers().size)
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
@@ -134,7 +134,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   def sendDoOutput() : Unit = {
     // TODO maybe create output dir up front
     mkdirs(jobSettings.outputPath)
-    FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x.actorRef ? State(GlobalState.POST_SUPERSTEP)).mapTo[Boolean])) {
+    FutureUtil.callbackOnAllComplete(allWorkers().map(x => () => (x.actorRef ? State(GlobalState.POST_SUPERSTEP)).mapTo[Boolean])) {
       doneDoOutput = new AtomicInteger(allWorkers().size)
       allWorkers().zipWithIndex.foreach{case (worker, index) => worker.actorRef ! DoOutput(s"${jobSettings.outputPath}/$index.part")}
     }
@@ -167,7 +167,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
           case (name, aggregator) =>
             _aggregatorMapping(name).masterOnStepComplete()
         }
-        FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? SuperStepComplete()).mapTo[DoNextStep])) {
+        FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => () => (x.actorRef ? SuperStepComplete()).mapTo[DoNextStep])) {
           implicit results =>
             log.info("Do next step ?")
             val doNextStep = results.map(_.yes).reduce(_ || _)
