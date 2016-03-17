@@ -15,16 +15,11 @@ import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
 object YarnBaseActor {
-  def main(args : Array[String]): Unit = {
-    val configLocation : String = args(0)
 
-    val jobConf = ConfigFactory.parseFile(new java.io.File(configLocation))
+  def startActorSystem(jobConf : Config): Unit = {
     val actorSystemName = "actorSystemName" // TODO configurable?
-
     val hostName = NetUtils.getHostName
-
     val port = PortFinder.findFreePort()
-
     val remotingConf = ConfigFactory.parseString(
       s"""
          |akka {
@@ -44,7 +39,6 @@ object YarnBaseActor {
     )
 
     val workerConf = remotingConf.withFallback(jobConf)
-
     val definition : ProgramDefinition[String,_, _,_,_] = Class.forName(JobSettings(jobConf).programDefinition).newInstance().asInstanceOf[ProgramDefinition[String,_,_,_,_]]
     val system = ActorSystem(actorSystemName, workerConf)
     system.actorOf(Props(classOf[BaseActor], workerConf,
@@ -58,6 +52,25 @@ object YarnBaseActor {
     // wait indefinitely until it terminates
     Await.ready(system.whenTerminated, Duration(Int.MaxValue, TimeUnit.MILLISECONDS))
     println("I have terminated")
+  }
+
+  def main(args : Array[String]): Unit = {
+    val configLocation : String = args(0)
+
+    val jobConf = ConfigFactory.parseFile(new java.io.File(configLocation))
+    val maxTries = 10
+    var tries = 0
+    try {
+      tries += 1
+      startActorSystem(jobConf)
+    } catch {
+      case (t : Throwable) =>
+        t.printStackTrace()
+        if (tries < maxTries) {
+          tries += 1
+          startActorSystem(jobConf)
+        }
+    }
   }
 }
 
