@@ -2,6 +2,6 @@ package io.joygraph.programs
 
 import io.joygraph.core.program.Combinable
 
-class BFSCombinable extends BFS with Combinable[Int]{
-  override def combine(m1: Int, m2: Int): Int = math.min(m1, m2)
+class BFSCombinable extends BFS with Combinable[Long]{
+  override def combine(m1: Long, m2: Long): Long = math.min(m1, m2)
 }
