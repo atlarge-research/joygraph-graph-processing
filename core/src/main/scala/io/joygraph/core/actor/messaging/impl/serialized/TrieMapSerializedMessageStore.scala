@@ -1,26 +1,24 @@
 package io.joygraph.core.actor.messaging.impl.serialized
 
-import com.esotericsoftware.kryo.io.ByteBufferInput
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.{KryoSerialization, SimplePool}
 
-trait TrieMapSerializedMessageStore[I,M] extends MessageStore[I,M] with KryoSerialization {
+import scala.collection.mutable
 
-  private[this] val messaging = new TrieMapSerializedMessaging[I,M]
+trait TrieMapSerializedMessageStore extends MessageStore with KryoSerialization {
+
+  private[this] val messaging = new TrieMapSerializedMessaging
   protected[this] var partitioner : VertexPartitioner
-  protected[this] val clazzM : Class[M]
-  private[this] val reusableIterablePool = new SimplePool[ReusableIterable[M]]({
-    val reusableIterable = new ReusableIterable[M] {
-      override protected[this] def deserializeObject(): M = _kryo.readObject(_input, clazzM)
-    }
-    reusableIterable.input(new ByteBufferInput(maxMessageSize))
-    reusableIterable
-  })
+  private[this] val pools = mutable.OpenHashMap.empty[Class[_], SimplePool[ReusableIterable[Any]]]
 
+  override protected[this] def addPool(clazz : Class[_], pool : SimplePool[ReusableIterable[Any]]) : Unit = {
+    pools += clazz -> pool
+  }
+  private[this] def reusableIterablePool[M](clazz : Class[M]) : SimplePool[ReusableIterable[M]] = pools(clazz).asInstanceOf[SimplePool[ReusableIterable[M]]]
 
-  override protected[this] def _handleMessage(index : Int, dstMPair : (I, M)): Unit = {
+  override protected[this] def _handleMessage[I,M](index : Int, dstMPair : (I, M), clazzI : Class[I], clazzM: Class[M]) {
     implicit val kryoInstance = kryo(index)
     kryoInstance.synchronized {
       implicit val kryoOutputInstance = kryoOutput(index)
@@ -29,21 +27,21 @@ trait TrieMapSerializedMessageStore[I,M] extends MessageStore[I,M] with KryoSeri
     }
   }
 
-  override protected[this] def messages(dst : I) : Iterable[M] = {
+  override protected[this] def messages[I, M](dst : I, clazzM : Class[M]) : Iterable[M] = {
     val index = partitioner.destination(dst)
-    implicit val iterable = reusableIterablePool.borrow()
+    implicit val iterable = reusableIterablePool(clazzM).borrow()
     iterable.kryo(kryo(index))
     val messages = messaging.get(dst)
     if(messages.isEmpty) {
-      releaseMessages(iterable)
+      releaseMessages(iterable, clazzM)
     }
     messages
   }
 
-  override protected[this] def releaseMessages(messages : Iterable[M]) = {
+  override protected[this] def releaseMessages[M](messages : Iterable[M], clazz : Class[M]) = {
     messages match {
       case reusableIterable : ReusableIterable[M] =>
-        reusableIterablePool.release(reusableIterable)
+        reusableIterablePool(clazz).release(reusableIterable)
       case _ => // noop
     }
   }

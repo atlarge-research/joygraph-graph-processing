@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 import akka.actor._
 import akka.util.ByteString
 import com.esotericsoftware.kryo.Kryo
-import com.esotericsoftware.kryo.io.{Input, Output}
+import com.esotericsoftware.kryo.io.{ByteBufferInput, Input, Output}
 import com.typesafe.config.Config
 import io.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
 import io.joygraph.core.actor.messaging.MessageStore
@@ -23,8 +23,9 @@ import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program._
 import io.joygraph.core.reader.LineProvider
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
+import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer, CombinableAsyncSerializer}
-import io.joygraph.core.util.{FutureUtil, MessageCounting}
+import io.joygraph.core.util.{FutureUtil, MessageCounting, SimplePool}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Future
@@ -35,15 +36,19 @@ object Worker{
    programDefinition: ProgramDefinition[String, I,V,E,M],
    partitioner : VertexPartitioner
   ): Worker[I,V,E,M] = {
-    new Worker[I,V,E,M](config, programDefinition, partitioner) with TrieMapMessageStore[I,M] with TrieMapVerticesStore[I,V,E]
+    val worker = new Worker[I,V,E,M](config, programDefinition, partitioner) with TrieMapMessageStore with TrieMapVerticesStore[I,V,E]
+    worker.initialize()
+    worker
   }
 
-  def workerWithSerializedTrieMapMessageStore[I ,V ,E ,M ]
+  def workerWithSerializedTrieMapMessageStore[I ,V ,E ,M]
   (config: Config,
    programDefinition: ProgramDefinition[String, I,V,E,M],
    partitioner : VertexPartitioner
   ): Worker[I,V,E,M] = {
-    new Worker[I,V,E,M](config, programDefinition, partitioner) with TrieMapSerializedMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
+    val worker = new Worker[I,V,E,M](config, programDefinition, partitioner) with TrieMapSerializedMessageStore with TrieMapSerializedVerticesStore[I,V,E]
+    worker.initialize()
+    worker
     //    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
   }
 }
@@ -52,10 +57,7 @@ abstract class Worker[I ,V ,E ,M ]
 (private[this] val config : Config,
  programDefinition: ProgramDefinition[String, I,V,E,M],
  protected[this] var partitioner : VertexPartitioner)
-  extends Actor with ActorLogging with MessageCounting with MessageStore[I,M] with VerticesStore[I,V,E] {
-
-  // TODO move this in an initialization function maybe
-  partitioner.init(config)
+  extends Actor with ActorLogging with MessageCounting with MessageStore with VerticesStore[I,V,E] {
 
   // TODO use different execution contexts at different places.
   import scala.concurrent.ExecutionContext.Implicits.global
@@ -86,6 +88,20 @@ abstract class Worker[I ,V ,E ,M ]
   private[this] var messagesDeserializer : AsyncDeserializer = null
   private[this] var allHalted = true
 
+
+  def initialize() = {
+    partitioner.init(config)
+
+    addPool(clazzM, new SimplePool[ReusableIterable[Any]]({
+      val reusableIterable = new ReusableIterable[M] {
+        override protected[this] def deserializeObject(): M = _kryo.readObject(_input, clazzM)
+      }
+      // TODO 4096 max message size should be retrieved somewhere else,
+      // prior to this it was retrieved from KryoSerialization
+      reusableIterable.input(new ByteBufferInput(4096))
+      reusableIterable
+    }))
+  }
 
   protected[this] def master() = masterActorRef
 
@@ -148,7 +164,7 @@ abstract class Worker[I ,V ,E ,M ]
     is.msgType match {
       case 0 => // edge
         messagesDeserializer.deserialize(is, index, messagePairDeserializer){ implicit dstMPairs =>
-          dstMPairs.foreach(_handleMessage(index, _))
+          dstMPairs.foreach(_handleMessage(index, _, clazzI,clazzM ))
         }
     }
   }
@@ -305,7 +321,7 @@ abstract class Worker[I ,V ,E ,M ]
 
         allHalted = true
         vertices.foreach { vId =>
-          val vMessages = messages(vId)
+          val vMessages = messages(vId, clazzM)
           val vHalted = halted(vId)
           val hasMessage = vMessages.nonEmpty
           if (!vHalted || hasMessage) {
@@ -362,7 +378,7 @@ abstract class Worker[I ,V ,E ,M ]
 
             releaseEdgesIterable(edgesIterable)
           }
-          releaseMessages(vMessages)
+          releaseMessages(vMessages, clazzM)
         }
 
         if (combinable.isDefined) {

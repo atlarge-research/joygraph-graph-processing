@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
 
-abstract class ReusableIterable[T] extends Iterable[T] {
+abstract class ReusableIterable[+T] extends Iterable[T] {
 
   protected[this] var _input : ByteBufferInput = _
   protected[this] var _kryo : Kryo = _

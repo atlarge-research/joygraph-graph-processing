@@ -1,10 +1,19 @@
 package io.joygraph.core.actor.messaging
 
-trait MessageStore[I, M] {
+import io.joygraph.core.util.SimplePool
+import io.joygraph.core.util.collection.ReusableIterable
 
-  protected[this] def _handleMessage(index : Int, dstMPair : (I, M))
-  protected[this] def messages(dst : I) : Iterable[M]
-  protected[this] def releaseMessages(messages : Iterable[M])
+trait MessageStore {
+
+  protected[this] def _handleMessage[I,M](index : Int, dstMPair : (I, M), clazzI : Class[I], clazzM: Class[M])
+  protected[this] def messages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
+  protected[this] def releaseMessages[M](messages : Iterable[M], clazz : Class[M])
   protected[this] def messagesOnSuperStepComplete()
   protected[this] def emptyCurrentMessages : Boolean
+
+  // TODO move to a different interface
+  /**
+    * Pooling for serialized message iterables
+    */
+  protected[this] def addPool(clazz : Class[_], pool : SimplePool[ReusableIterable[Any]]) : Unit = {}
 }
