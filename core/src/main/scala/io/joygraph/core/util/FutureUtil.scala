@@ -17,7 +17,14 @@ object FutureUtil {
     futures.foreach(_.foreach(_ => latch.countDown()))
     // todo on fail
     latch.await()
-    anyFunc
+    val res = try {
+      anyFunc
+    } catch {
+      case t : Throwable =>
+        t.printStackTrace()
+        throw t
+    }
+    res
   }
 
   def callbackOnAllCompleteWithResults[T <: Any, R <: Any](futures : Iterable[Future[T]])(anyFunc : Iterable[T] => R)(implicit executor: ExecutionContext): Future[R] = Future {
@@ -34,6 +41,13 @@ object FutureUtil {
     println("done waiting")
     val results = futures.map(Await.result(_, 0 nanos))
     println("Got results?")
-    anyFunc(results)
+    val res = try {
+      anyFunc(results)
+    } catch {
+      case t : Throwable =>
+        t.printStackTrace()
+        throw t
+    }
+    res
   }
 }
