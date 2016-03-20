@@ -276,6 +276,46 @@ abstract class Worker[I ,V ,E ,M ]
       vertexProgramInstance match {
         case program : VertexProgram[I, V, E, M] =>
           program.load(config)
+          val combinable: Option[Combinable[M]] = vertexProgramInstance match {
+            case combinable : Combinable[M] => Some(combinable)
+            case _ => None
+          }
+          if (combinable.isDefined) {
+            program.messageSenders(
+              (m, dst ) => {
+                val index = partitioner.destination(dst)
+                messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
+                  messageSender.send(id.get, index, byteBuffer)
+                }
+              },
+              (v,m) => {
+                v.edges.foreach {
+                  case Edge(dst, _) =>
+                    val index = partitioner.destination(dst)
+                    messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
+                      messageSender.send(id.get, index, byteBuffer)
+                    }
+                }
+              }
+            )
+          } else {
+            program.messageSenders(
+              (m, dst) => {
+                val index = partitioner.destination(dst)
+                messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                  messageSender.send(id.get, index, byteBuffer)
+                }
+              },
+              (v, m) => {
+                v.edges.foreach {
+                  case Edge(dst, _) =>
+                    val index = partitioner.destination(dst)
+                    messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                      messageSender.send(id.get, index, byteBuffer)
+                    }
+                }
+              })
+          }
           program.totalNumVertices(numVertices)
           program.totalNumEdges(numEdges)
           vertexProgramInstance match {
@@ -301,7 +341,7 @@ abstract class Worker[I ,V ,E ,M ]
 //        log.info(s"$clazzI $clazzV $clazzE $clazzM")
         def addEdgeVertex : (I, I, E) => Unit = addEdge
 
-        val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M] {
+        val v : Vertex[I,V,E] = new VertexImpl[I,V,E,M] {
           override def addEdge(dst: I, e: E): Unit = {
             addEdgeVertex(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
           }
@@ -327,43 +367,8 @@ abstract class Worker[I ,V ,E ,M ]
           if (!vHalted || hasMessage) {
             val value : V = vertexValue(vId)
             val edgesIterable : Iterable[Edge[I,E]] = edges(vId)
+            v.load(vId, value, edgesIterable)
 
-            if (combinable.isDefined) {
-              v.load(vId, value, edgesIterable,
-                (m, dst ) => {
-                  val index = partitioner.destination(dst)
-                  messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
-                    messageSender.send(id.get, index, byteBuffer)
-                  }
-                },
-                (m) => {
-                  edgesIterable.foreach {
-                    case Edge(dst, _) =>
-                      val index = partitioner.destination(dst)
-                      messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
-                        messageSender.send(id.get, index, byteBuffer)
-                      }
-                  }
-                }
-              )
-            } else {
-              v.load(vId, value, edgesIterable,
-                (m, dst) => {
-                  val index = partitioner.destination(dst)
-                  messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-                    messageSender.send(id.get, index, byteBuffer)
-                  }
-                },
-                (m) => {
-                  edgesIterable.foreach {
-                    case Edge(dst, _) =>
-                      val index = partitioner.destination(dst)
-                      messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-                        messageSender.send(id.get, index, byteBuffer)
-                      }
-                  }
-                })
-            }
             val hasHalted = vertexProgramInstance match {
               case program : VertexProgram[I,V,E,M] => program.run(v, vMessages, superStep)
               //                  case program : PerfectHashFormat[I] => program.run(v, superStep, new Mapper())
@@ -451,7 +456,7 @@ abstract class Worker[I ,V ,E ,M ]
         log.info(s"Writing output to ${outputPath}")
         jobSettings.outputDataLineWriter.newInstance().write(config, outputPath, (outputStream) => {
 
-          val v : Vertex[I,V,E,M] = new VertexImpl[I,V,E,M] {
+          val v : Vertex[I,V,E] = new VertexImpl[I,V,E,M] {
             override def addEdge(dst: I, e: E): Unit = {} // noop
           }
           vertices.foreach { vId =>
