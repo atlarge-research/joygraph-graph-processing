@@ -34,7 +34,7 @@ class PageRank extends VertexProgram[Long, Double, NullClass, Double] with Aggre
     numberOfIterations = conf.getInt("numIterations")
   }
 
-  override def run(v: Vertex[Long, Double, NullClass, Double], messages: Iterable[Double], superStep: Int): Boolean = {
+  override def run(v: Vertex[Long, Double, NullClass], messages: Iterable[Double], superStep: Int): Boolean = {
     if (superStep == 0) {
       v.value = 1.0 / totalNumVertices
     } else {
@@ -46,7 +46,7 @@ class PageRank extends VertexProgram[Long, Double, NullClass, Double] with Aggre
       if (v.edges.isEmpty) {
         aggregate("danglingNodeSum", v.value)
       } else {
-        v.sendAll(v.value / v.edges.size.toDouble)
+        sendAll(v, v.value / v.edges.size.toDouble)
       }
       false
     } else {

@@ -6,7 +6,7 @@ import io.joygraph.core.actor.{Master, Worker}
 import io.joygraph.core.partitioning.impl.VertexHashPartitioner
 import io.joygraph.core.program.{NullClass, ProgramDefinition, Vertex}
 import io.joygraph.core.runner.JoyGraphLocalInstanceBuilder
-import io.joygraph.definitions.BFSEdgeListDefinition
+import io.joygraph.definitions.{PREdgeListDefinition, DWCCEdgeListDefinition, BFSEdgeListDefinition}
 import io.joygraph.impl.hadoop.actor.HadoopMaster
 import org.scalatest.FunSuite
 
@@ -15,6 +15,23 @@ class BFSTest extends FunSuite {
     val source_id = "99843"
 //  val file = "/home/sietse/cit-Patents-edge.txt"
 //  val source_id = "4949326"
+
+
+  test("BreadthFirstSearch test programDef nonserialized") {
+    val programDefinition = new BFSEdgeListDefinition
+    val instance = JoyGraphLocalInstanceBuilder(programDefinition)
+      .masterFactory((jobConfig, cluster) => {
+        val master = new Master(jobConfig, cluster) with HadoopMaster
+        Master.initialize(master)})
+      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithTrieMapMessageStore(config, programDefinition, partitioner))
+      .vertexPartitioner(new VertexHashPartitioner())
+      .dataPath(file)
+      .programParameters(("source_id", source_id))
+      .numWorkers(1)
+      .outputPath("/home/sietse/outputPath")
+      .build()
+    instance.run()
+  }
 
   test("BreadthFirstSearch test programDef") {
     val programDefinition : ProgramDefinition[String,_, _,_,_] = Class.forName(classOf[BFSEdgeListDefinition].getName).newInstance().asInstanceOf[ProgramDefinition[String,_,_,_,_]]
@@ -26,8 +43,41 @@ class BFSTest extends FunSuite {
       .vertexPartitioner(new VertexHashPartitioner())
       .dataPath(file)
       .programParameters(("source_id", source_id))
-      .numWorkers(1)
+      .numWorkers(4)
       .outputPath("/home/sietse/outputPath")
+      .build()
+    instance.run()
+  }
+
+  test("DWCC") {
+    val programDefinition = new DWCCEdgeListDefinition
+    val instance = JoyGraphLocalInstanceBuilder(programDefinition)
+      .masterFactory((jobConfig, cluster) => {
+        val master = new Master(jobConfig, cluster) with HadoopMaster
+        Master.initialize(master)})
+      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
+      .vertexPartitioner(new VertexHashPartitioner())
+      .dataPath(file)
+      .programParameters(("none", "none"))
+      .numWorkers(4)
+      .outputPath("/home/sietse/outputPath")
+      .build()
+    instance.run()
+  }
+
+  test("Pagerank test") {
+    val programDefinition = new PREdgeListDefinition
+    val instance = JoyGraphLocalInstanceBuilder(programDefinition)
+      .masterFactory((jobConfig, cluster) => {
+        val master = new Master(jobConfig, cluster) with HadoopMaster
+        Master.initialize(master)})
+      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
+      .vertexPartitioner(new VertexHashPartitioner())
+      .dataPath(file)
+      .programParameters(("dampingFactor", "0.9"))
+      .programParameters(("numIterations", "2"))
+      .numWorkers(4)
+      .outputPath("/home/sietse/outputPath4")
       .build()
     instance.run()
   }
@@ -39,7 +89,7 @@ class BFSTest extends FunSuite {
           val s = l.split("\\s")
           (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
         },
-        (v : Vertex[_,_,_,_], outputStream) => {
+        (v : Vertex[_,_,_], outputStream) => {
           outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8))
         },
         classOf[BFS]
@@ -64,7 +114,7 @@ class BFSTest extends FunSuite {
           val s = l.split("\\s")
           (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
         },
-        (v : Vertex[_,_,_,_], outputStream) => {
+        (v : Vertex[_,_,_], outputStream) => {
           outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8))
         },
         classOf[BFSCombinable]
@@ -89,7 +139,7 @@ class BFSTest extends FunSuite {
           val s = l.split("\\s")
           (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
         },
-        (v : Vertex[_,_,_,_], outputStream) => {
+        (v : Vertex[_,_,_], outputStream) => {
           outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8))
         },
         classOf[BFSCombinable]

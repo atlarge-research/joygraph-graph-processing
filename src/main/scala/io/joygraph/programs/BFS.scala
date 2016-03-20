@@ -13,18 +13,18 @@ class BFS extends VertexProgram[Long, Long, NullClass, Long] {
     sourceId = conf.getLong("source_id")
   }
 
-  override def run(v: Vertex[Long, Long, NullClass, Long], messages : Iterable[Long], superStep : Int): Boolean = {
+  override def run(v: Vertex[Long, Long, NullClass], messages : Iterable[Long], superStep : Int): Boolean = {
     if (superStep == 0) {
       if (v.id == sourceId) {
         v.value = superStep
-        v.sendAll(superStep)
+        sendAll(v, superStep)
       } else {
         v.value = BFS.UNVISITED
       }
     } else {
       if (v.value == BFS.UNVISITED) {
         v.value = superStep
-        v.sendAll(superStep)
+        sendAll(v, superStep)
       }
     }
     true
