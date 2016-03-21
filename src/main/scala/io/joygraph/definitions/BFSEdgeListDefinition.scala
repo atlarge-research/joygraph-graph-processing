@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets
 import io.joygraph.core.program.{NullClass, ProgramDefinition}
 import io.joygraph.programs.BFS
 
-class BFSEdgeListDefinition extends ProgramDefinition[String, Long, Long, NullClass, Long] (
+class BFSEdgeListDefinition extends ProgramDefinition[String, Long, Long, NullClass] (
   (l) => {
     val s = l.split("\\s")
     (s(0).toLong, s(1).toLong, NullClass.SINGLETON)

@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets
 import io.joygraph.core.program.{NullClass, ProgramDefinition}
 import io.joygraph.programs.{PageRank, DWCC}
 
-class PREdgeListDefinition extends ProgramDefinition[String, Long, Double, NullClass, Double] (
+class PREdgeListDefinition extends ProgramDefinition[String, Long, Double, NullClass] (
   (l) => {
     val s = l.split("\\s")
     (s(0).toLong, s(1).toLong, NullClass.SINGLETON)

@@ -1,33 +1,32 @@
 package io.joygraph.programs
 
 import com.typesafe.config.Config
-import io.joygraph.core.program.{NullClass, Vertex, VertexProgram}
+import io.joygraph.core.program.{HomogeneousVertexProgram, NullClass, Vertex}
 
 object BFS {
   val UNVISITED : Long = Long.MaxValue
 }
 
-class BFS extends VertexProgram[Long, Long, NullClass, Long] {
+class BFS extends HomogeneousVertexProgram[Long, Long, NullClass, Long] {
   var sourceId : Long = -1
   override def load(conf : Config): Unit = {
     sourceId = conf.getLong("source_id")
   }
 
-  override def run(v: Vertex[Long, Long, NullClass], messages : Iterable[Long], superStep : Int): Boolean = {
+  override def run(v: Vertex[Long, Long, NullClass], messages: Iterable[Long], superStep: Int)(implicit send: (Long, Long) => Unit, sendAll: (Long) => Unit): Boolean = {
     if (superStep == 0) {
       if (v.id == sourceId) {
         v.value = superStep
-        sendAll(v, superStep)
+        sendAll(v.value)
       } else {
         v.value = BFS.UNVISITED
       }
     } else {
       if (v.value == BFS.UNVISITED) {
         v.value = superStep
-        sendAll(v, superStep)
+        sendAll(v.value)
       }
     }
     true
   }
-
 }

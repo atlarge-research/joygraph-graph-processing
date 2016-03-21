@@ -1,17 +1,19 @@
 package io.joygraph.programs
 
 import com.typesafe.config.Config
-import io.joygraph.core.program.{NullClass, Vertex, VertexProgram}
+import io.joygraph.core.program.{HomogeneousVertexProgram, NullClass, Vertex}
 
 import scala.collection.mutable
 
-class DWCC extends VertexProgram[Long, Long, NullClass, Long] {
+class DWCC extends HomogeneousVertexProgram[Long, Long, NullClass, Long] {
   /**
     * Load parameters from vertex program
     *
     * @param conf
     */
-  override def load(conf: Config): Unit = {}//noop
+  override def load(conf: Config): Unit = {
+
+  }//noop
 
   private[this] val edgeSet = new mutable.HashSet[Long]()
 
@@ -19,10 +21,10 @@ class DWCC extends VertexProgram[Long, Long, NullClass, Long] {
     * @param v
     * @return true if halting, false if not halting
     */
-  override def run(v: Vertex[Long, Long, NullClass], messages: Iterable[Long], superStep: Int): Boolean = {
+  override def run(v: Vertex[Long, Long, NullClass], messages: Iterable[Long], superStep: Int)(implicit send: (Long, Long) => Unit, sendAll: (Long) => Unit): Boolean = {
     // Weakly connected components algorithm treats a directed graph as undirected, so we create the missing edges
     if (superStep == 0) {
-      sendAll(v, v.id)
+      sendAll(v.id)
       false
     }
     else if (superStep == 1) {
@@ -32,7 +34,7 @@ class DWCC extends VertexProgram[Long, Long, NullClass, Long] {
       val minOtherId = if (v.edges.isEmpty) v.id else v.edges.minBy[Long](_.dst).dst
       v.value = math.min(v.id, minOtherId)
       if (minOtherId < v.id) {
-        sendAll(v, minOtherId)
+        sendAll(minOtherId)
       }
       true
     }
@@ -41,7 +43,7 @@ class DWCC extends VertexProgram[Long, Long, NullClass, Long] {
       val candidateComponent = messages.min
       if (candidateComponent < currentComponent) {
         v.value = candidateComponent
-        sendAll(v, candidateComponent)
+        sendAll(candidateComponent)
       }
       true
     }

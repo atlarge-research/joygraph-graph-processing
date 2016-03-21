@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.DoubleAdder
 import com.typesafe.config.Config
 import io.joygraph.core.program._
 
-class PageRank extends VertexProgram[Long, Double, NullClass, Double] with Aggregatable {
+class PageRank extends HomogeneousVertexProgram[Long, Double, NullClass, Double] with Aggregatable {
 
   private[this] var dampingFactor : Double = _
   private[this] var numberOfIterations : Int = _
@@ -34,7 +34,7 @@ class PageRank extends VertexProgram[Long, Double, NullClass, Double] with Aggre
     numberOfIterations = conf.getInt("numIterations")
   }
 
-  override def run(v: Vertex[Long, Double, NullClass], messages: Iterable[Double], superStep: Int): Boolean = {
+  override def run(v: Vertex[Long, Double, NullClass], messages: Iterable[Double], superStep: Int)(implicit send: (Double, Long) => Unit, sendAll: (Double) => Unit): Boolean = {
     if (superStep == 0) {
       v.value = 1.0 / totalNumVertices
     } else {
@@ -46,7 +46,7 @@ class PageRank extends VertexProgram[Long, Double, NullClass, Double] with Aggre
       if (v.edges.isEmpty) {
         aggregate("danglingNodeSum", v.value)
       } else {
-        sendAll(v, v.value / v.edges.size.toDouble)
+        sendAll(v.value / v.edges.size.toDouble)
       }
       false
     } else {
