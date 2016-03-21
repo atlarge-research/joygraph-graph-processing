@@ -2,7 +2,7 @@ package io.joygraph.core.program
 
 import java.io.InputStream
 
-abstract class VertexImpl[I,V,E,M] extends Vertex[I,V,E] {
+abstract class VertexImpl[I,V,E] extends Vertex[I,V,E] {
   private[this] var _id : I = _
   private[this] var _value : V = _
   private[this] var _edges : Iterable[Edge[I,E]] = _

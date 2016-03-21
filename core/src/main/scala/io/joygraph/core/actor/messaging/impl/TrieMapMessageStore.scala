@@ -5,7 +5,7 @@ import io.joygraph.core.actor.messaging.{MessageStore, Messaging}
 trait TrieMapMessageStore extends MessageStore {
   private[this] val messaging : Messaging = new TrieMapMessaging
 
-  override protected[this] def _handleMessage[I,M](index : Int, dstMPair : (I, M), clazzI : Class[I], clazzM: Class[M]) {
+  override protected[this] def _handleMessage[I](index : Int, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any]) {
   val (dst, m) = dstMPair
     messaging.add(dst, m)
   }
@@ -22,7 +22,7 @@ trait TrieMapMessageStore extends MessageStore {
     messaging.emptyCurrentMessages
   }
 
-  protected[this] def releaseMessages[M](messages : Iterable[M], clazz : Class[M]) = {
+  protected[this] def releaseMessages(messages : Iterable[_ <: Any], clazz : Class[_ <: Any]) = {
     //noop
   }
 

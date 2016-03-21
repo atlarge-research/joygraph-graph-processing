@@ -13,7 +13,7 @@ import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
 import io.joygraph.core.message.aggregate.Aggregators
-import io.joygraph.core.message.superstep.{DoNextStep, PrepareSuperStep, RunSuperStep, SuperStepComplete}
+import io.joygraph.core.message.superstep._
 import io.joygraph.core.program.Aggregator
 import io.joygraph.core.util.FutureUtil
 
@@ -157,7 +157,13 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         successReceived = new AtomicInteger(allWorkers().size)
         allWorkers().foreach(_.actorRef ! AllLoadingComplete())
       }
-
+    case BarrierComplete() => {
+      if (successReceived.decrementAndGet() == 0) {
+        log.info("Barrier complete")
+        successReceived = new AtomicInteger(allWorkers().size)
+        allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
+      }
+    }
     case SuperStepComplete() =>
       log.info(s"Left : ${successReceived.get()}")
       if (successReceived.decrementAndGet() == 0) {
@@ -176,7 +182,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
             log.info(s"Hell $doNextStep")
             // set to superstep
             if (doNextStep) {
-              allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
+              allWorkers().foreach(_.actorRef ! DoBarrier(currentSuperStep))
             } else {
               sendDoOutput()
               println(s"we're done, fuckers at ${currentSuperStep - 1}")

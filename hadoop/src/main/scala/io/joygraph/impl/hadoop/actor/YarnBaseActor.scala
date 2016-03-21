@@ -39,7 +39,7 @@ object YarnBaseActor {
     )
 
     val workerConf = remotingConf.withFallback(jobConf)
-    val definition : ProgramDefinition[String,_, _,_,_] = Class.forName(JobSettings(jobConf).programDefinition).newInstance().asInstanceOf[ProgramDefinition[String,_,_,_,_]]
+    val definition : ProgramDefinition[String,_,_,_] = Class.forName(JobSettings(jobConf).programDefinition).newInstance().asInstanceOf[ProgramDefinition[String,_,_,_]]
     val system = ActorSystem(actorSystemName, workerConf)
     system.actorOf(Props(classOf[BaseActor], workerConf,
       (conf : Config, cluster : Cluster) => {

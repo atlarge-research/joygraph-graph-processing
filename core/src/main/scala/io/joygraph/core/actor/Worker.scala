@@ -24,38 +24,58 @@ import io.joygraph.core.program._
 import io.joygraph.core.reader.LineProvider
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.collection.ReusableIterable
-import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer, CombinableAsyncSerializer}
+import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
 import io.joygraph.core.util.{FutureUtil, MessageCounting, SimplePool}
 
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.Future
 
 object Worker{
-  def workerWithTrieMapMessageStore[I ,V ,E ,M ]
+  def workerWithTrieMapMessageStore[I,V,E]
   (config: Config,
-   programDefinition: ProgramDefinition[String, I,V,E,M],
+   programDefinition: ProgramDefinition[String, I,V,E],
    partitioner : VertexPartitioner
-  ): Worker[I,V,E,M] = {
-    val worker = new Worker[I,V,E,M](config, programDefinition, partitioner) with TrieMapMessageStore with TrieMapVerticesStore[I,V,E]
+  ): Worker[I,V,E] = {
+    val worker = new Worker[I,V,E](config, programDefinition, partitioner) with TrieMapMessageStore with TrieMapVerticesStore[I,V,E]
     worker.initialize()
     worker
   }
 
-  def workerWithSerializedTrieMapMessageStore[I ,V ,E ,M]
+  def workerWithSerializedTrieMapMessageStoreWithVerticesStore[I,V,E]
   (config: Config,
-   programDefinition: ProgramDefinition[String, I,V,E,M],
+   programDefinition: ProgramDefinition[String, I,V,E],
    partitioner : VertexPartitioner
-  ): Worker[I,V,E,M] = {
-    val worker = new Worker[I,V,E,M](config, programDefinition, partitioner) with TrieMapSerializedMessageStore with TrieMapSerializedVerticesStore[I,V,E]
+  ): Worker[I,V,E] = {
+    val worker = new Worker[I,V,E](config, programDefinition, partitioner) with TrieMapSerializedMessageStore with TrieMapVerticesStore[I,V,E]
+    worker.initialize()
+    worker
+  }
+
+  def workerWithTrieMapMessageStoreWithSerializedVerticesStore[I,V,E]
+  (config: Config,
+   programDefinition: ProgramDefinition[String, I,V,E],
+   partitioner : VertexPartitioner
+  ): Worker[I,V,E] = {
+    val worker = new Worker[I,V,E](config, programDefinition, partitioner) with TrieMapMessageStore with TrieMapSerializedVerticesStore[I,V,E]
+    worker.initialize()
+    worker
+  }
+
+  def workerWithSerializedTrieMapMessageStore[I ,V ,E]
+  (config: Config,
+   programDefinition: ProgramDefinition[String, I,V,E],
+   partitioner : VertexPartitioner
+  ): Worker[I,V,E] = {
+    val worker = new Worker[I,V,E](config, programDefinition, partitioner) with TrieMapSerializedMessageStore with TrieMapSerializedVerticesStore[I,V,E]
     worker.initialize()
     worker
     //    new Worker[I,V,E,M](config, parser, clazz, partitioner) with TrieMapMessageStore[I,M] with TrieMapSerializedVerticesStore[I,V,E]
   }
 }
 
-abstract class Worker[I ,V ,E ,M ]
+abstract class Worker[I,V,E]
 (private[this] val config : Config,
- programDefinition: ProgramDefinition[String, I,V,E,M],
+ programDefinition: ProgramDefinition[String, I,V,E],
  protected[this] var partitioner : VertexPartitioner)
   extends Actor with ActorLogging with MessageCounting with MessageStore with VerticesStore[I,V,E] {
 
@@ -65,7 +85,6 @@ abstract class Worker[I ,V ,E ,M ]
   protected[this] val clazzI : Class[I] = programDefinition.clazzI
   protected[this] val clazzV : Class[V] = programDefinition.clazzV
   protected[this] val clazzE : Class[E] = programDefinition.clazzE
-  protected[this] val clazzM : Class[M] = programDefinition.clazzM
 
   private[this] var id : Option[Int] = None
   private[this] var workers : ArrayBuffer[AddressPair] = null
@@ -84,17 +103,17 @@ abstract class Worker[I ,V ,E ,M ]
   private[this] var messageReceiver : MessageReceiverNetty = _
 
   private[this] var messagesSerializer : AsyncSerializer = null
-  private[this] var messagesCombinableSerializer : CombinableAsyncSerializer[I,M] = null
+//  private[this] var messagesCombinableSerializer : CombinableAsyncSerializer[I] = null
   private[this] var messagesDeserializer : AsyncDeserializer = null
   private[this] var allHalted = true
-
+  private[this] var currentSuperStepFunction : SuperStepFunction[I,V,E,_,_] = _
 
   def initialize() = {
     partitioner.init(config)
-
-    addPool(clazzM, new SimplePool[ReusableIterable[Any]]({
-      val reusableIterable = new ReusableIterable[M] {
-        override protected[this] def deserializeObject(): M = _kryo.readObject(_input, clazzM)
+    // set current deserializer
+    setReusableIterablePool(new SimplePool[ReusableIterable[Any]]({
+      val reusableIterable = new ReusableIterable[Any] {
+        override protected[this] def deserializeObject(): Any = incomingMessageDeserializer(_kryo, _input)
       }
       // TODO 4096 max message size should be retrieved somewhere else,
       // prior to this it was retrieved from KryoSerialization
@@ -164,7 +183,7 @@ abstract class Worker[I ,V ,E ,M ]
     is.msgType match {
       case 0 => // edge
         messagesDeserializer.deserialize(is, index, messagePairDeserializer){ implicit dstMPairs =>
-          dstMPairs.foreach(_handleMessage(index, _, clazzI,clazzM ))
+          dstMPairs.foreach(_handleMessage(index, _, clazzI, currentOutgoingMessageClass))
         }
     }
   }
@@ -190,6 +209,7 @@ abstract class Worker[I ,V ,E ,M ]
   private[this] val DATA_LOADING_OPERATION : PartialFunction[Any, Unit] = {
     case PrepareLoadData() =>
       println(s"$id: prepare load data!~ $state")
+      // TODO create KryoFactory
       this.edgeBufferNew = new AsyncSerializer(0, workers.length, new Kryo())
       this.verticesBufferNew = new AsyncSerializer(1, workers.length, new Kryo())
       this.edgesDeserializer = new AsyncDeserializer(0, workers.length, new Kryo())
@@ -271,51 +291,67 @@ abstract class Worker[I ,V ,E ,M ]
     }
   }
 
+  private[this] def currentIncomingMessageClass : Class[_] = currentSuperStepFunction.clazzIn
+  private[this] def currentOutgoingMessageClass : Class[_] = currentSuperStepFunction.clazzOut
+
+  private[this] def prepareSuperStep(superStep : Int) : Unit = {
+    currentSuperStepFunction = vertexProgramInstance.currentSuperStepFunction(superStep)
+
+    println(s"current INOUT $currentIncomingMessageClass $currentOutgoingMessageClass")
+
+    currentSuperStepFunction.messageSenders(
+      (m, dst) => {
+        val index = partitioner.destination(dst)
+        messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+          messageSender.send(id.get, index, byteBuffer)
+        }
+      },
+      (v, m) => {
+        v.edges.foreach {
+          case Edge(dst, _) =>
+            val index = partitioner.destination(dst)
+            messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+              messageSender.send(id.get, index, byteBuffer)
+            }
+        }
+      })
+  }
+
+  private[this] def barrier(superStep : Int): Unit = {
+    prepareSuperStep(superStep)
+  }
+
   private[this] val RUN_SUPERSTEP : PartialFunction[Any, Unit] = {
     case PrepareSuperStep(numVertices, numEdges) =>
       vertexProgramInstance match {
-        case program : VertexProgram[I, V, E, M] =>
+        case program : NewVertexProgram[I, V, E] =>
           program.load(config)
-          val combinable: Option[Combinable[M]] = vertexProgramInstance match {
-            case combinable : Combinable[M] => Some(combinable)
-            case _ => None
-          }
-          if (combinable.isDefined) {
-            program.messageSenders(
-              (m, dst ) => {
-                val index = partitioner.destination(dst)
-                messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
-                  messageSender.send(id.get, index, byteBuffer)
-                }
-              },
-              (v,m) => {
-                v.edges.foreach {
-                  case Edge(dst, _) =>
-                    val index = partitioner.destination(dst)
-                    messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
-                      messageSender.send(id.get, index, byteBuffer)
-                    }
-                }
-              }
-            )
-          } else {
-            program.messageSenders(
-              (m, dst) => {
-                val index = partitioner.destination(dst)
-                messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-                  messageSender.send(id.get, index, byteBuffer)
-                }
-              },
-              (v, m) => {
-                v.edges.foreach {
-                  case Edge(dst, _) =>
-                    val index = partitioner.destination(dst)
-                    messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-                      messageSender.send(id.get, index, byteBuffer)
-                    }
-                }
-              })
-          }
+          // TODO combinable is no more a VertexProgram trait but a superstepfunction trait
+//          val combinable: Option[Combinable[M]] = vertexProgramInstance match {
+//            case combinable : Combinable[M] => Some(combinable)
+//            case _ => None
+//          }
+//          if (combinable.isDefined) {
+//            program.messageSenders(
+//              (m, dst ) => {
+//                val index = partitioner.destination(dst)
+//                messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
+//                  messageSender.send(id.get, index, byteBuffer)
+//                }
+//              },
+//              (v,m) => {
+//                v.edges.foreach {
+//                  case Edge(dst, _) =>
+//                    val index = partitioner.destination(dst)
+//                    messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
+//                      messageSender.send(id.get, index, byteBuffer)
+//                    }
+//                }
+//              }
+//            )
+//          } else {
+
+//          }
           program.totalNumVertices(numVertices)
           program.totalNumEdges(numEdges)
           vertexProgramInstance match {
@@ -326,31 +362,40 @@ abstract class Worker[I ,V ,E ,M ]
           }
         case _ =>
       }
+      // TODO kryoFactory instead of new Kryo
       vertexProgramInstance match {
-        case combinable: Combinable[M] =>
-          messagesCombinableSerializer = new CombinableAsyncSerializer[I,M](0, workers.size, new Kryo(),
-            combinable, vertexSerializer, messageSerializer, messageDeserializer)
+          // TODO
+//        case combinable: Combinable[_] =>
+//          messagesCombinableSerializer = new CombinableAsyncSerializer[I,_](0, workers.size, new Kryo(),
+//            combinable, vertexSerializer, messageSerializer, messageDeserializer)
         case _ =>
           messagesSerializer = new AsyncSerializer(0, workers.size, new Kryo())
       }
       messagesDeserializer = new AsyncDeserializer(0, workers.size, new Kryo())
+
+      prepareSuperStep(0)
       sender() ! true
+    case DoBarrier(superStep) => {
+      barrier(superStep)
+      master() ! BarrierComplete()
+    }
     case RunSuperStep(superStep) =>
       Future{
         log.info(s"Running superstep $superStep")
 //        log.info(s"$clazzI $clazzV $clazzE $clazzM")
         def addEdgeVertex : (I, I, E) => Unit = addEdge
 
-        val v : Vertex[I,V,E] = new VertexImpl[I,V,E,M] {
+        val v : Vertex[I,V,E] = new VertexImpl[I,V,E] {
           override def addEdge(dst: I, e: E): Unit = {
             addEdgeVertex(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
           }
         }
 
-        val combinable: Option[Combinable[M]] = vertexProgramInstance match {
-          case combinable : Combinable[M] => Some(combinable)
-          case _ => None
-        }
+        // TODO
+//        val combinable: Option[Combinable[M]] = vertexProgramInstance match {
+//          case combinable : Combinable[M] => Some(combinable)
+//          case _ => None
+//        }
 
         val aggregatable : Option[Aggregatable] = vertexProgramInstance match {
           case aggregatable : Aggregatable => {
@@ -360,8 +405,10 @@ abstract class Worker[I ,V ,E ,M ]
         }
 
         allHalted = true
+
+
         vertices.foreach { vId =>
-          val vMessages = messages(vId, clazzM)
+          val vMessages = messages(vId, currentIncomingMessageClass)
           val vHalted = halted(vId)
           val hasMessage = vMessages.nonEmpty
           if (!vHalted || hasMessage) {
@@ -369,11 +416,7 @@ abstract class Worker[I ,V ,E ,M ]
             val edgesIterable : Iterable[Edge[I,E]] = edges(vId)
             v.load(vId, value, edgesIterable)
 
-            val hasHalted = vertexProgramInstance match {
-              case program : VertexProgram[I,V,E,M] => program.run(v, vMessages, superStep)
-              //                  case program : PerfectHashFormat[I] => program.run(v, superStep, new Mapper())
-              case _ => true // TODO exception
-            }
+            val hasHalted = currentSuperStepFunction(v, vMessages)
             setVertexValue(vId, v.value)
             setHalted(vId, hasHalted)
 
@@ -383,18 +426,18 @@ abstract class Worker[I ,V ,E ,M ]
 
             releaseEdgesIterable(edgesIterable)
           }
-          releaseMessages(vMessages, clazzM)
+          releaseMessages(vMessages, currentIncomingMessageClass)
         }
-
-        if (combinable.isDefined) {
-          messagesCombinableSerializer.sendNonEmptyByteBuffers{ case (byteBuffer : ByteBuffer, index : Int) =>
-            messageSender.send(id.get, index, byteBuffer)
-          }
-        } else {
+// TODO
+//        if (combinable.isDefined) {
+//          messagesCombinableSerializer.sendNonEmptyByteBuffers{ case (byteBuffer : ByteBuffer, index : Int) =>
+//            messageSender.send(id.get, index, byteBuffer)
+//          }
+//        } else {
           messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>
             messageSender.send(id.get, index, byteBuffer)
           }
-        }
+//        }
 
         // trigger oncomplete
         vertexProgramInstance.onSuperStepComplete()
@@ -429,22 +472,26 @@ abstract class Worker[I ,V ,E ,M ]
       superStepCompleteTrigger()
   }
 
-  def messagePairDeserializer(kryo : Kryo, input : Input) : (I, M) = {
+  private[this] def messagePairDeserializer(kryo : Kryo, input : Input) : (I, Any) = {
     (kryo.readObject(input, clazzI),
-      kryo.readObject(input, clazzM))
+      messageDeserializer(kryo, input))
   }
 
-  def messagePairSerializer(kryo : Kryo, output : Output, o : (I,M) ) = {
+  private[this] def messagePairSerializer(kryo : Kryo, output : Output, o : (I, Any) ) = {
     kryo.writeObject(output, o._1)
-    kryo.writeObject(output, o._2)
+    messageSerializer(kryo, output, o._2)
   }
 
-  def messageSerializer(kryo : Kryo, output : Output, m : M) = {
+  private[this] def messageSerializer(kryo : Kryo, output : Output, m : Any) = {
     kryo.writeObject(output, m)
   }
 
-  def messageDeserializer(kryo : Kryo, input : Input) : M = {
-    kryo.readObject(input, clazzM)
+  private[this] def messageDeserializer(kryo : Kryo, input : Input) : Any = {
+    kryo.readObject(input, currentOutgoingMessageClass)
+  }
+
+  private[this] def incomingMessageDeserializer(kryo : Kryo, input : Input) : Any = {
+    kryo.readObject(input, currentIncomingMessageClass)
   }
 
   private[this] def currentReceive : PartialFunction[Any, Unit] = _currentReceive
@@ -456,7 +503,7 @@ abstract class Worker[I ,V ,E ,M ]
         log.info(s"Writing output to ${outputPath}")
         jobSettings.outputDataLineWriter.newInstance().write(config, outputPath, (outputStream) => {
 
-          val v : Vertex[I,V,E] = new VertexImpl[I,V,E,M] {
+          val v : Vertex[I,V,E] = new VertexImpl[I,V,E] {
             override def addEdge(dst: I, e: E): Unit = {} // noop
           }
           vertices.foreach { vId =>
@@ -537,15 +584,15 @@ abstract class Worker[I ,V ,E ,M ]
     incrementSent()
   }
 
-  def vertexDeserializer(kryo : Kryo, input : Input) : I = {
+  private[this] def vertexDeserializer(kryo : Kryo, input : Input) : I = {
     kryo.readObject(input, clazzI)
   }
 
-  def vertexSerializer(kryo: Kryo, output : Output, v : I) : Unit = {
+  private[this] def vertexSerializer(kryo: Kryo, output : Output, v : I) : Unit = {
     kryo.writeObject(output, v)
   }
 
-  def edgeDeserializer(kryo : Kryo, input : Input) : (I, I, E) = {
+  private[this] def edgeDeserializer(kryo : Kryo, input : Input) : (I, I, E) = {
     if (clazzE == classOf[NullClass]) {
       (kryo.readObject(input, clazzI),
         kryo.readObject(input, clazzI),
@@ -557,7 +604,7 @@ abstract class Worker[I ,V ,E ,M ]
     }
   }
 
-  def edgeSerializer(kryo : Kryo, output : Output, o : (I, I, E)) : Unit = {
+  private[this] def edgeSerializer(kryo : Kryo, output : Output, o : (I, I, E)) : Unit = {
     if (clazzE == classOf[NullClass]) {
       kryo.writeObject(output, o._1)
       kryo.writeObject(output, o._2)

@@ -5,9 +5,9 @@ import io.joygraph.core.util.collection.ReusableIterable
 
 trait MessageStore {
 
-  protected[this] def _handleMessage[I,M](index : Int, dstMPair : (I, M), clazzI : Class[I], clazzM: Class[M])
+  protected[this] def _handleMessage[I](index : Int, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any])
   protected[this] def messages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
-  protected[this] def releaseMessages[M](messages : Iterable[M], clazz : Class[M])
+  protected[this] def releaseMessages(messages : Iterable[_ <: Any], clazz : Class[_ <: Any])
   protected[this] def messagesOnSuperStepComplete()
   protected[this] def emptyCurrentMessages : Boolean
 
@@ -15,5 +15,5 @@ trait MessageStore {
   /**
     * Pooling for serialized message iterables
     */
-  protected[this] def addPool(clazz : Class[_], pool : SimplePool[ReusableIterable[Any]]) : Unit = {}
+  protected[this] def setReusableIterablePool(pool : SimplePool[ReusableIterable[Any]]) : Unit = {}
 }

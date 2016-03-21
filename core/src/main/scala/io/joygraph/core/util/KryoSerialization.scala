@@ -23,6 +23,7 @@ trait KryoSerialization {
   }
 
   protected[this] def kryo(index : Int) : Kryo = {
+    // TODO use kryoFactory or some factory method
     kryos.getOrElseUpdate(index, new Kryo)
   }
 

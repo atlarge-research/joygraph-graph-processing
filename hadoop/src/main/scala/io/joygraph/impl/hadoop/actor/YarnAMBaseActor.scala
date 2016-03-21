@@ -82,7 +82,7 @@ object YarnAMBaseActor {
       .withFallback(clusterNodeConf)
       .withFallback(jobConf)
 
-    val definition : ProgramDefinition[String,_, _,_,_] = Class.forName(JobSettings(jobConf).programDefinition).newInstance().asInstanceOf[ProgramDefinition[String,_,_,_,_]]
+    val definition : ProgramDefinition[String,_,_,_] = Class.forName(JobSettings(jobConf).programDefinition).newInstance().asInstanceOf[ProgramDefinition[String,_,_,_]]
     val system = ActorSystem(actorSystemName, masterConf)
     system.actorOf(Props(classOf[YarnAMBaseActor], paths, masterConf, workerConf,
       (conf : Config, cluster : Cluster) => {
@@ -98,7 +98,7 @@ object YarnAMBaseActor {
   }
 }
 
-class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, masterFactory : (Config, Cluster) => _ <: Master, workerFactory : () => Worker[_,_,_,_]) extends BaseActor(jobConf, masterFactory, workerFactory) {
+class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, masterFactory : (Config, Cluster) => _ <: Master, workerFactory : () => Worker[_,_,_]) extends BaseActor(jobConf, masterFactory, workerFactory) {
 
   private[this] val dfsPaths = YARNUtils.deserializeResourcesFileStatuses(paths)
   private[this] val jarFileStatus = dfsPaths.head

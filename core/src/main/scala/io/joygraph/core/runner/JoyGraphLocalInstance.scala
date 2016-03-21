@@ -15,17 +15,17 @@ import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 
 object JoyGraphLocalInstanceBuilder {
-  def apply[I,V,E,M](programDefinition: ProgramDefinition[String, I,V,E,M]) : JoyGraphLocalInstanceBuilder[I,V,E,M] = {
+  def apply[I,V,E,M](programDefinition: ProgramDefinition[String, I,V,E]) : JoyGraphLocalInstanceBuilder[I,V,E,M] = {
     new JoyGraphLocalInstanceBuilder[I,V,E,M](programDefinition)
   }
 }
 
-class JoyGraphLocalInstanceBuilder[I,V,E,M](programDefinition: ProgramDefinition[String, I,V,E,M]) {
+class JoyGraphLocalInstanceBuilder[I,V,E,M](programDefinition: ProgramDefinition[String, I,V,E]) {
 
   private[this] type BuilderType = JoyGraphLocalInstanceBuilder[I,V,E,M]
   private[this] var _workers : Option[Int] = None
   private[this] var _dataPath : Option[String] = None
-  private[this] var _workerFactory : Option[(Config, ProgramDefinition[String, _,_,_,_], VertexPartitioner) => Worker[_,_,_,_]] = None
+  private[this] var _workerFactory : Option[(Config, ProgramDefinition[String, _,_,_], VertexPartitioner) => Worker[_,_,_]] = None
   private[this] var _masterFactory : Option[(Config, Cluster) => Master] = None
   private[this] var _partitioner : Option[VertexPartitioner] = None
   private[this] var _programParameters : ArrayBuffer[(String,String)] = ArrayBuffer.empty
@@ -58,8 +58,8 @@ class JoyGraphLocalInstanceBuilder[I,V,E,M](programDefinition: ProgramDefinition
 
   def workerFactory(workerFactory :
                     (Config,
-                      ProgramDefinition[String, _,_,_,_],
-                      VertexPartitioner) => Worker[_,_,_,_]) : BuilderType = {
+                      ProgramDefinition[String, _,_,_],
+                      VertexPartitioner) => Worker[_,_,_]) : BuilderType = {
     _workerFactory = Option(workerFactory)
     this
   }
@@ -108,11 +108,11 @@ class JoyGraphLocalInstanceBuilder[I,V,E,M](programDefinition: ProgramDefinition
   }
 }
 
-protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinition[String, _,_,_,_]) {
+protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinition[String, _,_,_]) {
   private[this] type Type = JoyGraphLocalInstance
   private[this] var _workers : Int = _
   private[this] var _dataPath : String = _
-  private[this] var _workerFactory : (Config, ProgramDefinition[String, _,_,_,_], VertexPartitioner) => Worker[_,_,_,_] = _
+  private[this] var _workerFactory : (Config, ProgramDefinition[String, _,_,_], VertexPartitioner) => Worker[_,_,_] = _
   private[this] var _masterFactory : (Config, Cluster) => Master = _
   private[this] var _partitioner : VertexPartitioner = _
   private[this] var _programParameters : ArrayBuffer[(String, String)] = _
@@ -145,8 +145,8 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
 
   def workerFactory(workerFactory :
                     (Config,
-                      ProgramDefinition[String, _,_,_,_],
-                      VertexPartitioner) => Worker[_,_,_,_]) : Type = {
+                      ProgramDefinition[String, _,_,_],
+                      VertexPartitioner) => Worker[_,_,_]) : Type = {
     _workerFactory = workerFactory
     this
   }

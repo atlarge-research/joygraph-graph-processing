@@ -37,6 +37,7 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
       }
     }.input(new ByteBufferInput(maxMessageSize))
   })
+  // TODO inject factory from worker
   private[this] val kryoPool = new KryoPool.Builder(new KryoFactory {
     override def create(): Kryo = new Kryo()
   }).build()
