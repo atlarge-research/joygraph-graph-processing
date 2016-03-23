@@ -31,10 +31,10 @@ class DWCC extends HomogeneousVertexProgram[Long, Long, NullClass, Long] {
       edgeSet.clear()
       v.edges.foreach(existingEdge => edgeSet += existingEdge.dst)
       messages.foreach(m => if(!edgeSet.contains(m)) v.addEdge(m, NullClass.SINGLETON))
-      val minOtherId = if (v.edges.isEmpty) v.id else v.edges.minBy[Long](_.dst).dst
-      v.value = math.min(v.id, minOtherId)
-      if (minOtherId < v.id) {
-        sendAll(minOtherId)
+      val minId = if (v.edges.isEmpty) v.id else v.edges.minBy[Long](_.dst).dst
+      v.value = math.min(v.id, minId)
+      if (minId != v.id) {
+        sendAll(v.value)
       }
       true
     }

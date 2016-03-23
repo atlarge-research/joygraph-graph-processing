@@ -6,7 +6,7 @@ import io.joygraph.core.actor.{Master, Worker}
 import io.joygraph.core.partitioning.impl.VertexHashPartitioner
 import io.joygraph.core.program.{NullClass, ProgramDefinition, Vertex}
 import io.joygraph.core.runner.JoyGraphLocalInstanceBuilder
-import io.joygraph.definitions.{BFSEdgeListDefinition, DLCCEdgeListDefinition, DWCCEdgeListDefinition, PREdgeListDefinition}
+import io.joygraph.definitions._
 import io.joygraph.impl.hadoop.actor.HadoopMaster
 import org.scalatest.FunSuite
 
@@ -15,6 +15,23 @@ class BFSTest extends FunSuite {
     val source_id = "99843"
 //  val file = "/home/sietse/cit-Patents-edge.txt"
 //  val source_id = "4949326"
+
+  test("DCDLP test") {
+    val programDefinition = new DCDLPEdgeListDefinition
+    val instance = JoyGraphLocalInstanceBuilder(programDefinition)
+      .masterFactory((jobConfig, cluster) => {
+        val master = new Master(jobConfig, cluster) with HadoopMaster
+        Master.initialize(master)})
+      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
+//            .workerFactory((config, programDefinition, partitioner) => Worker.workerWithTrieMapMessageStore(config, programDefinition, partitioner))
+      .programParameters(("maxIterations", "2"))
+      .vertexPartitioner(new VertexHashPartitioner())
+      .dataPath(file)
+      .numWorkers(16)
+      .outputPath("/home/sietse/outputPathDCDLP2")
+      .build()
+    instance.run()
+  }
 
   test("DLCC test") {
     val programDefinition = new DLCCEdgeListDefinition
