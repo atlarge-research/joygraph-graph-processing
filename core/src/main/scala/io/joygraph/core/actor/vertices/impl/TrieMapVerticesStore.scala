@@ -32,6 +32,8 @@ trait TrieMapVerticesStore[I,V,E] extends VerticesStore[I,V,E] {
 
   protected[this] def edges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
 
+  protected[this] def mutableEdges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
+
   protected[this] def vertices : Iterable[I] = new Iterable[I] {
     override def iterator: Iterator[I] = _vEdges.keysIterator
   }

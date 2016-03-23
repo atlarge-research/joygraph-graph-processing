@@ -79,6 +79,7 @@ abstract class NewVertexProgram[I,V,E] {
   def totalNumEdges(numEdges : Long) = _numEdges = numEdges
   def totalNumEdges = _numEdges
 
+  def preSuperStep() : Unit = {}
   def currentSuperStepFunction(superStep : Int) : SuperStepFunction[I,V,E,_,_] = run().lift(superStep).get
   def run(): PartialFunction[Int, SuperStepFunction[I,V,E,_,_]]
 

@@ -8,10 +8,12 @@ import com.esotericsoftware.kryo.pool.{KryoFactory, KryoPool}
 import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program.{Edge, NullClass}
+import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.{DirectByteBufferGrowingOutputStream, KryoSerialization, SimplePool}
 
 import scala.collection.concurrent.TrieMap
+import scala.collection.mutable.ArrayBuffer
 
 trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with KryoSerialization {
 
@@ -37,6 +39,42 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
       }
     }.input(new ByteBufferInput(maxMessageSize))
   })
+
+  private[this] val reusableMutableIterablePool = new SimplePool[MutableReusableIterable[I, Edge[I,E]]]( {
+    val mRIterable = new MutableReusableIterable[I, Edge[I, E]] {
+      override protected[this] def deserializeObject(): Edge[I, E] = {
+        if (!isNullClass) {
+          Edge(_kryo.readObject(_input, clazzI), _kryo.readObject(_input, clazzE))
+        } else {
+          Edge(_kryo.readObject(_input, clazzI), null.asInstanceOf[E])
+        }
+      }
+
+      private[this] val readOnlyIterable = new Iterable[Edge[I,E]] {
+        override def iterator: Iterator[Edge[I, E]] = new Iterator[Edge[I, E]] {
+          private[this] val readOnlyEdge: Edge[I, E] = new Edge[I, E](null.asInstanceOf[I], null.asInstanceOf[E])
+          private[this] val currentBuffer = mutatedBuffer
+
+          override def hasNext: Boolean = mutatedBuffer.hasNext
+
+          override def next(): Edge[I, E] = {
+            val nextEdge = mutatedBuffer.next()
+            // TODO the reference is passed so one could still change dst or e as sideeffect if it's not a primitive
+            readOnlyEdge.dst = nextEdge.dst
+            readOnlyEdge.e = nextEdge.e
+            readOnlyEdge
+          }
+        }
+      }
+
+      override def readOnly: Iterable[Edge[I, E]] = {
+        readOnlyIterable
+      }
+    }
+    mRIterable.input(new ByteBufferInput(maxMessageSize))
+    mRIterable
+  })
+
   // TODO inject factory from worker
   private[this] val kryoPool = new KryoPool.Builder(new KryoFactory {
     override def create(): Kryo = new Kryo()
@@ -50,18 +88,24 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
   override protected[this] def addEdge(src: I, dst: I, value: E): Unit = {
     numEdgesCounter.incrementAndGet()
     val index = partitioner.destination(src)
-    val kryoInstance = kryo(index)
+    implicit val kryoInstance = kryo(index)
     kryoInstance.synchronized {
-      val kryoOutputInstance = kryoOutput(index)
-      val os = getStream(src)
-      kryoOutputInstance.setOutputStream(os)
-      kryoInstance.writeObject(kryoOutputInstance, dst)
-      if (!isNullClass) {
-        kryoInstance.writeObject(kryoOutputInstance, value)
-      }
-      kryoOutputInstance.flush()
-      os.trim()
+      implicit val kryoOutputInstance = kryoOutput(index)
+      implicit val os = getStream(src)
+      serializeEdge(dst, value)
     }
+  }
+
+  private[this] def serializeEdge(dst : I, value : E)
+                                 (implicit kryo : Kryo, kryoOutput : KryoOutput, os : DirectByteBufferGrowingOutputStream): Unit = {
+
+    kryoOutput.setOutputStream(os)
+    kryo.writeObject(kryoOutput, dst)
+    if (!isNullClass) {
+      kryo.writeObject(kryoOutput, value)
+    }
+    kryoOutput.flush()
+    os.trim()
   }
 
 
@@ -97,8 +141,45 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
     }
   }
 
+  override protected[this] def mutableEdges(vId : I) : Iterable[Edge[I,E]] = {
+    _vEdges.get(vId) match {
+      case Some(os) =>
+        if (os.isEmpty) {
+          NO_EDGES
+        } else {
+          reusableMutableIterablePool.borrow()
+            .vId(vId)
+            .kryo(kryoPool.borrow())
+            .bufferProvider(() => os.getBuf)
+        }
+      case None =>
+        NO_EDGES
+    }
+  }
+
   protected[this] def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]]) = {
     edgesIterable match {
+      case mutableIterable : MutableReusableIterable[I,Edge[I,E] @unchecked] =>
+        val src = mutableIterable.vId
+        val index = partitioner.destination(src)
+        implicit val kryoInstance = kryo(index)
+        kryoInstance.synchronized {
+          implicit val kryoOutputInstance = kryoOutput(index)
+          implicit val os = getStream(src)
+          if (mutableIterable.hasBeenUsed) {
+            os.clear()
+            // propagate changes to edges
+            mutableIterable.mutatedBuffer.foreach{
+              case Edge(dst, value) => serializeEdge(dst, value)
+            }
+            os.trim()
+          }
+        }
+
+        // release resources
+        kryoPool.release(mutableIterable.kryo)
+        mutableIterable.reset()
+        reusableMutableIterablePool.release(mutableIterable)
       case reusableIterable : ReusableIterable[Edge[I,E]] =>
         kryoPool.release(reusableIterable.kryo)
         reusableIterablePool.release(reusableIterable)
@@ -109,4 +190,55 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
   protected[this] def vertexValue(vId : I) : V = _vValues.getOrElse(vId, null.asInstanceOf[V])
 
   protected[this] def setVertexValue(vId : I, v : V) = _vValues(vId) = v
+}
+
+abstract class MutableReusableIterable[I, +T] extends ReusableIterable[T] {
+
+  // better solution would be to alter the DirectByteBufferGrowingOutputStream in realtime
+  // however the size of each object is irregular
+  // and would require shifting of byte arrays, which may be more CPU intensive.
+  private[this] var firstTime = true
+  private[this] val buffer = ArrayBuffer.empty[T]
+  private[this] var originalBufferLimit : Int = _
+  private[this] var _vId : I = _
+
+  def vId : I = _vId
+  def vId(vId : I) : MutableReusableIterable[I,T] = {
+    _vId = vId
+    this
+  }
+
+  def hasBeenUsed = !firstTime
+
+  def readOnly : Iterable[T]
+  def mutatedBuffer : Iterator[T] = buffer.iterator
+
+  override def iterator: Iterator[T] = {
+    if (firstTime) {
+      buffer.clear()
+      buffer ++= super.iterator
+      originalBufferLimit = _input.getByteBuffer.limit()
+      firstTime = false
+    }
+
+    val currentBuffer = _bufferProvider()
+    currentBuffer.flip()
+    val currentBufferLimit = currentBuffer.limit()
+    if (currentBufferLimit > originalBufferLimit) {
+      // edges have been added
+      // add new edges to buffer
+      currentBuffer.position(originalBufferLimit)
+      _input.setBuffer(currentBuffer)
+      originalBufferLimit = currentBufferLimit
+      _iterator.foreach(buffer += _)
+    } else if(currentBufferLimit < originalBufferLimit) {
+      // edges have been removed
+      throw new UnsupportedOperationException("edges have been removed")
+    } else {
+      // no change
+    }
+    buffer.iterator
+  }
+
+  def reset() = firstTime = true
 }

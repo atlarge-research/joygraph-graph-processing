@@ -17,7 +17,6 @@ import io.joygraph.core.actor.vertices.impl.TrieMapVerticesStore
 import io.joygraph.core.actor.vertices.impl.serialized.TrieMapSerializedVerticesStore
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
-import io.joygraph.core.message.aggregate.Aggregators
 import io.joygraph.core.message.superstep._
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program._
@@ -285,7 +284,14 @@ abstract class Worker[I,V,E]
     if (doneAllSentReceived) {
       resetSentReceived()
       println(s"$id phase ended")
-      master() ! SuperStepComplete()
+      vertexProgramInstance match {
+        case aggregatable : Aggregatable => {
+          aggregatable.printAggregatedValues()
+          master() ! SuperStepComplete(Some(aggregatable.aggregators()))
+        }
+        case _ =>
+          master() ! SuperStepComplete()
+      }
     } else {
       log.info(s"${id} Triggered but not completed : $numMessagesSent $numMessagesReceived")
     }
@@ -315,6 +321,16 @@ abstract class Worker[I,V,E]
             }
         }
       })
+    // last chance to retrieve aggregator
+    vertexProgramInstance.preSuperStep()
+    // possibly resetting aggregator
+    vertexProgramInstance match {
+      case aggregatable : Aggregatable => {
+        aggregatable.aggregators().values.foreach(_.workerPrepareStep())
+      }
+      case _ =>
+        // noop
+    }
   }
 
   private[this] def barrier(superStep : Int): Unit = {
@@ -356,7 +372,7 @@ abstract class Worker[I,V,E]
           program.totalNumEdges(numEdges)
           vertexProgramInstance match {
             case aggregatable : Aggregatable => {
-              aggregatable.initializeAggregators()
+              aggregatable.workerInitializeAggregators()
             }
             case _ =>
           }
@@ -375,7 +391,15 @@ abstract class Worker[I,V,E]
 
       prepareSuperStep(0)
       sender() ! true
-    case DoBarrier(superStep) => {
+    case DoBarrier(superStep, globalAggregatedValues) => {
+      // update global
+     vertexProgramInstance match {
+        case aggregatable : Aggregatable => {
+          println("dem global aggergateors " +  globalAggregatedValues.map(x => x._1 + " " + x._2.value).foldLeft("")(_ + "" + _))
+          aggregatable.globalAggregators(globalAggregatedValues)
+        }
+        case _ => // noop
+      }
       barrier(superStep)
       master() ! BarrierComplete()
     }
@@ -397,15 +421,7 @@ abstract class Worker[I,V,E]
 //          case _ => None
 //        }
 
-        val aggregatable : Option[Aggregatable] = vertexProgramInstance match {
-          case aggregatable : Aggregatable => {
-            Some(aggregatable)
-          }
-          case _ => None
-        }
-
         allHalted = true
-
 
         vertices.foreach { vId =>
           val vMessages = messages(vId, currentIncomingMessageClass)
@@ -414,7 +430,8 @@ abstract class Worker[I,V,E]
           if (!vHalted || hasMessage) {
             val value : V = vertexValue(vId)
             val edgesIterable : Iterable[Edge[I,E]] = edges(vId)
-            v.load(vId, value, edgesIterable)
+            val mutableEdgesIterable : Iterable[Edge[I,E]] = mutableEdges(vId)
+            v.load(vId, value, edgesIterable, mutableEdgesIterable)
 
             val hasHalted = currentSuperStepFunction(v, vMessages)
             setVertexValue(vId, v.value)
@@ -425,6 +442,7 @@ abstract class Worker[I,V,E]
             }
 
             releaseEdgesIterable(edgesIterable)
+            releaseEdgesIterable(mutableEdgesIterable)
           }
           releaseMessages(vMessages, currentIncomingMessageClass)
         }
@@ -442,15 +460,6 @@ abstract class Worker[I,V,E]
         // trigger oncomplete
         vertexProgramInstance.onSuperStepComplete()
 
-        aggregatable match {
-          case Some(x) =>
-            // send it to the master
-            master() ! Aggregators(x.aggregators())
-            x.aggregators().values.foreach(_.workerOnStepComplete())
-            x.printAggregatedValues()
-          case None =>
-        }
-
         sendingComplete()
         superStepCompleteTrigger()
       }.recover{
@@ -458,7 +467,7 @@ abstract class Worker[I,V,E]
       }
     case byteString : ByteString =>
       handleSuperStepAkka(sender(), byteString)
-    case SuperStepComplete() =>
+    case AllSuperStepComplete() =>
       messagesOnSuperStepComplete()
       if (allHalted && emptyCurrentMessages) {
         log.info("Don't do next step! ")
@@ -507,7 +516,7 @@ abstract class Worker[I,V,E]
             override def addEdge(dst: I, e: E): Unit = {} // noop
           }
           vertices.foreach { vId =>
-            v.load(vId, vertexValue(vId), edges(vId))
+            v.load(vId, vertexValue(vId), edges(vId), mutableEdges(vId))
             programDefinition.outputWriter(v, outputStream)
           }
         })

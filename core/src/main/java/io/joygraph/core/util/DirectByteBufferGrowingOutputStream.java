@@ -79,6 +79,10 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
         }
     }
 
+    synchronized public void clear() {
+        buf.clear();
+    }
+
     public int size() {
         return buf.duplicate().flip().remaining();
     }

@@ -12,7 +12,6 @@ import com.typesafe.config.Config
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
-import io.joygraph.core.message.aggregate.Aggregators
 import io.joygraph.core.message.superstep._
 import io.joygraph.core.program.Aggregator
 import io.joygraph.core.util.FutureUtil
@@ -160,20 +159,38 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     case BarrierComplete() => {
       if (successReceived.decrementAndGet() == 0) {
         log.info("Barrier complete")
+        //reset aggregator
+        _aggregatorMapping.foreach{
+          case (name, aggregator) =>
+            _aggregatorMapping(name).masterPrepareStep()
+        }
         successReceived = new AtomicInteger(allWorkers().size)
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
-    case SuperStepComplete() =>
+    case SuperStepComplete(aggregators) =>
       log.info(s"Left : ${successReceived.get()}")
+
+      aggregators match {
+        case Some(aggregatorMapping) =>
+          if (_aggregatorMapping.isEmpty) {
+            _aggregatorMapping ++= aggregatorMapping
+          } else {
+            aggregatorMapping.foreach{
+              case (name, aggregator) =>
+                _aggregatorMapping(name).aggregate(aggregator)
+                println("MASTER aggregate " + name + " " + _aggregatorMapping(name).value)
+            }
+          }
+        case None =>
+          // noop
+      }
+
       if (successReceived.decrementAndGet() == 0) {
         currentSuperStep += 1
         successReceived = new AtomicInteger(allWorkers().size)
-        _aggregatorMapping.foreach{
-          case (name, aggregator) =>
-            _aggregatorMapping(name).masterOnStepComplete()
-        }
-        FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? SuperStepComplete()).mapTo[DoNextStep])) {
+
+        FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? AllSuperStepComplete()).mapTo[DoNextStep])) {
           implicit results =>
             log.info("Do next step ?")
             val doNextStep = results.map(_.yes).reduce(_ || _)
@@ -182,7 +199,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
             log.info(s"Hell $doNextStep")
             // set to superstep
             if (doNextStep) {
-              allWorkers().foreach(_.actorRef ! DoBarrier(currentSuperStep))
+              allWorkers().foreach(_.actorRef ! DoBarrier(currentSuperStep, _aggregatorMapping.toMap))
             } else {
               sendDoOutput()
               println(s"we're done, fuckers at ${currentSuperStep - 1}")
@@ -199,16 +216,6 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         log.info("Shutting down.")
         context.system.terminate()
       }
-    case Aggregators(aggregatorMapping) => {
-      if (_aggregatorMapping.isEmpty) {
-        _aggregatorMapping ++= aggregatorMapping
-      } else {
-        aggregatorMapping.foreach{
-          case (name, aggregator) =>
-            _aggregatorMapping(name).aggregate(aggregator)
-        }
-      }
-    }
   }
 
 }

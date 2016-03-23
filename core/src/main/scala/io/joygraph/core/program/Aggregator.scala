@@ -13,13 +13,13 @@ abstract class Aggregator[T] extends Serializable {
 
   /**
     * (if persistent do not reset value here)
-    * Optional onStepComplete hook
+    * Optional workerPrepareStep hook
     */
-  def workerOnStepComplete() : Unit = {}
+  def workerPrepareStep() : Unit = {}
 
   /**
     * (if persistent do not reset value here)
-    * Optional masterOnStepComplete hook
+    * Optional masterPrepareStep hook
     */
-  def masterOnStepComplete() : Unit = {}
+  def masterPrepareStep() : Unit = {}
 }

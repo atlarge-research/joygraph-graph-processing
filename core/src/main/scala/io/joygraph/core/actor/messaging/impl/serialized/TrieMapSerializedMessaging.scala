@@ -14,6 +14,7 @@ class TrieMapSerializedMessaging extends SerializedMessaging {
   private[this] var currentMessages = TrieMap.empty[Any, DirectByteBufferGrowingOutputStream]
 
   override def onSuperStepComplete(): Unit = {
+    // TODO new TrieMaps are constructed which creates a lot of garbage
     currentMessages = nextMessages
     nextMessages = TrieMap.empty[Any, DirectByteBufferGrowingOutputStream]
   }
@@ -37,7 +38,8 @@ class TrieMapSerializedMessaging extends SerializedMessaging {
     output.setOutputStream(outputStream)
     kryo.writeObject(output, message)
     output.flush()
-    outputStream.trim()
+    // TODO evaluate the removal of trim
+//    outputStream.trim()
   }
 
   override def emptyCurrentMessages: Boolean = currentMessages.isEmpty
