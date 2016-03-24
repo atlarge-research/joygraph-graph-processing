@@ -13,9 +13,9 @@ import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferOutputSt
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{ExecutionContext, Future}
 
-class CombinableAsyncSerializer[I, M](msgType : Byte, n : Int, kryoFactory : => Kryo, combinable: Combinable[M], idSerializer : (Kryo, KryoOutput, I) => Any, messageSerializer : (Kryo, KryoOutput, M) => Any, messageDeserializer : (Kryo, ByteBufferInput) => M, val bufferExceededThreshold : Int = 1 * 1024 * 1024) {
+class CombinableAsyncSerializer[I](msgType : Byte, n : Int, kryoFactory : => Kryo, idSerializer : (Kryo, KryoOutput, I) => Any, val bufferExceededThreshold : Int = 1 * 1024 * 1024) {
 
-  private[this] val combinerBuffers : ArrayBuffer[CombinerBuffer[I,M]] = ArrayBuffer.fill(n)(new CombinerBuffer[I,M](bufferExceededThreshold, combinable.combine, idSerializer, messageSerializer, messageDeserializer))
+  private[this] val combinerBuffers : ArrayBuffer[CombinerBuffer[I]] = ArrayBuffer.fill(n)(new CombinerBuffer[I](bufferExceededThreshold, idSerializer))
   private[this] val _buffers : ArrayBuffer[ObjectByteBufferOutputStream] = ArrayBuffer.fill(n)(new ObjectByteBufferOutputStream(msgType, bufferExceededThreshold))
   private[this] val bufferSwaps : ArrayBuffer[BlockingQueue[ObjectByteBufferOutputStream]] = ArrayBuffer.fill(n)(new LinkedBlockingQueue[ObjectByteBufferOutputStream])
   private[this] val kryos : ArrayBuffer[Kryo] = ArrayBuffer.fill(n)(kryoFactory)
@@ -26,13 +26,13 @@ class CombinableAsyncSerializer[I, M](msgType : Byte, n : Int, kryoFactory : => 
   // initialize bufferSwap
   bufferSwaps.foreach(_.add(new ObjectByteBufferOutputStream(msgType, bufferExceededThreshold)))
 
-  def serialize(index : Int, i: I, m : M)(outputHandler : ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext) : Unit = {
+  def serialize[M](index : Int, i: I, m : M, messageSerializer : (Kryo, KryoOutput, M) => Any, messageDeserializer : (Kryo, ByteBufferInput) => M)(outputHandler : ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext, combinable : Combinable[M]) : Unit = {
     locks(index).synchronized {
       val combinerBuffer = combinerBuffers(index)
       implicit val kryo = kryos(index)
       implicit val kryoOutput = kryoOutputs(index)
       implicit val byteBufferInput = byteBufferInputs(index)
-      if (!combinerBuffer.add(i,m)) {
+      if (!combinerBuffer.add(i,m, combinable.combine, messageSerializer, messageDeserializer)) {
         val buffer = _buffers(index)
         // fill the byteBufferInputs
         combinerBuffer.asByteBuffers().foreach {
@@ -57,7 +57,7 @@ class CombinableAsyncSerializer[I, M](msgType : Byte, n : Int, kryoFactory : => 
           bufferSwap.add(buffer)
         } // sweet I got it back
 
-        assert(combinerBuffer.add(i,m))
+        assert(combinerBuffer.add(i,m, combinable.combine, messageSerializer, messageDeserializer))
       }
     }
   }

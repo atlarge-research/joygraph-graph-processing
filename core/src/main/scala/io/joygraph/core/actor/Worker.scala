@@ -23,7 +23,7 @@ import io.joygraph.core.program._
 import io.joygraph.core.reader.LineProvider
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.collection.ReusableIterable
-import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
+import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer, CombinableAsyncSerializer}
 import io.joygraph.core.util.{FutureUtil, MessageCounting, SimplePool}
 
 import scala.collection.mutable.ArrayBuffer
@@ -102,7 +102,7 @@ abstract class Worker[I,V,E]
   private[this] var messageReceiver : MessageReceiverNetty = _
 
   private[this] var messagesSerializer : AsyncSerializer = null
-//  private[this] var messagesCombinableSerializer : CombinableAsyncSerializer[I] = null
+  private[this] var messagesCombinableSerializer : CombinableAsyncSerializer[I] = null
   private[this] var messagesDeserializer : AsyncDeserializer = null
   private[this] var allHalted = true
   private[this] var currentSuperStepFunction : SuperStepFunction[I,V,E,_,_] = _
@@ -305,22 +305,45 @@ abstract class Worker[I,V,E]
 
     println(s"current INOUT $currentIncomingMessageClass $currentOutgoingMessageClass")
 
-    currentSuperStepFunction.messageSenders(
-      (m, dst) => {
-        val index = partitioner.destination(dst)
-        messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-          messageSender.send(id.get, index, byteBuffer)
-        }
-      },
-      (v, m) => {
-        v.edges.foreach {
-          case Edge(dst, _) =>
+    currentSuperStepFunction match {
+      case combinable : Combinable[Any @unchecked] =>
+        implicit val c = combinable
+        currentSuperStepFunction.messageSenders(
+          (m, dst) => {
+            val index = partitioner.destination(dst)
+            messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
+              messageSender.send(id.get, index, byteBuffer)
+            }
+          },
+          (v, m) => {
+            v.edges.foreach {
+              case Edge(dst, _) =>
+                val index = partitioner.destination(dst)
+                messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
+                  messageSender.send(id.get, index, byteBuffer)
+                }
+            }
+          })
+      case _ =>
+        currentSuperStepFunction.messageSenders(
+          (m, dst) => {
             val index = partitioner.destination(dst)
             messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
               messageSender.send(id.get, index, byteBuffer)
             }
-        }
-      })
+          },
+          (v, m) => {
+            v.edges.foreach {
+              case Edge(dst, _) =>
+                val index = partitioner.destination(dst)
+                messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                  messageSender.send(id.get, index, byteBuffer)
+                }
+            }
+          })
+    }
+
+
     // last chance to retrieve aggregator
     vertexProgramInstance.preSuperStep()
     // possibly resetting aggregator
@@ -342,32 +365,6 @@ abstract class Worker[I,V,E]
       vertexProgramInstance match {
         case program : NewVertexProgram[I, V, E] =>
           program.load(config)
-          // TODO combinable is no more a VertexProgram trait but a superstepfunction trait
-//          val combinable: Option[Combinable[M]] = vertexProgramInstance match {
-//            case combinable : Combinable[M] => Some(combinable)
-//            case _ => None
-//          }
-//          if (combinable.isDefined) {
-//            program.messageSenders(
-//              (m, dst ) => {
-//                val index = partitioner.destination(dst)
-//                messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
-//                  messageSender.send(id.get, index, byteBuffer)
-//                }
-//              },
-//              (v,m) => {
-//                v.edges.foreach {
-//                  case Edge(dst, _) =>
-//                    val index = partitioner.destination(dst)
-//                    messagesCombinableSerializer.serialize(index, dst, m) { implicit byteBuffer =>
-//                      messageSender.send(id.get, index, byteBuffer)
-//                    }
-//                }
-//              }
-//            )
-//          } else {
-
-//          }
           program.totalNumVertices(numVertices)
           program.totalNumEdges(numEdges)
           vertexProgramInstance match {
@@ -379,14 +376,8 @@ abstract class Worker[I,V,E]
         case _ =>
       }
       // TODO kryoFactory instead of new Kryo
-      vertexProgramInstance match {
-          // TODO
-//        case combinable: Combinable[_] =>
-//          messagesCombinableSerializer = new CombinableAsyncSerializer[I,_](0, workers.size, new Kryo(),
-//            combinable, vertexSerializer, messageSerializer, messageDeserializer)
-        case _ =>
-          messagesSerializer = new AsyncSerializer(0, workers.size, new Kryo())
-      }
+      messagesSerializer = new AsyncSerializer(0, workers.size, new Kryo())
+      messagesCombinableSerializer = new CombinableAsyncSerializer[I](0, workers.size, new Kryo(), vertexSerializer)
       messagesDeserializer = new AsyncDeserializer(0, workers.size, new Kryo())
 
       prepareSuperStep(0)
@@ -446,16 +437,17 @@ abstract class Worker[I,V,E]
           }
           releaseMessages(vMessages, currentIncomingMessageClass)
         }
-// TODO
-//        if (combinable.isDefined) {
-//          messagesCombinableSerializer.sendNonEmptyByteBuffers{ case (byteBuffer : ByteBuffer, index : Int) =>
-//            messageSender.send(id.get, index, byteBuffer)
-//          }
-//        } else {
-          messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>
-            messageSender.send(id.get, index, byteBuffer)
-          }
-//        }
+
+        currentSuperStepFunction match {
+          case combinable : Combinable[_] =>
+            messagesCombinableSerializer.sendNonEmptyByteBuffers{ case (byteBuffer : ByteBuffer, index : Int) =>
+              messageSender.send(id.get, index, byteBuffer)
+            }
+          case _ =>
+            messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>
+              messageSender.send(id.get, index, byteBuffer)
+            }
+        }
 
         // trigger oncomplete
         vertexProgramInstance.onSuperStepComplete()

@@ -13,7 +13,7 @@ import scala.collection.concurrent.TrieMap
 /**
   * Buffer which counts the bytes that will eventually be sent through the network.
   */
-class CombinerBuffer[I, M](maxSizeBytes : Int, combiner : (M, M) => M, idSerializer : (Kryo, KryoOutput, I) => Any, serializer : (Kryo, KryoOutput, M) => Any, deserializer : (Kryo, ByteBufferInput) => M) {
+class CombinerBuffer[I](maxSizeBytes : Int, idSerializer : (Kryo, KryoOutput, I) => Any) {
 
   private[this] val buffer : TrieMap[I, CombineOutputStream] = TrieMap.empty[I, CombineOutputStream]
   private[this] var currentSize = 0
@@ -29,7 +29,7 @@ class CombinerBuffer[I, M](maxSizeBytes : Int, combiner : (M, M) => M, idSeriali
   /**
     * @return true on success, false when buffer is full.
     */
-  def add(i : I, m : M)(implicit bbInput : ByteBufferInput, kryoOutput : KryoOutput, kryo : Kryo): Boolean = {
+  def add[M](i : I, m : M, combiner : (M,M) => M, serializer : (Kryo, KryoOutput, M) => Any, deserializer : (Kryo, ByteBufferInput) => M)(implicit bbInput : ByteBufferInput, kryoOutput : KryoOutput, kryo : Kryo): Boolean = {
     val os = get(i)
 
     val newM = if (os.idSize() > 0) {

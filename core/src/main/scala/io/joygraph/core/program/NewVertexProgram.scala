@@ -23,46 +23,6 @@ abstract class HomogeneousVertexProgram[I,V,E,M : ClassTag] extends NewVertexPro
          (implicit send : (M,I) => Unit, sendAll : (M) => Unit) : Boolean
 }
 
-//object BFS {
-//  val UNVISITED : Long = Long.MaxValue
-//}
-//
-//class BFS extends NewVertexProgram[Long, Long, NullClass] {
-//
-//  var sourceId : Long = -1
-//  override def load(conf : Config): Unit = {
-//    sourceId = conf.getLong("source_id")
-//  }
-//
-//  override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, NullClass,_, _]] = {
-//    case superStep @ 0 =>
-//      new SuperStepFunction(this, classOf[Long], classOf[Long]) {
-//        override def func: (Vertex[Long, Long, NullClass], Iterable[Long]) => Boolean =
-//          (v, m) => {
-//            if (v.id == sourceId) {
-//              sendAll(v, superStep)
-//            } else {
-//              v.value = BFS.UNVISITED
-//            }
-//            true
-//        }
-//      }
-//    case superStep @ _ =>
-//      new SuperStepFunction(this, classOf[Long], classOf[Long]) {
-//        override def func: (Vertex[Long, Long, NullClass], Iterable[Long]) => Boolean =
-//          (v,m) => {
-//            if (v.value == BFS.UNVISITED) {
-//              v.value = superStep
-//              sendAll(v, superStep)
-//            }
-//            true
-//          }
-//
-//      }
-//
-//  }
-//}
-
 abstract class NewVertexProgram[I,V,E] {
 
   private[this] var _numVertices : Long = _
