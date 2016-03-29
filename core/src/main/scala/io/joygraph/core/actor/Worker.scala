@@ -140,24 +140,6 @@ abstract class Worker[I,V,E]
     workers(index).actorRef ! Received()
   }
 
-  private[this] def handleDataLoadingAkka(senderRef : ActorRef, byteString : ByteString): Unit = {
-    Future {
-      // we only copy the buffer because Akka does not allow mutability by design
-      val byteBuffer = ByteBuffer.allocate(byteString.size)
-      val numCopied = byteString.copyToBuffer(byteBuffer)
-      byteBuffer.flip()
-      println(byteBuffer.order())
-      val index = workerPathsToIndex(senderRef)
-      println(s"received from $index size: ${byteString.size} numCopied: $numCopied")
-      _handleDataLoading(index, byteBuffer)
-      println(s"processed from $index size: ${byteString.size} numCopied: $numCopied")
-      senderRef ! Received()
-    }.recover{
-      case t : Throwable =>
-        t.printStackTrace()
-    }
-  }
-
   private[this] def handleSuperStepNetty(byteBuffer: ByteBuffer) = {
     try {
       val index = byteBuffer.getInt()
@@ -246,8 +228,6 @@ abstract class Worker[I,V,E]
         case t : Throwable =>
           t.printStackTrace()
       }
-    case byteString : ByteString =>
-      handleDataLoadingAkka(sender(), byteString)
     case Received() =>
       incrementReceived()
       loadingCompleteTrigger()
