@@ -14,7 +14,6 @@ trait TrieMapVerticesStore[I,V,E] extends VerticesStore[I,V,E] {
   private[this] val _vEdges = TrieMap.empty[I, ConcurrentLinkedQueue[Edge[I,E]]]
   private[this] val _vValues = TrieMap.empty[I, V]
 
-
   protected[this] def addVertex(vertex : I) : Unit = getCollection(vertex)
 
   protected[this] def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]]) = {
@@ -53,4 +52,10 @@ trait TrieMapVerticesStore[I,V,E] extends VerticesStore[I,V,E] {
 
   protected[this] def numVertices : Int = _vEdges.size
   protected[this] def numEdges : Int = _vEdges.values.map(_.size()).sum
+
+  protected[this] def removeAllFromVertex(vId : I): Unit = {
+    _halted.remove(vId)
+    _vEdges.remove(vId)
+    _vValues.remove(vId)
+  }
 }

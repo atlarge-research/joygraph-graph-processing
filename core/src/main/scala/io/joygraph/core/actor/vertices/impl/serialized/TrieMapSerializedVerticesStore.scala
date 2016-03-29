@@ -7,7 +7,7 @@ import com.esotericsoftware.kryo.io.ByteBufferInput
 import com.esotericsoftware.kryo.pool.{KryoFactory, KryoPool}
 import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.partitioning.VertexPartitioner
-import io.joygraph.core.program.{Edge, NullClass}
+import io.joygraph.core.program.Edge
 import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.{DirectByteBufferGrowingOutputStream, KryoSerialization, SimplePool}
@@ -17,15 +17,12 @@ import scala.collection.mutable.ArrayBuffer
 
 trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with KryoSerialization {
 
-  protected[this] val clazzI : Class[I]
-  protected[this] val clazzE : Class[E]
   protected[this] var partitioner : VertexPartitioner
 
   private[this] val _halted = TrieMap.empty[I, Boolean]
   private[this] val _vEdges = TrieMap.empty[I, DirectByteBufferGrowingOutputStream]
   private[this] val _vValues = TrieMap.empty[I, V]
   private[this] val numEdgesCounter = new AtomicLong(0)
-  private[this] val isNullClass = clazzE == classOf[NullClass]
   private[this] val NO_EDGES = Iterable.empty[Edge[I,E]]
   private[this] val reusableIterablePool = new SimplePool[ReusableIterable[Edge[I,E]]]({
     new ReusableIterable[Edge[I,E]] {
@@ -190,6 +187,12 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
   protected[this] def vertexValue(vId : I) : V = _vValues.getOrElse(vId, null.asInstanceOf[V])
 
   protected[this] def setVertexValue(vId : I, v : V) = _vValues(vId) = v
+
+  protected[this] def removeAllFromVertex(vId : I): Unit = {
+    _halted.remove(vId)
+    _vEdges.remove(vId)
+    _vValues.remove(vId)
+  }
 }
 
 abstract class MutableReusableIterable[I, +T] extends ReusableIterable[T] {

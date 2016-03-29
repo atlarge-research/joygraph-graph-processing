@@ -1,7 +1,7 @@
 package io.joygraph.core.actor
 
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
+import java.util.concurrent.{Semaphore, TimeUnit}
 
 import akka.actor.{Actor, ActorLogging, ActorRef}
 import akka.cluster.Cluster
@@ -12,13 +12,14 @@ import com.typesafe.config.Config
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
+import io.joygraph.core.message.elasticity._
 import io.joygraph.core.message.superstep._
 import io.joygraph.core.program.Aggregator
 import io.joygraph.core.util.FutureUtil
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
-import scala.concurrent.Future
+import scala.concurrent.{Future, Promise}
+import scala.util.Try
 
 object Master {
   def initialize(master : Master) : Master = {
@@ -31,12 +32,21 @@ object Master {
 abstract class Master(protected[this] val conf : Config, cluster : Cluster) extends Actor with ActorLogging {
 
   import scala.concurrent.ExecutionContext.Implicits.global
+  // TODO set in configuration
   implicit val timeout = Timeout(30, TimeUnit.SECONDS)
 
   val jobSettings : JobSettings = JobSettings(conf)
-  var workerIdAddressMap : ArrayBuffer[AddressPair] = ArrayBuffer.fill(jobSettings.initialNumberOfWorkers)(null)
+  var workerIdAddressMap : mutable.Map[Int, AddressPair] = mutable.Map.empty
   var successReceived : AtomicInteger = _
   var doneDoOutput : AtomicInteger = _
+  var elasticityPromise : ElasticityPromise = _
+  val initializationLock = new Semaphore(1)
+  // TODO keep state in Master explicitly instead of implicitly
+  var doingElasticity : Boolean = false
+
+
+  // An actor providing actors
+  protected[this] var workerProvider : Option[ActorRef] = None
 
   private[this] var initialized: Boolean = false
   private[this] var _aggregatorMapping : scala.collection.mutable.Map[String, Aggregator[_]] = mutable.OpenHashMap.empty
@@ -47,18 +57,23 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   def workerMembers() = cluster.state.members.filterNot(_.address == cluster.selfAddress)
 
-  def initialize() : Unit = synchronized {
-    // <= includes master
-    if (cluster.state.members.size <= jobSettings.initialNumberOfWorkers) {
+  def setWorkerProvider(workerProvider : ActorRef) = this.workerProvider = Option(workerProvider)
+
+  def initialize() : Unit = {
+    initializationLock.acquire()
+    if (initialized) {
+      initializationLock.release()
       return
     }
-    if (initialized) {
+
+    // <= includes master
+    if (cluster.state.members.size <= jobSettings.initialNumberOfWorkers) {
+      initializationLock.release()
       return
     }
 
     // wait for all members to be up
     log.info("Initializing")
-    initialized = true
 
     // we are up
     var workerId = 0
@@ -75,20 +90,20 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     }) {
       log.info("Distributing ActorRefs")
       val masterPath = cluster.selfAddress.toString + "/user/" + jobSettings.masterSuffix
-      val actorSelections: ArrayBuffer[ActorRef] = allWorkers().map(_.actorRef)
+      val actorSelections: Iterable[ActorRef] = allWorkers().map(_.actorRef)
 
-      // TODO sometimes sendMasteraddress does not complete, probably something with the callbackonallcomplete.
-      // the latch probably only gets triggered on the moment the future is completed and not when the future has already been completed.
+      // TODO the worker sometimes sends a null reference as the actorRef field in AddressPair, this will result in a nullpointer exception
       FutureUtil.callbackOnAllComplete(sendMasterAddress(actorSelections, masterPath)) {
         FutureUtil.callbackOnAllComplete(sendMapping(actorSelections)) {
           sendPaths(actorSelections, jobSettings.dataPath)
+          initialized = true
+          initializationLock.release()
         }
       }
     }
-
   }
 
-  def allWorkers() = workerIdAddressMap
+  def allWorkers() = workerIdAddressMap.values
 
   def sendMasterAddress(actorRefs : Iterable[ActorRef], masterPath : String) = {
     log.info("Sending master address")
@@ -116,7 +131,8 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   def sendMapping(actorRefs : Iterable[ActorRef]): Iterable[Future[Boolean]] = {
     log.info("Sending address mapping")
-    actorRefs.map(x => (x ? WorkerMap(workerIdAddressMap)).mapTo[Boolean])
+    val immutableWorkerMap = workerIdAddressMap.toMap
+    actorRefs.map(x => (x ? WorkerMap(immutableWorkerMap)).mapTo[Boolean])
   }
 
   def sendSuperStepState(numVertices : Long, numEdges : Long): Unit = {
@@ -139,9 +155,47 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     }
   }
 
+  def doElasticity(): Future[mutable.Map[Int,AddressPair]] = {
+    elasticityPromise = new ElasticityPromise(workerIdAddressMap, timeout)
+    // request number
+    workerProvider match {
+      case Some(provider) =>
+        provider ! WorkersRequest(conf, 1)
+      case None =>
+        // if none then we complete promise without changing the worker map
+        elasticityPromise.success(workerIdAddressMap)
+    }
+
+    elasticityPromise.future
+  }
+
   override def receive = {
+    case ElasticGrowComplete() => {
+      elasticityPromise.elasticGrowCompleted()
+    }
+    case WorkersResponse(numWorkers) =>
+      // todo set number of workers to expect
+      elasticityPromise.numWorkersExpected(numWorkers)
+    case NewWorker() =>
+      val senderRef = sender()
+
+      // TODO make this a method
+      // assumes workerIdAddressMap is not empty!
+      val nextWorkerId = workerIdAddressMap.keys.max + 1
+      val fAddressPair = (senderRef ? WorkerId(nextWorkerId)).mapTo[AddressPair]
+      fAddressPair.foreach{
+        elasticityPromise.newWorker(nextWorkerId, _)
+      }
     case MemberUp(member) =>
-      initialize()
+      if (!initialized) {
+        initialize()
+      } else if (doingElasticity) {
+        // elasticity
+        // send master address to new worker
+        val akkaPath = member.address.toString + "/user/" + jobSettings.workerSuffix
+        context.actorSelection(akkaPath) ! InitNewWorker(self, currentSuperStep)
+      }
+
     case LoadingComplete(workerId, numV, numEdge) =>
       println(s"$workerId $numV $numEdge done")
       numVertices.addAndGet(numV)
@@ -187,7 +241,6 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       }
 
       if (successReceived.decrementAndGet() == 0) {
-        currentSuperStep += 1
         successReceived = new AtomicInteger(allWorkers().size)
 
         FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? AllSuperStepComplete()).mapTo[DoNextStep])) {
@@ -199,10 +252,18 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
             log.info(s"Hell $doNextStep")
             // set to superstep
             if (doNextStep) {
-              allWorkers().foreach(_.actorRef ! DoBarrier(currentSuperStep, _aggregatorMapping.toMap))
+              // TODO elasticity
+              doingElasticity = true
+              doElasticity().foreach(newWorkersMapping => {
+                workerIdAddressMap = newWorkersMapping
+                currentSuperStep += 1
+                doingElasticity = false
+                allWorkers().foreach(_.actorRef ! DoBarrier(currentSuperStep, _aggregatorMapping.toMap))
+              })
+
             } else {
               sendDoOutput()
-              println(s"we're done, fuckers at ${currentSuperStep - 1}")
+              println(s"we're done, fuckers at ${currentSuperStep}")
             }
         }
       }
@@ -217,5 +278,78 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         context.system.terminate()
       }
   }
+}
 
+// TODO rework this, kind of ugly :p
+class ElasticityPromise(currentWorkers : mutable.Map[Int, AddressPair], implicit val askTimeout : Timeout) extends Promise[mutable.Map[Int, AddressPair]] {
+  // todo pass execution context
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+  private[this] val defaultPromise : Promise[mutable.Map[Int, AddressPair]] = Promise[mutable.Map[Int, AddressPair]]
+  private[this] var _numWorkersExpected : Option[Int] = None
+  private[this] var nextWorkers : mutable.Map[Int, AddressPair] = mutable.Map.empty
+  private[this] var newWorkers : mutable.Map[Int, AddressPair] = mutable.Map.empty
+  private[this] val elasticGrowComplete = new AtomicInteger(0)
+  private[this] val workerCounter : AtomicInteger = new AtomicInteger(0)
+  nextWorkers ++= currentWorkers
+
+  def numWorkersExpected(numWorkers : Int) = {
+    _numWorkersExpected = Some(numWorkers)
+    sendElasticGrowIfCompleted()
+  }
+
+  def newWorker(index : Int, addressPair: AddressPair) = synchronized {
+    workerCounter.incrementAndGet()
+    nextWorkers += index -> addressPair
+    newWorkers += index -> addressPair
+    sendElasticGrowIfCompleted()
+  }
+
+  def elasticGrowCompleted(): Unit = {
+    if (elasticGrowComplete.incrementAndGet() == currentWorkers.size) {
+
+      val nextWorkersMap = nextWorkers.toMap
+      // set state to superstep
+      FutureUtil.callbackOnAllComplete(nextWorkersMap.map(_._2.actorRef).map(_ ? State(GlobalState.SUPERSTEP))) {
+        this.success(nextWorkers)
+      }
+    }
+  }
+
+  private[this] def sendElasticGrowIfCompleted(): Unit = synchronized {
+    _numWorkersExpected match {
+      case Some(x) =>
+        if (x == workerCounter.get()) { // got all workers, now we can recreate
+          // distribute
+          // TODO distribute
+          val nextWorkersMap = nextWorkers.toMap
+          val currentWorkersMap = currentWorkers.toMap
+          val newWorkersMap = newWorkers.toMap
+
+          // distribute workers mapping
+          FutureUtil.callbackOnAllComplete(currentWorkers.map(_._2.actorRef).map(_ ? NewWorkerMap(newWorkersMap))) {
+            FutureUtil.callbackOnAllComplete(newWorkers.map(_._2.actorRef).map(_ ? NewWorkerMap(nextWorkersMap))) {
+              //set state for all
+              FutureUtil.callbackOnAllComplete(nextWorkers.map(_._2.actorRef).map(_ ? State(GlobalState.GROW_ELASTIC))) {
+                //only currentworkers distribute
+                currentWorkers.map(_._2.actorRef).foreach(_ ! ElasticGrow(currentWorkersMap, nextWorkersMap))
+              }
+            }
+          }
+
+
+        }
+        // noop
+      case None =>
+        // noop
+    }
+  }
+
+
+
+  override def future: Future[mutable.Map[Int, AddressPair]] = defaultPromise.future
+
+  override def tryComplete(result: Try[mutable.Map[Int, AddressPair]]): Boolean = defaultPromise.tryComplete(result)
+
+  override def isCompleted: Boolean = defaultPromise.isCompleted
 }

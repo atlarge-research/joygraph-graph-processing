@@ -31,8 +31,22 @@ trait TrieMapSerializedMessageStore extends MessageStore with KryoSerialization 
     }
   }
 
+  override protected[this] def removeMessages[I](dst : I): Unit = {
+    messaging.remove(dst)
+  }
+
+  override protected[this] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {
+    // todo remove code duplication with messages
+    implicit val iterable = reusableIterablePool().borrow()
+    iterable.kryo(kryoPool.borrow())
+    val messages = messaging.getNext(dst)
+    if(messages.isEmpty) {
+      releaseMessages(iterable, clazzM)
+    }
+    messages.asInstanceOf[Iterable[M]]
+  }
+
   override protected[this] def messages[I, M](dst : I, clazzM : Class[M]) : Iterable[M] = {
-    val index = partitioner.destination(dst)
     implicit val iterable = reusableIterablePool().borrow()
     iterable.kryo(kryoPool.borrow())
     val messages = messaging.get(dst)
@@ -51,11 +65,11 @@ trait TrieMapSerializedMessageStore extends MessageStore with KryoSerialization 
     }
   }
 
-  override protected[this] def messagesOnSuperStepComplete() = {
-    messaging.onSuperStepComplete()
+  override protected[this] def messagesOnBarrier() = {
+    messaging.onBarrier()
   }
 
-  override protected[this] def emptyCurrentMessages : Boolean = {
-    messaging.emptyCurrentMessages
+  override protected[this] def emptyNextMessages : Boolean = {
+    messaging.emptyNextMessages
   }
 }

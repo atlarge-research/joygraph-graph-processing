@@ -13,7 +13,7 @@ class TrieMapSerializedMessaging extends SerializedMessaging {
   private[this] var nextMessages = TrieMap.empty[Any, DirectByteBufferGrowingOutputStream]
   private[this] var currentMessages = TrieMap.empty[Any, DirectByteBufferGrowingOutputStream]
 
-  override def onSuperStepComplete(): Unit = {
+  override def onBarrier(): Unit = {
     // TODO new TrieMaps are constructed which creates a lot of garbage
     currentMessages = nextMessages
     nextMessages = TrieMap.empty[Any, DirectByteBufferGrowingOutputStream]
@@ -30,6 +30,15 @@ class TrieMapSerializedMessaging extends SerializedMessaging {
     }
   }
 
+  override def getNext[I,M](source : I)(implicit reusableIterable : ReusableIterable[M]) : Iterable[M] = {
+    nextMessages.get(source) match {
+      case Some(os) =>
+        reusableIterable.bufferProvider(() => os.getBuf)
+      case None => EMPTY_MESSAGES.asInstanceOf[Iterable[M]]
+    }
+  }
+
+
   /**
     * Add message to source
     */
@@ -42,5 +51,7 @@ class TrieMapSerializedMessaging extends SerializedMessaging {
 //    outputStream.trim()
   }
 
-  override def emptyCurrentMessages: Boolean = currentMessages.isEmpty
+  override def emptyNextMessages: Boolean = nextMessages.isEmpty
+
+  override def remove[I](source: I): Unit = currentMessages.remove(source)
 }

@@ -49,7 +49,7 @@ object YarnAMBaseActor {
          |    provider = "akka.cluster.ClusterActorRefProvider"
          |  }
          |  remote {
-         |    watch-failure-detector.acceptable-heartbeat-pause = 10
+         |    watch-failure-detector.acceptable-heartbeat-pause = 30
          |    netty.tcp {
          |      maximum-frame-size = 10M
          |      hostname = "$hostName"
@@ -123,7 +123,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
     }
 
     override def onContainersCompleted(statuses: util.List[ContainerStatus]): Unit = {
-      statuses.foreach(status => s"${status.getContainerId} completed")
+      statuses.foreach(status => log.info(s"${status.getContainerId} completed"))
       // noop
     }
 

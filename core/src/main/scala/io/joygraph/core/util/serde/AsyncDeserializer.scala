@@ -6,18 +6,19 @@ import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.Input
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.concurrent.TrieMap
 
-class AsyncDeserializer(msgType : Char, n : Int, kryoFactory : => Kryo) {
-  private[this] val kryos : ArrayBuffer[Kryo] = ArrayBuffer.fill(n)(kryoFactory)
-  private[this] val locks : ArrayBuffer[Object] = ArrayBuffer.fill(n)(new Object)
-
+class AsyncDeserializer(kryoFactory : => Kryo) {
+  private[this] val _kryos : TrieMap[Int, Kryo] = TrieMap.empty
   val timeSpent = new AtomicLong(0)
 
+  private[this] def kryos(index : Int) = {
+    _kryos.getOrElseUpdate(index, kryoFactory)
+  }
+
   def deserialize[T](is : ObjectByteBufferInputStream, index : Int, deserializer : (Kryo, Input) => T)(any : Iterator[T] => Unit) : Unit = {
-    Predef.assert(is.msgType == msgType)
-    locks(index).synchronized{
-      val kryo = kryos(index)
+    val kryo = kryos(index)
+    kryo.synchronized{
       val objects = new Iterator[T] {
         var numObjects = 0
 

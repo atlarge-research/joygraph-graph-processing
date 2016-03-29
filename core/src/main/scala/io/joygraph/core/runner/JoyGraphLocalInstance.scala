@@ -1,18 +1,20 @@
 package io.joygraph.core.runner
 
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
 import com.typesafe.config.{Config, ConfigFactory}
-import io.joygraph.core.actor.{BaseActor, Master, Worker}
+import io.joygraph.core.actor.{BaseActor, Master, Worker, WorkerProvider}
+import io.joygraph.core.message.elasticity.WorkersResponse
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program.ProgramDefinition
 import io.joygraph.core.util.net.PortFinder
 
 import scala.collection.mutable.ArrayBuffer
-import scala.concurrent.Await
 import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, Future, Promise}
 
 object JoyGraphLocalInstanceBuilder {
   def apply[I,V,E](programDefinition: ProgramDefinition[String, I,V,E]) : JoyGraphLocalInstanceBuilder[I,V,E] = {
@@ -30,6 +32,12 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
   protected[this] var _partitioner : Option[VertexPartitioner] = None
   protected[this] var _programParameters : ArrayBuffer[(String,String)] = ArrayBuffer.empty
   protected[this] var _outputPath : Option[String] = None
+  protected[this] var _isElastic : Boolean = false
+
+  def elastic() : BuilderType = {
+    _isElastic = true
+    this
+  }
 
   def programParameters(keyValue: (String, String)) : BuilderType = {
     _programParameters += keyValue
@@ -104,11 +112,18 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
       case None => throw new IllegalArgumentException("Missing output path")
     }
 
+    graphTestInstance.setElastic(_isElastic)
+
     graphTestInstance
   }
 }
 
 protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinition[String, _,_,_]) {
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+
+  private[this] val actorSystemName = "JoyGraphTest"
+
   protected[this] type Type = JoyGraphLocalInstance
   protected[this] var _workers : Int = _
   protected[this] var _dataPath : String = _
@@ -117,6 +132,49 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
   protected[this] var _partitioner : VertexPartitioner = _
   protected[this] var _programParameters : ArrayBuffer[(String, String)] = _
   protected[this] var _outputPath : String = _
+  // elasticity
+  private[this] var _isElastic = false
+  private[this] val finishedLock = new CountDownLatch(1)
+  private[this] val finishedCounter = new AtomicInteger(0)
+  private[this] def finish(): Unit = {
+    if (finishedCounter.decrementAndGet() == 0) {
+      finishedLock.countDown()
+    }
+  }
+  private[this] def addSystem() = {
+    finishedCounter.incrementAndGet()
+  }
+
+  private[this] def waitForFinish() : Unit = {
+    finishedLock.await()
+  }
+
+  private[this] val _workerProvider : () => WorkerProvider = () => new WorkerProvider {
+    override def response(jobConf: Config, numWorkers: Int): Future[WorkersResponse] = {
+      (0 until numWorkers).foreach{ _ =>
+        val port = PortFinder.findFreePort()
+        val jobConfig =
+            ConfigFactory.parseString(createAkkaRemoteConfig(port))
+              .withFallback(jobConf) // jobconf already contains the seed port of the cluster
+        val system = ActorSystem(actorSystemName, jobConfig)
+        system.actorOf(Props(classOf[BaseActor], jobConfig, _masterFactory, () => _workerFactory(jobConfig, programDefinition, _partitioner)))
+        addSystem()
+        system.whenTerminated.foreach(_ =>
+          finish()
+        )
+      }
+      // immediately fulfill promise
+      val promise = Promise[WorkersResponse]
+      promise.success(WorkersResponse(numWorkers))
+      promise.future
+    }
+  }
+  private[this] val workerProviderSystem = ActorSystem(actorSystemName)
+  private[this] val _workerProviderRef = workerProviderSystem.actorOf(Props(_workerProvider()))
+
+  def setElastic(isElastic: Boolean) = {
+    _isElastic = isElastic
+  }
 
   def programParameters(programParameters : ArrayBuffer[(String, String)]) : Type = {
     _programParameters = programParameters
@@ -156,21 +214,26 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
     this
   }
 
-  def run(): Unit = {
-    val actorSystemName = "JoyGraphTest"
-    val cfg = (port: Int, seedPort: Int) =>
-      s"""
+  private[this] def createAkkaRemoteConfig(port : Int) = {
+    s"""
+       |akka {
+       |      remote {
+       |        watch-failure-detector.acceptable-heartbeat-pause = 10
+       |        netty.tcp {
+       |            hostname = "127.0.0.1"
+       |            maximum-frame-size = 10M
+       |            port = $port
+       |        }
+       |      }
+       |}
+     """.stripMargin
+  }
+
+  private[this] def createAkkaClusterConfig(actorSystemName : String, seedPort : Int) : String = {
+    s"""
   akka {
       actor {
         provider = "akka.cluster.ClusterActorRefProvider"
-      }
-      remote {
-        watch-failure-detector.acceptable-heartbeat-pause = 10
-        netty.tcp {
-            hostname = "127.0.0.1"
-            maximum-frame-size = 10M
-            port = $port
-        }
       }
       cluster {
         seed-nodes = [
@@ -179,7 +242,9 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
         auto-down = on
       }
   }"""
+  }
 
+  private[this] def createJobConfig() : Config = {
     val jobCfg =
       s"""
       job {
@@ -204,16 +269,44 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
         else
           _programParameters.map(kv => s"""${kv._1} = ${kv._2}\n""").reduce(_ + "" + _)
       }
-    val jobConfig = ConfigFactory.parseString(jobCfg)
+    ConfigFactory.parseString(jobCfg)
+  }
 
+  def workerProviderRef = {
+    this._workerProviderRef
+  }
+
+  def run(): Unit = {
+    val masterFac = if (_isElastic) {
+      (config : Config, cluster : Cluster) => {
+        val master = _masterFactory(config, cluster)
+        master.setWorkerProvider(workerProviderRef)
+        master
+      }
+    } else {
+      _masterFactory
+    }
+
+    val pureJobConfig = createJobConfig()
     val seedPort = PortFinder.findFreePort(2552)
     var port = seedPort
-    (0 until (_workers + 1)).map { _ =>
-      val config = ConfigFactory.parseString(cfg(port, seedPort))
+    (0 until (_workers + 1)).foreach { _ =>
+      val config =
+        ConfigFactory.parseString(createAkkaClusterConfig(actorSystemName, seedPort))
+          .withFallback(ConfigFactory.parseString(createAkkaRemoteConfig(port)))
+          .withFallback(pureJobConfig)
       val system = ActorSystem(actorSystemName, config)
-      system.actorOf(Props(classOf[BaseActor], jobConfig, _masterFactory, () => _workerFactory(jobConfig, programDefinition, _partitioner)))
+      system.actorOf(Props(classOf[BaseActor], config, masterFac, () => _workerFactory(pureJobConfig, programDefinition, _partitioner)))
       port = PortFinder.findFreePort(port + 1)
-      system.whenTerminated
-    }.foreach(Await.ready(_, Duration(Int.MaxValue, TimeUnit.MILLISECONDS)))
+
+      // wait for system to terminate
+      addSystem()
+      system.whenTerminated.foreach(_ =>
+        finish()
+      )
+    }
+
+    waitForFinish()
+    Await.ready(workerProviderSystem.terminate(), Duration(Int.MaxValue, TimeUnit.MILLISECONDS) )
   }
 }

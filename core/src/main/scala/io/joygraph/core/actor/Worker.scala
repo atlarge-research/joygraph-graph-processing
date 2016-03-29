@@ -17,6 +17,7 @@ import io.joygraph.core.actor.vertices.impl.TrieMapVerticesStore
 import io.joygraph.core.actor.vertices.impl.serialized.TrieMapSerializedVerticesStore
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
+import io.joygraph.core.message.elasticity._
 import io.joygraph.core.message.superstep._
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program._
@@ -86,14 +87,13 @@ abstract class Worker[I,V,E]
   protected[this] val clazzE : Class[E] = programDefinition.clazzE
 
   private[this] var id : Option[Int] = None
-  private[this] var workers : ArrayBuffer[AddressPair] = null
+  private[this] var workers : Map[Int, AddressPair] = Map.empty
   private[this] var workerPathsToIndex : Map[ActorRef, Int] = null
 
   private[this] val jobSettings = JobSettings(config)
   private[this] var verticesBufferNew : AsyncSerializer = null
   private[this] var edgeBufferNew : AsyncSerializer = null
-  private[this] var verticesDeserializer : AsyncDeserializer = null
-  private[this] var edgesDeserializer : AsyncDeserializer = null
+  private[this] var dataLoadingDeserializer : AsyncDeserializer = null
 
   private[this] var masterActorRef : ActorRef = null
   private[this] val vertexProgramInstance = programDefinition.program.newInstance()
@@ -109,16 +109,6 @@ abstract class Worker[I,V,E]
 
   def initialize() = {
     partitioner.init(config)
-    // set current deserializer
-    setReusableIterablePool(new SimplePool[ReusableIterable[Any]]({
-      val reusableIterable = new ReusableIterable[Any] {
-        override protected[this] def deserializeObject(): Any = incomingMessageDeserializer(_kryo, _input)
-      }
-      // TODO 4096 max message size should be retrieved somewhere else,
-      // prior to this it was retrieved from KryoSerialization
-      reusableIterable.input(new ByteBufferInput(4096))
-      reusableIterable
-    }))
   }
 
   protected[this] def master() = masterActorRef
@@ -134,11 +124,11 @@ abstract class Worker[I,V,E]
     val is = new ObjectByteBufferInputStream(byteBuffer)
     is.msgType match {
       case 0 => // edge
-        edgesDeserializer.deserialize(is, index, edgeDeserializer){ implicit edges =>
+        dataLoadingDeserializer.deserialize(is, index, edgeDeserializer){ implicit edges =>
           edges.foreach(x => addEdge(x._1, x._2, x._3))
         }
       case 1 => // vertex
-        verticesDeserializer.deserialize(is, index, vertexDeserializer) { implicit vertices =>
+        dataLoadingDeserializer.deserialize(is, index, vertexDeserializer) { implicit vertices =>
           vertices.foreach(addVertex)
         }
     }
@@ -209,10 +199,9 @@ abstract class Worker[I,V,E]
     case PrepareLoadData() =>
       println(s"$id: prepare load data!~ $state")
       // TODO create KryoFactory
-      this.edgeBufferNew = new AsyncSerializer(0, workers.length, new Kryo())
-      this.verticesBufferNew = new AsyncSerializer(1, workers.length, new Kryo())
-      this.edgesDeserializer = new AsyncDeserializer(0, workers.length, new Kryo())
-      this.verticesDeserializer = new AsyncDeserializer(1, workers.length, new Kryo())
+      this.edgeBufferNew = new AsyncSerializer(0, () => new Kryo())
+      this.verticesBufferNew = new AsyncSerializer(1, () => new Kryo())
+      this.dataLoadingDeserializer = new AsyncDeserializer(new Kryo())
       sender() ! true
     case LoadData(path, start, length) =>
       Future {
@@ -267,8 +256,6 @@ abstract class Worker[I,V,E]
         s"taking vertices: ${verticesBufferNew.timeSpentTaking}")
       println(s"serializing edges: ${edgeBufferNew.timeSpent.get() / 1000}s " +
         s"vertices: ${verticesBufferNew.timeSpent.get() / 1000}s")
-      println(s"deserializing edges: ${edgesDeserializer.timeSpent.get() / 1000}s " +
-        s"vertices: ${verticesDeserializer.timeSpent.get() / 1000}s")
       master() ! LoadingComplete(id.get, numVertices, numEdges)
   }
 
@@ -343,6 +330,16 @@ abstract class Worker[I,V,E]
           })
     }
 
+    // set current deserializer
+    setReusableIterablePool(new SimplePool[ReusableIterable[Any]]({
+      val reusableIterable = new ReusableIterable[Any] {
+        override protected[this] def deserializeObject(): Any = incomingMessageDeserializer(_kryo, _input)
+      }
+      // TODO 4096 max message size should be retrieved somewhere else,
+      // prior to this it was retrieved from KryoSerialization
+      reusableIterable.input(new ByteBufferInput(4096))
+      reusableIterable
+    }))
 
     // last chance to retrieve aggregator
     vertexProgramInstance.preSuperStep()
@@ -363,22 +360,18 @@ abstract class Worker[I,V,E]
   private[this] val RUN_SUPERSTEP : PartialFunction[Any, Unit] = {
     case PrepareSuperStep(numVertices, numEdges) =>
       vertexProgramInstance match {
-        case program : NewVertexProgram[I, V, E] =>
+        case program: NewVertexProgram[I, V, E] =>
           program.load(config)
           program.totalNumVertices(numVertices)
           program.totalNumEdges(numEdges)
           vertexProgramInstance match {
-            case aggregatable : Aggregatable => {
+            case aggregatable: Aggregatable => {
               aggregatable.workerInitializeAggregators()
             }
             case _ =>
           }
         case _ =>
       }
-      // TODO kryoFactory instead of new Kryo
-      messagesSerializer = new AsyncSerializer(0, workers.size, new Kryo())
-      messagesCombinableSerializer = new CombinableAsyncSerializer[I](0, workers.size, new Kryo(), vertexSerializer)
-      messagesDeserializer = new AsyncDeserializer(0, workers.size, new Kryo())
 
       prepareSuperStep(0)
       sender() ! true
@@ -392,6 +385,7 @@ abstract class Worker[I,V,E]
         case _ => // noop
       }
       barrier(superStep)
+      messagesOnBarrier()
       master() ! BarrierComplete()
     }
     case RunSuperStep(superStep) =>
@@ -460,8 +454,7 @@ abstract class Worker[I,V,E]
     case byteString : ByteString =>
       handleSuperStepAkka(sender(), byteString)
     case AllSuperStepComplete() =>
-      messagesOnSuperStepComplete()
-      if (allHalted && emptyCurrentMessages) {
+      if (allHalted && emptyNextMessages) {
         log.info("Don't do next step! ")
         sender() ! DoNextStep(false)
       } else {
@@ -519,36 +512,186 @@ abstract class Worker[I,V,E]
       }
   }
 
+  private[this] var elasticGrowthDeserializer : AsyncDeserializer = _
+
+  private[this] def prepareElasticGrowStep() = {
+    elasticGrowthDeserializer = new AsyncDeserializer(new Kryo())
+  }
+
+
+  private[this] def handleElasticGrowNetty(byteBuffer : ByteBuffer) : Unit = {
+    try {
+      val index = byteBuffer.getInt() // reads the node Id which is prepended during netty send
+      val is = new ObjectByteBufferInputStream(byteBuffer)
+
+      importVerticesStoreData(index, is,
+        elasticGrowthDeserializer,
+        elasticGrowthDeserializer,
+        elasticGrowthDeserializer,
+        elasticGrowthDeserializer
+      )
+
+      importCurrentMessagesData(index, is, messagesDeserializer, messagePairDeserializer, clazzI, currentOutgoingMessageClass)
+      workers(index).actorRef ! Received()
+    } catch {
+      case t : Throwable => t.printStackTrace()
+    }
+  }
+
+  /**
+    *
+    * @param prevWorkers
+    * @param nextWorkers
+    */
+  def distributeVerticesEdgesAndMessages(prevWorkers: Map[Int, AddressPair], nextWorkers: Map[Int, AddressPair]) = {
+    // update partitioner
+    partitioner.numWorkers(nextWorkers.size)
+
+    // new workers
+    val verticesToBeRemoved = ArrayBuffer.empty[I]
+    val newWorkersMap = nextWorkers.map{
+      case (index, addressPair) =>
+        index -> !prevWorkers.contains(index)
+    }
+
+    val haltedAsyncSerializer = new AsyncSerializer(0, () => new Kryo)
+    val idAsyncSerializer = new AsyncSerializer(1, () => new Kryo)
+    val valueAsyncSerializer = new AsyncSerializer(2, () => new Kryo)
+    val edgesAsyncSerializer = new AsyncSerializer(3, () => new Kryo)
+    val messagesAsyncSerializer = new AsyncSerializer(4, () => new Kryo)
+
+    val outputHandler = (byteBuffer : ByteBuffer, index : Int) => {
+      messageSender.send(id.get, index, byteBuffer)
+    }
+
+    // TODO change this, it's not so nice to tweak the ingoing and outgoing classes
+    setReusableIterablePool(new SimplePool[ReusableIterable[Any]]({
+      val reusableIterable = new ReusableIterable[Any] {
+        override protected[this] def deserializeObject(): Any = messageDeserializer(_kryo, _input)
+      }
+      // TODO 4096 max message size should be retrieved somewhere else,
+      // prior to this it was retrieved from KryoSerialization
+      reusableIterable.input(new ByteBufferInput(4096))
+      reusableIterable
+    }))
+
+    vertices.foreach{ vId =>
+      val index = partitioner.destination(vId)
+      if (newWorkersMap(index)) {
+        verticesToBeRemoved += vId
+        exportHaltedState(vId, index, haltedAsyncSerializer, (buffer) => outputHandler(buffer, index))
+        exportId(vId, index, idAsyncSerializer, (buffer) => outputHandler(buffer, index))
+        exportValue(vId, index, valueAsyncSerializer, (buffer) => outputHandler(buffer, index))
+        exportEdges(vId, index, edgesAsyncSerializer, (buffer) => outputHandler(buffer, index))
+        exportAndRemoveMessages(vId, currentOutgoingMessageClass, index, messagesAsyncSerializer, (buffer) => outputHandler(buffer, index))
+      }
+    }
+
+    haltedAsyncSerializer.sendNonEmptyByteBuffers{
+      case (byteBuffer : ByteBuffer, index : Int) =>
+        outputHandler(byteBuffer, index)
+    }
+    idAsyncSerializer.sendNonEmptyByteBuffers{
+      case (byteBuffer : ByteBuffer, index : Int) =>
+        outputHandler(byteBuffer, index)
+    }
+    valueAsyncSerializer.sendNonEmptyByteBuffers{
+      case (byteBuffer : ByteBuffer, index : Int) =>
+        outputHandler(byteBuffer, index)
+    }
+    edgesAsyncSerializer.sendNonEmptyByteBuffers {
+      case (byteBuffer : ByteBuffer, index : Int) =>
+        outputHandler(byteBuffer, index)
+    }
+
+    messagesAsyncSerializer.sendNonEmptyByteBuffers {
+      case (byteBuffer : ByteBuffer, index : Int) =>
+        outputHandler(byteBuffer, index)
+    }
+
+    verticesToBeRemoved.foreach(removeAllFromVertex)
+
+    sendingComplete()
+    elasticCompleteTrigger()
+  }
+
+  private[this] def elasticCompleteTrigger() = {
+    if (doneAllSentReceived) {
+      resetSentReceived()
+      println(s"$id elastic phase ended")
+      master() ! ElasticGrowComplete()
+    } else {
+      log.info(s"${id} elastic Triggered but not completed : $numMessagesSent $numMessagesReceived")
+    }
+  }
+
+  private[this] val GROW_OPERATION : PartialFunction[Any, Unit] = {
+    case Received() =>
+      incrementReceived()
+      elasticCompleteTrigger()
+    case ElasticGrow(prevWorkers, nextWorkers) =>
+      // TODO new worker initialization
+      // TODO this is done after worker initialized its listen server.
+      // we assume that prevWorkers is a subset of nextWorkers
+      assert(prevWorkers.size < nextWorkers.size)
+      Future {
+        this.workers = nextWorkers
+        // TODO check messages sent/received
+        // TODO link import logic
+        distributeVerticesEdgesAndMessages(prevWorkers, nextWorkers)
+      }.recover {
+        case t : Throwable => t.printStackTrace()
+      }
+  }
+
+  private[this] def addWorkers(senderRef : ActorRef, newWorkers : Map[Int, AddressPair]) = {
+    this.workers ++= newWorkers
+    this.workerPathsToIndex = this.workers.mapValues(_.actorRef).map(_.swap)
+    FutureUtil.callbackOnAllComplete{ // TODO handle failure
+    val destinationAddressPairs = newWorkers.map{case (index, addressPair) => (index, (addressPair.nettyAddress.host, addressPair.nettyAddress.port))}
+      messageSender.connectToAll(destinationAddressPairs)
+    } {
+      senderRef ! true
+    }
+  }
+
   private[this] val BASE_OPERATION : PartialFunction[Any, Unit] = {
     case MasterAddress(address) =>
       masterActorRef = address
       sender() ! true
+    case InitNewWorker(address, currentSuperStep) =>
+      masterActorRef = address
+      prepareSuperStep(currentSuperStep)
+      sender() ! NewWorker()
     case WorkerId(workerId) =>
       log.info(s"worker id: $workerId")
       val senderRef = sender()
       this.id = Option(workerId)
+
+      // TODO kryoFactory instead of new Kryo
+      messagesSerializer = new AsyncSerializer(0, () => new Kryo())
+      messagesCombinableSerializer = new CombinableAsyncSerializer[I](0, () => new Kryo(), idSerializer = vertexSerializer)
+      messagesDeserializer = new AsyncDeserializer(new Kryo())
+
+      messageSender = new MessageSenderNetty(this)
+
       messageReceiver = new MessageReceiverNetty
       messageReceiver.connect().foreach { success =>
         if (success) {
           senderRef ! AddressPair(self, NettyAddress(messageReceiver.host, messageReceiver.port))
-          log.info(s"$workerId sent self! ?!?!")
+          log.info(s"$workerId sent self: $self ?!?!")
         } else {
           log.error("Could not listen on ANY port")
         }
       }
-
-    case WorkerMap(workers) =>
-      log.info(s"workers: $workers")
-      this.workers = workers
-      this.workerPathsToIndex = this.workers.map(_.actorRef).zipWithIndex.toMap
-      messageSender = new MessageSenderNetty(this)
+    case NewWorkerMap(newWorkers) =>
       val senderRef = sender()
-      FutureUtil.callbackOnAllComplete{ // TODO handle failure
-      val destinationAddressPairs = workers.zipWithIndex.map{case (addressPair, index) => (index, (addressPair.nettyAddress.host, addressPair.nettyAddress.port))}
-        messageSender.connectToAll(destinationAddressPairs)
-      } {
-        senderRef ! true
-      }
+      log.info(s"new workers: $newWorkers")
+      addWorkers(senderRef, newWorkers)
+    case WorkerMap(workers) =>
+      val senderRef = sender()
+      log.info(s"workers: $workers")
+      addWorkers(senderRef, workers)
     case State(newState) =>
       state = newState
       state match {
@@ -560,8 +703,11 @@ abstract class Worker[I,V,E]
           messageReceiver.setOnReceivedMessage(handleSuperStepNetty)
           currentReceive = (BASE_OPERATION :: RUN_SUPERSTEP :: Nil).reduceLeft(_ orElse _)
         case GlobalState.POST_SUPERSTEP =>
-          messageReceiver.setOnReceivedMessage(handleDataLoadingNetty)
           currentReceive = (BASE_OPERATION :: POST_SUPERSTEP_OPERATION :: Nil).reduceLeft(_ orElse _)
+        case GlobalState.GROW_ELASTIC =>
+          prepareElasticGrowStep()
+          messageReceiver.setOnReceivedMessage(handleElasticGrowNetty)
+          currentReceive = (BASE_OPERATION :: GROW_OPERATION :: Nil).reduceLeft(_ orElse _)
         case GlobalState.NONE =>
       }
       context.become(currentReceive, true)
