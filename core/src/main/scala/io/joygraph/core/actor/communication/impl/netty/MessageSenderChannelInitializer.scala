@@ -6,5 +6,15 @@ import io.netty.channel.socket.SocketChannel
 
 @Sharable
 class MessageSenderChannelInitializer extends ChannelInitializer[SocketChannel] {
-  override def initChannel(ch: SocketChannel): Unit = {}
+
+  private[this] val messageSenderHandler = new MessageSenderHandler
+
+  def setOnExceptionHandler(reporter : (Throwable) => Unit) = {
+    messageSenderHandler.setOnExceptionHandler(reporter)
+  }
+
+  override def initChannel(ch: SocketChannel): Unit = {
+    ch.pipeline()
+      .addLast(messageSenderHandler)
+  }
 }

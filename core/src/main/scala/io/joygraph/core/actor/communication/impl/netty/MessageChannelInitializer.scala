@@ -10,6 +10,10 @@ class MessageChannelInitializer extends ChannelInitializer[SocketChannel] {
 
   private[this] val messageReceivedHandler = new MessageReceiveHandler
 
+  def setOnExceptionHandler(reporter : (Throwable) => Unit) = {
+    messageReceivedHandler.setOnExceptionHandler(reporter)
+  }
+
   def setOnReceivedMessage(onMessageReceived : (ByteBuffer) => Any) = {
     messageReceivedHandler.setOnReceivedMessage(onMessageReceived)
   }

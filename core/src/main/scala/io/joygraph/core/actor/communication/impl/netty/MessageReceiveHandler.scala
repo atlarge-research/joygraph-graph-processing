@@ -7,7 +7,7 @@ import io.netty.channel.ChannelHandler.Sharable
 import io.netty.channel.{ChannelHandlerContext, SimpleChannelInboundHandler}
 
 @Sharable
-class MessageReceiveHandler extends SimpleChannelInboundHandler[ByteBuf] {
+class MessageReceiveHandler extends SimpleChannelInboundHandler[ByteBuf] with NettyChannelHandlerExceptionForwarder {
 
   private[this] var _onMessageReceived : (ByteBuffer) => Any = _
 

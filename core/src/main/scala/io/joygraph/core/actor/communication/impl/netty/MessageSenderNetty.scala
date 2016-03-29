@@ -19,12 +19,19 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting) exten
   private[this] val workerGroup = new NioEventLoopGroup()
   private[this] val _channels : TrieMap[Int, Channel] = TrieMap.empty
   private[this] val b = new Bootstrap()
+  private[this] val messageSenderChannelInitializer = new MessageSenderChannelInitializer
+  private[this] var errorReporter : (Throwable) => Unit = _
 
   b.group(workerGroup)
   b.channel(classOf[NioSocketChannel])
     .option[java.lang.Boolean](ChannelOption.SO_KEEPALIVE, true)
     .option[java.lang.Boolean](ChannelOption.TCP_NODELAY, true)
-  b.handler(new MessageSenderChannelInitializer)
+  b.handler(messageSenderChannelInitializer)
+
+  def setOnExceptionHandler(reporter : (Throwable) => Unit) = {
+    errorReporter = reporter
+    messageSenderChannelInitializer.setOnExceptionHandler(reporter)
+  }
 
   def connectToAll(destinations : Iterable[(Int, HostPort)]): Iterable[Future[Channel]] = {
     destinations.map{case (destination, hostPort) => connectTo(destination, hostPort)}
@@ -69,8 +76,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting) exten
       if (future.isSuccess) {
         promise.success(payload)
       } else {
-        future.cause().printStackTrace()
-        // TODO handle error
+        errorReporter(future.cause())
       }
     }
   }
@@ -81,8 +87,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting) exten
         _channels.put(destination, future.channel())
         p.success(future.channel())
       } else {
-        // TODO error handling
-        future.cause().printStackTrace()
+        errorReporter(future.cause())
       }
     }
   }

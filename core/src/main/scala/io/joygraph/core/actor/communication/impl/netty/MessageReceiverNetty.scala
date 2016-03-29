@@ -33,6 +33,10 @@ class MessageReceiverNetty {
     messageChannelInitializer.setOnReceivedMessage(onMessageReceived)
   }
 
+  def setReceiverExceptionReporter(reporter : (Throwable) => Unit) = {
+    messageChannelInitializer.setOnExceptionHandler(reporter)
+  }
+
   private[this] def bindToFreePort(p : Promise[Boolean]) = {
     val foundPort = PortFinder.findFreePort()
     b.bind(foundPort).addListener(new BindCompleteHandler(p))

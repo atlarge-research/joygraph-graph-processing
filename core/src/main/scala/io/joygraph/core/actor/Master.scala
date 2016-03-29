@@ -1,7 +1,7 @@
 package io.joygraph.core.actor
 
+import java.util.concurrent._
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
-import java.util.concurrent.{Semaphore, TimeUnit}
 
 import akka.actor.{Actor, ActorLogging, ActorRef}
 import akka.cluster.Cluster
@@ -15,10 +15,10 @@ import io.joygraph.core.message._
 import io.joygraph.core.message.elasticity._
 import io.joygraph.core.message.superstep._
 import io.joygraph.core.program.Aggregator
-import io.joygraph.core.util.FutureUtil
+import io.joygraph.core.util.{Errors, ExecutionContextUtil, FutureUtil}
 
 import scala.collection.mutable
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.Try
 
 object Master {
@@ -31,7 +31,13 @@ object Master {
 
 abstract class Master(protected[this] val conf : Config, cluster : Cluster) extends Actor with ActorLogging {
 
-  import scala.concurrent.ExecutionContext.Implicits.global
+  private[this] implicit val executionContext = ExecutionContext.fromExecutor(
+    ExecutionContextUtil.createForkJoinPoolWithPrefix("master-akka-message-"),
+    (t: Throwable) => {
+      log.info("Terminating on exception" + Errors.messageAndStackTraceString(t))
+      terminate()
+    }
+  )
   // TODO set in configuration
   implicit val timeout = Timeout(30, TimeUnit.SECONDS)
 
@@ -156,7 +162,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   }
 
   def doElasticity(): Future[mutable.Map[Int,AddressPair]] = {
-    elasticityPromise = new ElasticityPromise(workerIdAddressMap, timeout)
+    elasticityPromise = new ElasticityPromise(workerIdAddressMap, timeout, executionContext)
     // request number
     workerProvider match {
       case Some(provider) =>
@@ -273,17 +279,19 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         // print dem aggregators
         _aggregatorMapping.foreach{case (name, aggregator) => println(s"$name: ${aggregator.value}")}
         log.info("All output done, send shutdown.")
-        allWorkers().foreach(_.actorRef ! Terminate())
-        log.info("Shutting down.")
-        context.system.terminate()
+        terminate()
       }
+  }
+
+  def terminate(): Unit = {
+    allWorkers().foreach(_.actorRef ! Terminate())
+    log.info("Shutting down.")
+    context.system.terminate()
   }
 }
 
 // TODO rework this, kind of ugly :p
-class ElasticityPromise(currentWorkers : mutable.Map[Int, AddressPair], implicit val askTimeout : Timeout) extends Promise[mutable.Map[Int, AddressPair]] {
-  // todo pass execution context
-  import scala.concurrent.ExecutionContext.Implicits.global
+class ElasticityPromise(currentWorkers : mutable.Map[Int, AddressPair], implicit val askTimeout : Timeout, implicit val executionContext : ExecutionContext) extends Promise[mutable.Map[Int, AddressPair]] {
 
   private[this] val defaultPromise : Promise[mutable.Map[Int, AddressPair]] = Promise[mutable.Map[Int, AddressPair]]
   private[this] var _numWorkersExpected : Option[Int] = None

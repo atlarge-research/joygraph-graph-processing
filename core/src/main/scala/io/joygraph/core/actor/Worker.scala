@@ -22,13 +22,13 @@ import io.joygraph.core.message.superstep._
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program._
 import io.joygraph.core.reader.LineProvider
+import io.joygraph.core.util._
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer, CombinableAsyncSerializer}
-import io.joygraph.core.util.{FutureUtil, MessageCounting, SimplePool}
 
 import scala.collection.mutable.ArrayBuffer
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 
 object Worker{
   def workerWithTrieMapMessageStore[I,V,E]
@@ -79,8 +79,21 @@ abstract class Worker[I,V,E]
  protected[this] var partitioner : VertexPartitioner)
   extends Actor with ActorLogging with MessageCounting with MessageStore with VerticesStore[I,V,E] {
 
-  // TODO use different execution contexts at different places.
-  import scala.concurrent.ExecutionContext.Implicits.global
+  private[this] implicit val messageHandlingExecutionContext = ExecutionContext.fromExecutor(
+    ExecutionContextUtil.createForkJoinPoolWithPrefix("worker-akka-message-"),
+    (t: Throwable) => {
+      log.info("Terminating on exception " + Errors.messageAndStackTraceString(t))
+      terminate()
+    }
+  )
+
+  private[this] val computationExecutionContext = ExecutionContext.fromExecutor(
+    ExecutionContextUtil.createForkJoinPoolWithPrefix("compute-"),
+    (t: Throwable) => {
+      log.info("Terminating on exception " + Errors.messageAndStackTraceString(t))
+      terminate()
+    }
+  )
 
   protected[this] val clazzI : Class[I] = programDefinition.clazzI
   protected[this] val clazzV : Class[V] = programDefinition.clazzV
@@ -171,9 +184,6 @@ abstract class Worker[I,V,E]
       _handleSuperStep(index, byteBuffer)
       println(s"$id sending reply to $index")
       senderRef ! Received()
-    }.recover{
-      case t : Throwable =>
-        t.printStackTrace()
     }
   }
 
@@ -224,9 +234,6 @@ abstract class Worker[I,V,E]
         })
         sendingComplete()
         loadingCompleteTrigger()
-      }.recover{
-        case t : Throwable =>
-          t.printStackTrace()
       }
     case Received() =>
       incrementReceived()
@@ -371,7 +378,6 @@ abstract class Worker[I,V,E]
     case RunSuperStep(superStep) =>
       Future{
         log.info(s"Running superstep $superStep")
-//        log.info(s"$clazzI $clazzV $clazzE $clazzM")
         def addEdgeVertex : (I, I, E) => Unit = addEdge
 
         val v : Vertex[I,V,E] = new VertexImpl[I,V,E] {
@@ -379,12 +385,6 @@ abstract class Worker[I,V,E]
             addEdgeVertex(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
           }
         }
-
-        // TODO
-//        val combinable: Option[Combinable[M]] = vertexProgramInstance match {
-//          case combinable : Combinable[M] => Some(combinable)
-//          case _ => None
-//        }
 
         allHalted = true
 
@@ -428,9 +428,7 @@ abstract class Worker[I,V,E]
 
         sendingComplete()
         superStepCompleteTrigger()
-      }.recover{
-        case t : Throwable => t.printStackTrace()
-      }
+      }(computationExecutionContext)
     case byteString : ByteString =>
       handleSuperStepAkka(sender(), byteString)
     case AllSuperStepComplete() =>
@@ -487,8 +485,6 @@ abstract class Worker[I,V,E]
         })
         log.info(s"Done writing output ${outputPath}")
         master() ! DoneOutput()
-      }.recover{
-        case t : Throwable => t.printStackTrace()
       }
   }
 
@@ -619,8 +615,6 @@ abstract class Worker[I,V,E]
         // TODO check messages sent/received
         // TODO link import logic
         distributeVerticesEdgesAndMessages(prevWorkers, nextWorkers)
-      }.recover {
-        case t : Throwable => t.printStackTrace()
       }
   }
 
@@ -633,6 +627,16 @@ abstract class Worker[I,V,E]
     } {
       senderRef ! true
     }
+  }
+
+  private[this] def nettyReceiverException(t : Throwable) : Unit = {
+    log.info("Error receiver handler\n" + Errors.messageAndStackTraceString(t))
+    terminate()
+  }
+
+  private[this] def nettySenderException(t : Throwable) : Unit = {
+    log.info("Error sender handler\n" + Errors.messageAndStackTraceString(t))
+    terminate()
   }
 
   private[this] val BASE_OPERATION : PartialFunction[Any, Unit] = {
@@ -654,8 +658,11 @@ abstract class Worker[I,V,E]
       messagesDeserializer = new AsyncDeserializer(new Kryo())
 
       messageSender = new MessageSenderNetty(this)
+      messageSender.setOnExceptionHandler(nettySenderException)
 
       messageReceiver = new MessageReceiverNetty
+      messageReceiver.setReceiverExceptionReporter(nettyReceiverException)
+
       messageReceiver.connect().foreach { success =>
         if (success) {
           senderRef ! AddressPair(self, NettyAddress(messageReceiver.host, messageReceiver.port))
@@ -694,11 +701,15 @@ abstract class Worker[I,V,E]
       log.info(s"Set state to $newState")
       sender() ! true
     case Terminate() =>
-      //terminate netty
-      messageSender.shutDown()
-      messageReceiver.shutdown()
-      // terminate akka
-      context.system.terminate()
+      terminate()
+  }
+
+  private[this] def terminate() = {
+    //terminate netty
+    messageSender.shutDown()
+    messageReceiver.shutdown()
+    // terminate akka
+    context.system.terminate()
   }
 
   private[this] var _currentReceive : PartialFunction[Any, Unit] = BASE_OPERATION
