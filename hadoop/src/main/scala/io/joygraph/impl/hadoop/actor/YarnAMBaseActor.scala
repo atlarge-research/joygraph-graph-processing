@@ -102,7 +102,6 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
 
   private[this] val dfsPaths = YARNUtils.deserializeResourcesFileStatuses(paths)
   private[this] val jarFileStatus = dfsPaths.head
-  private[this] val workerMemory = JobSettings(jobConf).workerMemory
   private[this] val launcherExecutionContext = ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(1, new ThreadFactory {
     override def newThread(r: Runnable): Thread = new Thread(r, "container-launcher")
   }))
@@ -197,10 +196,10 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
   nmClientAsync.init(conf)
   nmClientAsync.start()
 
-  val amMemory = JobSettings(jobConf).masterMemory
-  val amVCores = JobSettings(jobConf).masterCores
+  val workerMemory = JobSettings(jobConf).workerMemory
+  val workerCores = JobSettings(jobConf).workerCores
 
-  val capability = Resource.newInstance(amMemory, amVCores)
+  val capability = Resource.newInstance(workerMemory, workerCores)
   val priority = Priority.UNDEFINED // TODO set in conf?
 
   val appMasterHostname = NetUtils.getHostName
