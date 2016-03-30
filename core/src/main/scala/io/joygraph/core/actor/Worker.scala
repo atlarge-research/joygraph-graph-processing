@@ -203,20 +203,19 @@ abstract class Worker[I,V,E]
             val (src, dst, value) = programDefinition.inputParser(l)
             val index : Int = partitioner.destination(src)
             val index2 : Int = partitioner.destination(dst)
-            if (index == id.get) {
+            ifMessageToSelf(index) {
               addEdge(src, dst, value)
-            } else {
+            } {
               edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
                 println(s"- sending to $index, size: ${byteBuffer.position()}")
                 messageSender.send(id.get, index, byteBuffer)
               }
             }
-            if (index2 == id.get) {
+            ifMessageToSelf(index2) {
               addVertex(dst)
-            } else {
+            } {
               verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit byteBuffer =>
                 println(s"- sending to $index2, size: ${byteBuffer.position()}")
-
                 messageSender.send(id.get, index2, byteBuffer)
               }
             }
@@ -274,6 +273,13 @@ abstract class Worker[I,V,E]
   private[this] def currentIncomingMessageClass : Class[_] = currentSuperStepFunction.clazzIn
   private[this] def currentOutgoingMessageClass : Class[_] = currentSuperStepFunction.clazzOut
 
+  private[this] def ifMessageToSelf(index : Int)(any : => Unit)(otherwise : => Unit) : Unit = {
+    if (index == id.get) {
+      any
+    } else {
+      otherwise
+    }
+  }
   private[this] def prepareSuperStep(superStep : Int) : Unit = {
     currentSuperStepFunction = vertexProgramInstance.currentSuperStepFunction(superStep)
 
@@ -285,16 +291,26 @@ abstract class Worker[I,V,E]
         currentSuperStepFunction.messageSenders(
           (m, dst) => {
             val index = partitioner.destination(dst)
-            messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
-              messageSender.send(id.get, index, byteBuffer)
+            ifMessageToSelf(index) {
+              // could combine but.. it's not over the network
+              _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+            } {
+              messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
+                messageSender.send(id.get, index, byteBuffer)
+              }
             }
           },
           (v, m) => {
             v.edges.foreach {
               case Edge(dst, _) =>
                 val index = partitioner.destination(dst)
-                messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
-                  messageSender.send(id.get, index, byteBuffer)
+                ifMessageToSelf(index) {
+                  // could combine but.. it's not over the network
+                  _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                } {
+                  messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
+                    messageSender.send(id.get, index, byteBuffer)
+                  }
                 }
             }
           })
@@ -302,16 +318,24 @@ abstract class Worker[I,V,E]
         currentSuperStepFunction.messageSenders(
           (m, dst) => {
             val index = partitioner.destination(dst)
-            messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-              messageSender.send(id.get, index, byteBuffer)
+            ifMessageToSelf(index) {
+              _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+            } {
+              messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                messageSender.send(id.get, index, byteBuffer)
+              }
             }
           },
           (v, m) => {
             v.edges.foreach {
               case Edge(dst, _) =>
                 val index = partitioner.destination(dst)
-                messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-                  messageSender.send(id.get, index, byteBuffer)
+                ifMessageToSelf(index) {
+                  _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                } {
+                  messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                    messageSender.send(id.get, index, byteBuffer)
+                  }
                 }
             }
           })
@@ -376,7 +400,7 @@ abstract class Worker[I,V,E]
       master() ! BarrierComplete()
     }
     case RunSuperStep(superStep) =>
-      Future{
+      Future {
         log.info(s"Running superstep $superStep")
         def addEdgeVertex : (I, I, E) => Unit = addEdge
 

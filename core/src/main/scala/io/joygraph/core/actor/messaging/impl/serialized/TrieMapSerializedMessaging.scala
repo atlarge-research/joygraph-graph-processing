@@ -44,11 +44,14 @@ class TrieMapSerializedMessaging extends SerializedMessaging {
     */
   override def add[I,M](source: I, message: M)(implicit kryo: Kryo, output : KryoOutput): Unit = {
     val outputStream = nextMessages.getOrElseUpdate(source, new DirectByteBufferGrowingOutputStream(8))
-    output.setOutputStream(outputStream)
-    kryo.writeObject(output, message)
-    output.flush()
-    // TODO evaluate the removal of trim
-//    outputStream.trim()
+    // outputStream writing should be synchronized
+    outputStream.synchronized {
+      output.setOutputStream(outputStream)
+      kryo.writeObject(output, message)
+      output.flush()
+      // TODO evaluate the removal of trim
+      //    outputStream.trim()
+    }
   }
 
   override def emptyNextMessages: Boolean = nextMessages.isEmpty
