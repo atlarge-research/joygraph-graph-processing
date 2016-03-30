@@ -187,6 +187,27 @@ abstract class Worker[I,V,E]
     }
   }
 
+  private[this] def addData(src :I, dst : I, value : E) = {
+    val index : Int = partitioner.destination(src)
+    val index2 : Int = partitioner.destination(dst)
+    ifMessageToSelf(index) {
+      addEdge(src, dst, value)
+    } {
+      edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
+        println(s"- sending to $index, size: ${byteBuffer.position()}")
+        messageSender.send(id.get, index, byteBuffer)
+      }
+    }
+    ifMessageToSelf(index2) {
+      addVertex(dst)
+    } {
+      verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit byteBuffer =>
+        println(s"- sending to $index2, size: ${byteBuffer.position()}")
+        messageSender.send(id.get, index2, byteBuffer)
+      }
+    }
+  }
+
   private[this] val DATA_LOADING_OPERATION : PartialFunction[Any, Unit] = {
     case PrepareLoadData() =>
       println(s"$id: prepare load data!~ $state")
@@ -201,23 +222,9 @@ abstract class Worker[I,V,E]
         lineProvider.read(config, path, start, length) {
           _.foreach{ l =>
             val (src, dst, value) = programDefinition.inputParser(l)
-            val index : Int = partitioner.destination(src)
-            val index2 : Int = partitioner.destination(dst)
-            ifMessageToSelf(index) {
-              addEdge(src, dst, value)
-            } {
-              edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
-                println(s"- sending to $index, size: ${byteBuffer.position()}")
-                messageSender.send(id.get, index, byteBuffer)
-              }
-            }
-            ifMessageToSelf(index2) {
-              addVertex(dst)
-            } {
-              verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit byteBuffer =>
-                println(s"- sending to $index2, size: ${byteBuffer.position()}")
-                messageSender.send(id.get, index2, byteBuffer)
-              }
+            addData(src, dst, value)
+            if (!jobSettings.isDirected) {
+              addData(dst, src, value)
             }
           }
         }

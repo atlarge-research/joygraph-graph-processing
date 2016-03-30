@@ -17,6 +17,7 @@ import io.joygraph.core.message.superstep._
 import io.joygraph.core.program.Aggregator
 import io.joygraph.core.util.{Errors, ExecutionContextUtil, FutureUtil}
 
+import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.Try
@@ -42,7 +43,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   implicit val timeout = Timeout(30, TimeUnit.SECONDS)
 
   val jobSettings : JobSettings = JobSettings(conf)
-  var workerIdAddressMap : mutable.Map[Int, AddressPair] = mutable.Map.empty
+  var workerIdAddressMap : Map[Int, AddressPair] = Map.empty
   var successReceived : AtomicInteger = _
   var doneDoOutput : AtomicInteger = _
   var elasticityPromise : ElasticityPromise = _
@@ -84,16 +85,18 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     // we are up
     var workerId = 0
     // cluster state members includes itself, have to exclude self.
+    val workerIdAddressMapBuilder = TrieMap.empty[Int, AddressPair]
     FutureUtil.callbackOnAllComplete(workerMembers().map { x =>
       log.info("Retrieving ActorRefs")
       val akkaPath = x.address.toString + "/user/" + jobSettings.workerSuffix
       // give each member an id
       val fActorRef: Future[AddressPair] = (context.actorSelection(akkaPath) ? WorkerId(workerId)).mapTo[AddressPair]
       val currentWorkerId = workerId
-      fActorRef.foreach(x => workerIdAddressMap(currentWorkerId) = x)
+      fActorRef.foreach(x => workerIdAddressMapBuilder(currentWorkerId) = x)
       workerId += 1
       fActorRef
     }) {
+      workerIdAddressMap = workerIdAddressMapBuilder.toMap
       log.info("Distributing ActorRefs")
       val masterPath = cluster.selfAddress.toString + "/user/" + jobSettings.masterSuffix
       val actorSelections: Iterable[ActorRef] = allWorkers().map(_.actorRef)
@@ -161,7 +164,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     }
   }
 
-  def doElasticity(): Future[mutable.Map[Int,AddressPair]] = {
+  def doElasticity(): Future[Map[Int,AddressPair]] = {
     elasticityPromise = new ElasticityPromise(workerIdAddressMap, timeout, executionContext)
     // request number
     workerProvider match {
@@ -291,9 +294,9 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 }
 
 // TODO rework this, kind of ugly :p
-class ElasticityPromise(currentWorkers : mutable.Map[Int, AddressPair], implicit val askTimeout : Timeout, implicit val executionContext : ExecutionContext) extends Promise[mutable.Map[Int, AddressPair]] {
+class ElasticityPromise(currentWorkers : Map[Int, AddressPair], implicit val askTimeout : Timeout, implicit val executionContext : ExecutionContext) extends Promise[Map[Int, AddressPair]] {
 
-  private[this] val defaultPromise : Promise[mutable.Map[Int, AddressPair]] = Promise[mutable.Map[Int, AddressPair]]
+  private[this] val defaultPromise : Promise[Map[Int, AddressPair]] = Promise[Map[Int, AddressPair]]
   private[this] var _numWorkersExpected : Option[Int] = None
   private[this] var nextWorkers : mutable.Map[Int, AddressPair] = mutable.Map.empty
   private[this] var newWorkers : mutable.Map[Int, AddressPair] = mutable.Map.empty
@@ -319,7 +322,7 @@ class ElasticityPromise(currentWorkers : mutable.Map[Int, AddressPair], implicit
       val nextWorkersMap = nextWorkers.toMap
       // set state to superstep
       FutureUtil.callbackOnAllComplete(nextWorkersMap.map(_._2.actorRef).map(_ ? State(GlobalState.SUPERSTEP))) {
-        this.success(nextWorkers)
+        this.success(nextWorkersMap)
       }
     }
   }
@@ -355,9 +358,9 @@ class ElasticityPromise(currentWorkers : mutable.Map[Int, AddressPair], implicit
 
 
 
-  override def future: Future[mutable.Map[Int, AddressPair]] = defaultPromise.future
+  override def future: Future[Map[Int, AddressPair]] = defaultPromise.future
 
-  override def tryComplete(result: Try[mutable.Map[Int, AddressPair]]): Boolean = defaultPromise.tryComplete(result)
+  override def tryComplete(result: Try[Map[Int, AddressPair]]): Boolean = defaultPromise.tryComplete(result)
 
   override def isCompleted: Boolean = defaultPromise.isCompleted
 }

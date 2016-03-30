@@ -33,6 +33,17 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
   protected[this] var _programParameters : ArrayBuffer[(String,String)] = ArrayBuffer.empty
   protected[this] var _outputPath : Option[String] = None
   protected[this] var _isElastic : Boolean = false
+  protected[this] var _isDirected : Option[Boolean] = None
+
+  def directed() : BuilderType = {
+    _isDirected = Some(true)
+    this
+  }
+
+  def undirected() : BuilderType = {
+    _isDirected = Some(true)
+    this
+  }
 
   def elastic() : BuilderType = {
     _isElastic = true
@@ -112,6 +123,11 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
       case None => throw new IllegalArgumentException("Missing output path")
     }
 
+    _isDirected match {
+      case Some(directed) => graphTestInstance.directed(directed)
+      case None => throw new IllegalArgumentException("Directness of graph is missing")
+    }
+
     graphTestInstance.setElastic(_isElastic)
 
     graphTestInstance
@@ -121,10 +137,11 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
 protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinition[String, _,_,_]) {
   import scala.concurrent.ExecutionContext.Implicits.global
 
-
   private[this] val actorSystemName = "JoyGraphTest"
 
+
   protected[this] type Type = JoyGraphLocalInstance
+
   protected[this] var _workers : Int = _
   protected[this] var _dataPath : String = _
   protected[this] var _workerFactory : (Config, ProgramDefinition[String, _,_,_], VertexPartitioner) => Worker[_,_,_] = _
@@ -132,6 +149,8 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
   protected[this] var _partitioner : VertexPartitioner = _
   protected[this] var _programParameters : ArrayBuffer[(String, String)] = _
   protected[this] var _outputPath : String = _
+  protected[this] var _isDirected : Boolean = _
+
   // elasticity
   private[this] var _isElastic = false
   private[this] val finishedLock = new CountDownLatch(1)
@@ -144,7 +163,6 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
   private[this] def addSystem() = {
     finishedCounter.incrementAndGet()
   }
-
   private[this] def waitForFinish() : Unit = {
     finishedLock.await()
   }
@@ -169,8 +187,11 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
       promise.future
     }
   }
+
   private[this] val workerProviderSystem = ActorSystem(actorSystemName)
   private[this] val _workerProviderRef = workerProviderSystem.actorOf(Props(_workerProvider()))
+
+  def directed(directed: Boolean) = _isDirected = directed
 
   def setElastic(isElastic: Boolean) = {
     _isElastic = isElastic
@@ -256,6 +277,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
         workers.initial = ${_workers}
         data.path = "file://${_dataPath}"
         output.path = "file://${_outputPath}"
+        directed = ${_isDirected}
       }
       worker {
         suffix = "worker"

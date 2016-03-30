@@ -17,4 +17,5 @@ case class JobSettings(private val conf : Config) {
   val outputDataLineWriter : Class[_ <: LineWriter] = Class.forName(conf.getString("worker.output.lineWriterClass")).asInstanceOf[Class[LineWriter]]
   val masterSuffix : String = conf.getString("master.suffix")
   val workerSuffix : String = conf.getString("worker.suffix")
+  val isDirected : Boolean = conf.getBoolean("job.directed")
 }
