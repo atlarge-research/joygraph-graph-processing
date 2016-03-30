@@ -79,6 +79,8 @@ abstract class Worker[I,V,E]
  protected[this] var partitioner : VertexPartitioner)
   extends Actor with ActorLogging with MessageCounting with MessageStore with VerticesStore[I,V,E] {
 
+  private[this] val jobSettings = JobSettings(config)
+
   private[this] implicit val messageHandlingExecutionContext = ExecutionContext.fromExecutor(
     ExecutionContextUtil.createForkJoinPoolWithPrefix("worker-akka-message-"),
     (t: Throwable) => {
@@ -88,7 +90,7 @@ abstract class Worker[I,V,E]
   )
 
   private[this] val computationExecutionContext = ExecutionContext.fromExecutor(
-    ExecutionContextUtil.createForkJoinPoolWithPrefix("compute-"),
+    ExecutionContextUtil.createForkJoinPoolWithPrefix("compute-", jobSettings.workerCores),
     (t: Throwable) => {
       log.info("Terminating on exception " + Errors.messageAndStackTraceString(t))
       terminate()
@@ -97,13 +99,12 @@ abstract class Worker[I,V,E]
 
   protected[this] val clazzI : Class[I] = programDefinition.clazzI
   protected[this] val clazzV : Class[V] = programDefinition.clazzV
-  protected[this] val clazzE : Class[E] = programDefinition.clazzE
 
+  protected[this] val clazzE : Class[E] = programDefinition.clazzE
   private[this] var id : Option[Int] = None
   private[this] var workers : Map[Int, AddressPair] = Map.empty
-  private[this] var workerPathsToIndex : Map[ActorRef, Int] = null
 
-  private[this] val jobSettings = JobSettings(config)
+  private[this] var workerPathsToIndex : Map[ActorRef, Int] = null
   private[this] var verticesBufferNew : AsyncSerializer = null
   private[this] var edgeBufferNew : AsyncSerializer = null
   private[this] var dataLoadingDeserializer : AsyncDeserializer = null
@@ -292,62 +293,6 @@ abstract class Worker[I,V,E]
 
     println(s"current INOUT $currentIncomingMessageClass $currentOutgoingMessageClass")
 
-    currentSuperStepFunction match {
-      case combinable : Combinable[Any @unchecked] =>
-        implicit val c = combinable
-        currentSuperStepFunction.messageSenders(
-          (m, dst) => {
-            val index = partitioner.destination(dst)
-            ifMessageToSelf(index) {
-              // could combine but.. it's not over the network
-              _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
-            } {
-              messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
-                messageSender.send(id.get, index, byteBuffer)
-              }
-            }
-          },
-          (v, m) => {
-            v.edges.foreach {
-              case Edge(dst, _) =>
-                val index = partitioner.destination(dst)
-                ifMessageToSelf(index) {
-                  // could combine but.. it's not over the network
-                  _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
-                } {
-                  messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
-                    messageSender.send(id.get, index, byteBuffer)
-                  }
-                }
-            }
-          })
-      case _ =>
-        currentSuperStepFunction.messageSenders(
-          (m, dst) => {
-            val index = partitioner.destination(dst)
-            ifMessageToSelf(index) {
-              _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
-            } {
-              messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-                messageSender.send(id.get, index, byteBuffer)
-              }
-            }
-          },
-          (v, m) => {
-            v.edges.foreach {
-              case Edge(dst, _) =>
-                val index = partitioner.destination(dst)
-                ifMessageToSelf(index) {
-                  _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
-                } {
-                  messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-                    messageSender.send(id.get, index, byteBuffer)
-                  }
-                }
-            }
-          })
-    }
-
     // set current deserializer
     setReusableIterablePool(new SimplePool[ReusableIterable[Any]]({
       val reusableIterable = new ReusableIterable[Any] {
@@ -411,15 +356,77 @@ abstract class Worker[I,V,E]
         log.info(s"Running superstep $superStep")
         def addEdgeVertex : (I, I, E) => Unit = addEdge
 
-        val v : Vertex[I,V,E] = new VertexImpl[I,V,E] {
+        val superStepFunctionPool : SimplePool[SuperStepFunction[I,V,E,_,_]] = new SimplePool[SuperStepFunction[I, V, E, _, _]](
+          {
+            val ssF = vertexProgramInstance.currentSuperStepFunction(superStep)
+            ssF match {
+              case combinable : Combinable[Any @unchecked] =>
+                implicit val c = combinable
+                ssF.messageSenders(
+                  (m, dst) => {
+                    val index = partitioner.destination(dst)
+                    ifMessageToSelf(index) {
+                      // could combine but.. it's not over the network
+                      _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                    } {
+                      messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
+                        messageSender.send(id.get, index, byteBuffer)
+                      }
+                    }
+                  },
+                  (v, m) => {
+                    v.edges.foreach {
+                      case Edge(dst, _) =>
+                        val index = partitioner.destination(dst)
+                        ifMessageToSelf(index) {
+                          // could combine but.. it's not over the network
+                          _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                        } {
+                          messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
+                            messageSender.send(id.get, index, byteBuffer)
+                          }
+                        }
+                    }
+                  })
+              case _ =>
+                ssF.messageSenders(
+                  (m, dst) => {
+                    val index = partitioner.destination(dst)
+                    ifMessageToSelf(index) {
+                      _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                    } {
+                      messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                        messageSender.send(id.get, index, byteBuffer)
+                      }
+                    }
+                  },
+                  (v, m) => {
+                    v.edges.foreach {
+                      case Edge(dst, _) =>
+                        val index = partitioner.destination(dst)
+                        ifMessageToSelf(index) {
+                          _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                        } {
+                          messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                            messageSender.send(id.get, index, byteBuffer)
+                          }
+                        }
+                    }
+                  })
+            }
+            ssF
+          }
+        )
+
+        val simpleVertexInstancePool = new SimplePool[Vertex[I,V,E]](new VertexImpl[I,V,E] {
           override def addEdge(dst: I, e: E): Unit = {
             addEdgeVertex(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
           }
-        }
+        })
 
         allHalted = true
 
-        vertices.foreach { vId =>
+        parVertices.foreach { vId =>
           val vMessages = messages(vId, currentIncomingMessageClass)
           val vHalted = halted(vId)
           val hasMessage = vMessages.nonEmpty
@@ -427,12 +434,19 @@ abstract class Worker[I,V,E]
             val value : V = vertexValue(vId)
             val edgesIterable : Iterable[Edge[I,E]] = edges(vId)
             val mutableEdgesIterable : Iterable[Edge[I,E]] = mutableEdges(vId)
+            // get vertex impl
+            val v : Vertex[I,V,E] = simpleVertexInstancePool.borrow()
             v.load(vId, value, edgesIterable, mutableEdgesIterable)
 
-            val hasHalted = currentSuperStepFunction(v, vMessages)
+            // get superstepfunction instance
+            val superStepFunctionInstance = superStepFunctionPool.borrow()
+            val hasHalted = superStepFunctionInstance(v, vMessages)
+            // release superstepfunction instance
+            superStepFunctionPool.release(superStepFunctionInstance)
             setVertexValue(vId, v.value)
             setHalted(vId, hasHalted)
-
+            simpleVertexInstancePool.release(v)
+            // release vertex impl
             if (!hasHalted) {
               allHalted = false
             }
