@@ -5,6 +5,43 @@ import io.joygraph.core.program.{HomogeneousVertexProgram, NullClass, Vertex}
 
 import scala.collection.mutable
 
+class UWCC extends HomogeneousVertexProgram[Long, Long, NullClass, Long] {
+  /**
+    * Load parameters from vertex program
+    *
+    * @param conf
+    */
+  override def load(conf: Config): Unit = {
+
+  }//noop
+
+  /**
+    * @param v
+    * @return true if halting, false if not halting
+    */
+  override def run(v: Vertex[Long, Long, NullClass], messages: Iterable[Long], superStep: Int)(implicit send: (Long, Long) => Unit, sendAll: (Long) => Unit): Boolean = {
+    // Weakly connected components algorithm treats a directed graph as undirected, so we create the missing edges
+    if (superStep == 0) {
+      val minId = if (v.edges.isEmpty) v.id else v.edges.minBy[Long](_.dst).dst
+      v.value = math.min(v.id, minId)
+      if (minId != v.id) {
+        sendAll(v.value)
+      }
+      true
+    }
+    else {
+      val currentComponent: Long = v.value
+      val candidateComponent = messages.min
+      if (candidateComponent < currentComponent) {
+        v.value = candidateComponent
+        sendAll(candidateComponent)
+      }
+      true
+    }
+  }
+
+}
+
 class DWCC extends HomogeneousVertexProgram[Long, Long, NullClass, Long] {
   /**
     * Load parameters from vertex program

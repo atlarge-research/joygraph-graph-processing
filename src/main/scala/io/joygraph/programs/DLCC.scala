@@ -8,6 +8,60 @@ import io.joygraph.core.util.LazySize
 
 import scala.collection.mutable
 
+class ULCC extends NewVertexProgram[Long, Double, NullClass] {
+  override def load(conf: Config): Unit = {}
+
+  // TODO neighbours creates a lot of garbage, maybe replace with something else
+  private[this] val neighbours = mutable.HashSet.empty[Long]
+
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, NullClass, _, _]] = {
+    case 0 =>
+      new SuperStepFunction(this, classOf[Long], classOf[Inquiry]) {
+        override def func: (Vertex[Long, Double, NullClass], Iterable[Long]) => Boolean = (v, m) => {
+          neighbours.clear()
+          v.edges.foreach(x => neighbours += x.dst)
+          if (neighbours.size > 1) {
+            val nArray: Array[Long] = neighbours.toArray
+            neighbours.foreach(dst => send(Inquiry(v.id, nArray), dst))
+          }
+          v.value = neighbours.size
+          false
+        }
+      }
+    case 1 =>
+      new SuperStepFunction(this, classOf[Inquiry], classOf[Int]) {
+        override def func: (Vertex[Long, Double, NullClass], Iterable[Inquiry]) => Boolean = (v, m) => {
+          neighbours.clear()
+          v.edges.foreach(x => neighbours += x.dst)
+          m.foreach {
+            case Inquiry(dst, edgeList) =>
+              var matchCount = 0
+              edgeList.foreach(edge => {
+                if (neighbours.contains(edge)) {
+                  matchCount += 1
+                }
+              })
+              send(matchCount, dst)
+          }
+          false
+        }
+      }
+    case 2 =>
+      new SuperStepFunction(this, classOf[Int], classOf[NullClass]) {
+        override def func: (Vertex[Long, Double, NullClass], Iterable[Int]) => Boolean = (v, m) => {
+          if (LazySize.sizeSmallerThan(m, 2)) {
+            v.value = 0.0
+          } else {
+            val numMatches: Long = m.sum
+            val numNeighbours = v.value
+            v.value = numMatches / numNeighbours / (numNeighbours - 1)
+          }
+          true
+        }
+      }
+  }
+}
+
 class DLCC extends NewVertexProgram[Long, Double, NullClass] {
   override def load(conf: Config): Unit = {}
 

@@ -15,6 +15,28 @@ class BFSTest extends FunSuite {
     val source_id = "99843"
 //  val file = "/home/sietse/cit-Patents-edge.txt"
 //  val source_id = "4949326"
+//  val file = "/home/sietse/dota-league.e"
+//  val source_id = "287770"
+
+  test("DLCC elastic test") {
+    val programDefinition = new DLCCEdgeListDefinition
+    val instance = JoyGraphLocalInstanceBuilder(programDefinition)
+      .masterFactory((jobConfig, cluster) => {
+        val master = new Master(jobConfig, cluster) with HadoopMaster
+        Master.initialize(master)})
+      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
+      //      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithTrieMapMessageStore(config, programDefinition, partitioner))
+      //      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStoreWithVerticesStore(config, programDefinition, partitioner))
+      //            .workerFactory((config, programDefinition, partitioner) => Worker.workerWithTrieMapMessageStoreWithSerializedVerticesStore(config, programDefinition, partitioner))
+      .vertexPartitioner(new VertexHashPartitioner())
+      .dataPath(file)
+      .numWorkers(1)
+      .outputPath("/home/sietse/outputPathELASTICLCC")
+      .elastic()
+      .directed()
+      .build()
+    instance.run()
+  }
 
   test("DCDLP test") {
     val programDefinition = new DCDLPEdgeListDefinition
@@ -29,6 +51,7 @@ class BFSTest extends FunSuite {
       .dataPath(file)
       .numWorkers(16)
       .outputPath("/home/sietse/outputPathDCDLP2")
+      .directed()
       .build()
     instance.run()
   }
@@ -39,13 +62,14 @@ class BFSTest extends FunSuite {
       .masterFactory((jobConfig, cluster) => {
         val master = new Master(jobConfig, cluster) with HadoopMaster
         Master.initialize(master)})
-      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
-//      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithTrieMapMessageStore(config, programDefinition, partitioner))
+//      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
+      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithTrieMapMessageStore(config, programDefinition, partitioner))
 //      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStoreWithVerticesStore(config, programDefinition, partitioner))
 //            .workerFactory((config, programDefinition, partitioner) => Worker.workerWithTrieMapMessageStoreWithSerializedVerticesStore(config, programDefinition, partitioner))
       .vertexPartitioner(new VertexHashPartitioner())
       .dataPath(file)
-      .numWorkers(1)
+      .numWorkers(4)
+      .directed()
       .outputPath("/home/sietse/outputPathLCC")
       .build()
     instance.run()
@@ -62,6 +86,7 @@ class BFSTest extends FunSuite {
       .dataPath(file)
       .programParameters(("source_id", source_id))
       .numWorkers(4)
+      .directed()
       .outputPath("/home/sietse/outputPath")
       .build()
     instance.run()
@@ -78,6 +103,7 @@ class BFSTest extends FunSuite {
       .dataPath(file)
       .programParameters(("source_id", source_id))
       .numWorkers(4)
+      .directed()
       .outputPath("/home/sietse/outputPath")
       .build()
     instance.run()
@@ -94,6 +120,7 @@ class BFSTest extends FunSuite {
       .dataPath(file)
       .programParameters(("none", "none"))
       .numWorkers(4)
+      .directed()
       .outputPath("/home/sietse/outputPath")
       .build()
     instance.run()
@@ -111,6 +138,7 @@ class BFSTest extends FunSuite {
       .programParameters(("dampingFactor", "0.9"))
       .programParameters(("numIterations", "2"))
       .numWorkers(4)
+      .directed()
       .outputPath("/home/sietse/outputPath5")
       .build()
     instance.run()
@@ -136,35 +164,37 @@ class BFSTest extends FunSuite {
       .dataPath(file)
       .programParameters(("source_id", source_id))
       .numWorkers(1)
+      .directed()
       .outputPath("/home/sietse/outputPath")
       .build()
     instance.run()
   }
-//
-//  test("BreadthFirstSearch combinable test") {
-//    val instance = JoyGraphLocalInstanceBuilder(
-//      ProgramDefinition(
-//        (l) => {
-//          val s = l.split("\\s")
-//          (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
-//        },
-//        (v : Vertex[_,_,_], outputStream) => {
-//          outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8))
-//        },
-//        classOf[BFSCombinable]
-//      ))
-//      .masterFactory((jobConfig, cluster) => {
-//        val master = new Master(jobConfig, cluster) with HadoopMaster
-//        Master.initialize(master)})
-//      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
-//      .vertexPartitioner(new VertexHashPartitioner())
-//      .dataPath(file)
-//      .programParameters(("source_id", source_id))
-//      .numWorkers(2)
-//      .outputPath("/home/sietse/outputPath")
-//      .build()
-//    instance.run()
-//  }
+
+  test("BreadthFirstSearch combinable test") {
+    val instance = JoyGraphLocalInstanceBuilder(
+      ProgramDefinition(
+        (l) => {
+          val s = l.split("\\s")
+          (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
+        },
+        (v : Vertex[_,_,_], outputStream) => {
+          outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8))
+        },
+        classOf[BFSCombinable]
+      ))
+      .masterFactory((jobConfig, cluster) => {
+        val master = new Master(jobConfig, cluster) with HadoopMaster
+        Master.initialize(master)})
+      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
+      .vertexPartitioner(new VertexHashPartitioner())
+      .dataPath(file)
+      .programParameters(("source_id", source_id))
+      .numWorkers(2)
+      .directed()
+      .outputPath("/home/sietse/outputPath")
+      .build()
+    instance.run()
+  }
 
   test("BreadthFirstSearch aggregatable test") {
     val instance = JoyGraphLocalInstanceBuilder(
@@ -186,6 +216,7 @@ class BFSTest extends FunSuite {
       .dataPath(file)
       .programParameters(("source_id", source_id))
       .numWorkers(2)
+      .directed()
       .outputPath("/home/sietse/outputPath")
       .build()
     instance.run()
