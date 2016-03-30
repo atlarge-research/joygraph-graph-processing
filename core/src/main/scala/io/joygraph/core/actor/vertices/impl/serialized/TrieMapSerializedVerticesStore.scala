@@ -14,6 +14,7 @@ import io.joygraph.core.util.{DirectByteBufferGrowingOutputStream, KryoSerializa
 
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.parallel.ParIterable
 
 trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with KryoSerialization {
 
@@ -107,6 +108,10 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
 
 
   override protected[this] def numEdges: Int = numEdgesCounter.intValue()
+
+  protected[this] def parVertices : ParIterable[I] = {
+    _vEdges.par.keys
+  }
 
   override protected[this] def vertices: Iterable[I] = new Iterable[I] {
     override def iterator: Iterator[I] = _vEdges.keysIterator

@@ -6,6 +6,7 @@ import io.joygraph.core.program.{Edge, NullClass}
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
 
+import scala.collection.parallel.ParIterable
 import scala.concurrent.{ExecutionContext, Future}
 
 
@@ -116,6 +117,7 @@ trait VerticesStore[I,V,E] {
   protected[this] def edges(vId : I) : Iterable[Edge[I,E]]
   protected[this] def mutableEdges(vId : I) : Iterable[Edge[I,E]]
   protected[this] def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]])
+  protected[this] def parVertices : ParIterable[I]
   protected[this] def vertices : Iterable[I]
   protected[this] def halted(vId : I) : Boolean
   protected[this] def vertexValue(vId : I) : V

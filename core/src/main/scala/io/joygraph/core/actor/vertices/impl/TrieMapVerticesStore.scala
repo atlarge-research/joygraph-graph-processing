@@ -7,6 +7,7 @@ import io.joygraph.core.program.Edge
 
 import scala.collection.JavaConversions._
 import scala.collection.concurrent.TrieMap
+import scala.collection.parallel.ParIterable
 
 trait TrieMapVerticesStore[I,V,E] extends VerticesStore[I,V,E] {
 
@@ -32,6 +33,10 @@ trait TrieMapVerticesStore[I,V,E] extends VerticesStore[I,V,E] {
   protected[this] def edges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
 
   protected[this] def mutableEdges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
+
+  protected[this] def parVertices : ParIterable[I] = {
+    _vEdges.par.keys
+  }
 
   protected[this] def vertices : Iterable[I] = new Iterable[I] {
     override def iterator: Iterator[I] = _vEdges.keysIterator
