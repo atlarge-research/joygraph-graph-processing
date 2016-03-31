@@ -98,11 +98,10 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     }) {
       workerIdAddressMap = workerIdAddressMapBuilder.toMap
       log.info("Distributing ActorRefs")
-      val masterPath = cluster.selfAddress.toString + "/user/" + jobSettings.masterSuffix
       val actorSelections: Iterable[ActorRef] = allWorkers().map(_.actorRef)
 
       // TODO the worker sometimes sends a null reference as the actorRef field in AddressPair, this will result in a nullpointer exception
-      FutureUtil.callbackOnAllComplete(sendMasterAddress(actorSelections, masterPath)) {
+      FutureUtil.callbackOnAllComplete(sendMasterAddress(actorSelections)) {
         FutureUtil.callbackOnAllComplete(sendMapping(actorSelections)) {
           sendPaths(actorSelections, jobSettings.dataPath)
           initialized = true
@@ -114,7 +113,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   def allWorkers() = workerIdAddressMap.values
 
-  def sendMasterAddress(actorRefs : Iterable[ActorRef], masterPath : String) = {
+  def sendMasterAddress(actorRefs : Iterable[ActorRef]) : Iterable[Future[Boolean]] = {
     log.info("Sending master address")
     actorRefs.map(x => (x ? MasterAddress(self)).mapTo[Boolean])
   }
