@@ -18,8 +18,7 @@ class PageRank extends HomogeneousVertexProgram[Long, Double, NullClass, Double]
   private[this] var lastDanglingNodeSum : Double = _
 
   override def preSuperStep(): Unit = {
-    lastDanglingNodeSum = aggregatedValue[Double](PageRank.DANGLINGNODESUM_AGG_NAME)
-    println("worker dangling sum111 " + lastDanglingNodeSum)
+    lastDanglingNodeSum = previousStepAggregatedValue[Double](PageRank.DANGLINGNODESUM_AGG_NAME)
   }
 
   override protected[this] def initializeAggregators(): Unit = {
