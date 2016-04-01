@@ -1,5 +1,5 @@
 package io.joygraph.core.message.superstep
 
-case class PrepareSuperStep(numVertices : Long, numEdges : Long) {
+case class PrepareSuperStep(totalNumVertices : Long, totalNumEdges : Long) {
 
 }

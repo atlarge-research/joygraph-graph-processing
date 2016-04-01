@@ -38,6 +38,13 @@ abstract class NewVertexProgram[I,V,E] {
   def totalNumVertices = _numVertices
   def totalNumEdges(numEdges : Long) = _numEdges = numEdges
   def totalNumEdges = _numEdges
+  def newInstance(conf : Config) : NewVertexProgram[I,V,E] = {
+    val instance = this.getClass.newInstance()
+    instance.load(conf)
+    instance.totalNumVertices(this.totalNumVertices)
+    instance.totalNumEdges(this.totalNumEdges)
+    instance.asInstanceOf[NewVertexProgram[I,V,E]]
+  }
 
   def preSuperStep() : Unit = {}
   def currentSuperStepFunction(superStep : Int) : SuperStepFunction[I,V,E,_,_] = run().lift(superStep).get

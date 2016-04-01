@@ -34,14 +34,14 @@ class CombinableAsyncSerializer[I]
     _kryoOutputs.getOrElseUpdate(index, new KryoOutput(4096, 4096))
   }
 
-  def serialize[M](index : Int, i: I, m : M, messageSerializer : (Kryo, KryoOutput, M) => Any, messageDeserializer : (Kryo, ByteBufferInput) => M)(outputHandler : ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext, combinable : Combinable[M]) : Unit = {
+  def serialize[M](index : ThreadId, workerId : WorkerId, i: I, m : M, messageSerializer : (Kryo, KryoOutput, M) => Any, messageDeserializer : (Kryo, ByteBufferInput) => M)(outputHandler : ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext, combinable : Combinable[M]) : Unit = {
     implicit val kryo = kryos(index)
-    kryo.synchronized {
-      val combinerBuffer = combinerBuffers(index)
-      implicit val kryoOutput = kryoOutputs(index)
-      implicit val byteBufferInput = byteBufferInputs(index)
+    val combinerBuffer = combinerBuffers(workerId)
+    combinerBuffer.synchronized{
+      implicit val kryoOutput = kryoOutputs(workerId)
+      implicit val byteBufferInput = byteBufferInputs(workerId)
       if (!combinerBuffer.add(i,m, combinable.combine, messageSerializer, messageDeserializer)) {
-        val buffer = buffers(index)
+        val buffer = buffers(workerId)
         // fill the byteBufferInputs
         combinerBuffer.asByteBuffers().foreach {
           bb =>
@@ -53,16 +53,12 @@ class CombinableAsyncSerializer[I]
         combinerBuffer.clear()
 
         buffer.writeCounter()
-        // switch send buffer
-        val bufferSwap = bufferSwaps(index)
-        val osSwap = bufferSwap.take()
-        returnBuffers(index, osSwap)
 
         outputHandler(buffer.handOff()).foreach { _ =>
           // reset the osSwap, it's been used and needs to be set to pos 0
           buffer.resetOOS()
           // buffers in bufferswap are now clean!
-          bufferSwap.add(buffer)
+          returnBuffers(workerId, buffer)
         } // sweet I got it back
 
         assert(combinerBuffer.add(i,m, combinable.combine, messageSerializer, messageDeserializer))
@@ -83,6 +79,9 @@ class CombinableAsyncSerializer[I]
       combinerBuffer.clear()
 
       buffer.writeCounter()
-      outputHandler((buffer.handOff(), index)).foreach(_ => buffers(index).resetOOS())
+      outputHandler((buffer.handOff(), index)).foreach(_ => {
+        buffer.resetOOS()
+        returnBuffers(index, buffer)
+      })
   }
 }

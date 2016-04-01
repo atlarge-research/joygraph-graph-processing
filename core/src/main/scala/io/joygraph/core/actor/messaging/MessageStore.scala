@@ -7,14 +7,15 @@ import com.esotericsoftware.kryo.io.Input
 import io.joygraph.core.util.SimplePool
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.collection.ReusableIterable
+import io.joygraph.core.util.concurrency.Types
 import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
 
 import scala.concurrent.{ExecutionContext, Future}
 
-trait MessageStore {
+trait MessageStore extends Types {
 
   protected[this] def importCurrentMessagesData[I, M]
-  (index : Int,
+  (index : ThreadId,
    is : ObjectByteBufferInputStream,
    messagesDeserializer : AsyncDeserializer,
    deserializer : (Kryo, Input) => (I, Any),
@@ -30,11 +31,11 @@ trait MessageStore {
     }
   }
 
-  protected[this] def exportAndRemoveMessages[I,M](vId : I, clazzM : Class[M], index : Int, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext) = {
+  protected[this] def exportAndRemoveMessages[I,M](vId : I, clazzM : Class[M], threadId : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext) = {
     val vMessages = nextMessages(vId, clazzM)
     if (vMessages.nonEmpty) {
       vMessages.foreach{ m =>
-        asyncSerializer.serialize[M](index, m, (kryo, output, o) => {
+        asyncSerializer.serialize[M](threadId, workerId, m, (kryo, output, o) => {
           kryo.writeObject(output, vId)
           kryo.writeObject(output, o)
         })(outputHandler)

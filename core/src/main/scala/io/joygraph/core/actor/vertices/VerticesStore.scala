@@ -4,13 +4,14 @@ import java.nio.ByteBuffer
 
 import io.joygraph.core.program.{Edge, NullClass}
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
+import io.joygraph.core.util.concurrency.Types
 import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
 
 import scala.collection.parallel.ParIterable
 import scala.concurrent.{ExecutionContext, Future}
 
 
-trait VerticesStore[I,V,E] {
+trait VerticesStore[I,V,E] extends Types {
 
   protected[this] val clazzI : Class[I]
   protected[this] val clazzE : Class[E]
@@ -70,21 +71,21 @@ trait VerticesStore[I,V,E] {
     * @param vId
     */
   protected[this] def exportHaltedState
-  (vId : I, index : Int, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext) = {
+  (vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext) = {
     val vHalted = halted(vId)
     if (vHalted) {
       // value of halted is implicit
-      asyncSerializer.serialize[I](index, vId, (kryo, output, o) => {
+      asyncSerializer.serialize[I](index, workerId, vId, (kryo, output, o) => {
         kryo.writeObject(output, o)
       })(outputHandler)
     }
   }
 
-  protected[this] def exportValue(vId : I, index : Int, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
+  protected[this] def exportValue(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
     val vValue : V = vertexValue(vId)
     Option(vValue) match {
       case Some(vValue) =>
-        asyncSerializer.serialize[(I, V)](index, (vId, vValue), (kryo, output, o) => {
+        asyncSerializer.serialize[(I, V)](index, workerId, (vId, vValue), (kryo, output, o) => {
           kryo.writeObject(output, o._1)
           kryo.writeObject(output, o._2)
         })(outputHandler)
@@ -93,15 +94,15 @@ trait VerticesStore[I,V,E] {
     }
   }
 
-  protected[this] def exportId(vId : I, index : Int, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
-    asyncSerializer.serialize[I](index, vId, (kryo, output, o) => {
+  protected[this] def exportId(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
+    asyncSerializer.serialize[I](index, workerId, vId, (kryo, output, o) => {
       kryo.writeObject(output, vId)
     })(outputHandler)
   }
 
-  protected[this] def exportEdges(vId : I, index : Int, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
+  protected[this] def exportEdges(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
     edges(vId).foreach{ edge =>
-      asyncSerializer.serialize[Edge[I,E]](index, edge, (kryo, output, o) => {
+      asyncSerializer.serialize[Edge[I,E]](index, workerId, edge, (kryo, output, o) => {
         kryo.writeObject(output, vId)
         kryo.writeObject(output, o.dst)
         if (!isNullClass) {
@@ -123,6 +124,6 @@ trait VerticesStore[I,V,E] {
   protected[this] def vertexValue(vId : I) : V
   protected[this] def setVertexValue(vId : I, v : V)
   protected[this] def setHalted(vId : I, halted : Boolean)
-  protected[this] def numVertices : Int
-  protected[this] def numEdges : Int
+  protected[this] def localNumVertices : Int
+  protected[this] def localNumEdges : Int
 }

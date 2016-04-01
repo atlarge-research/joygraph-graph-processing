@@ -1,9 +1,9 @@
 package io.joygraph.core.actor
 
+import java.lang.Thread.UncaughtExceptionHandler
 import java.nio.ByteBuffer
 
 import akka.actor._
-import akka.util.ByteString
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{ByteBufferInput, Input, Output}
 import com.typesafe.config.Config
@@ -27,6 +27,7 @@ import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStr
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer, CombinableAsyncSerializer}
 
+import scala.collection.concurrent.TrieMap
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -84,17 +85,25 @@ abstract class Worker[I,V,E]
   private[this] implicit val messageHandlingExecutionContext = ExecutionContext.fromExecutor(
     ExecutionContextUtil.createForkJoinPoolWithPrefix("worker-akka-message-"),
     (t: Throwable) => {
-      log.info("Terminating on exception " + Errors.messageAndStackTraceString(t))
+      log.info("Terminating on exception\n" + Errors.messageAndStackTraceString(t))
       terminate()
     }
   )
 
-  private[this] val computationExecutionContext = ExecutionContext.fromExecutor(
-    ExecutionContextUtil.createForkJoinPoolWithPrefix("compute-", jobSettings.workerCores),
-    (t: Throwable) => {
-      log.info("Terminating on exception " + Errors.messageAndStackTraceString(t))
-      terminate()
+  private[this] val computationNonFatalReporter: (Throwable) => Unit = (t: Throwable) => {
+    log.info("Terminating on exception\n" + Errors.messageAndStackTraceString(t))
+    terminate()
+  }
+  private[this] val computationUncaughtExceptionHandler = new UncaughtExceptionHandler {
+    override def uncaughtException(t: Thread, e: Throwable): Unit = {
+      log.info("uncaught exception")
+      computationNonFatalReporter(e)
     }
+  }
+  private[this] val computationFjPool = ExecutionContextUtil.createForkJoinPoolWithPrefix("compute-", jobSettings.workerCores, computationUncaughtExceptionHandler)
+  private[this] val computationExecutionContext = ExecutionContext.fromExecutor(
+    computationFjPool,
+    computationNonFatalReporter
   )
 
   protected[this] val clazzI : Class[I] = programDefinition.clazzI
@@ -149,16 +158,19 @@ abstract class Worker[I,V,E]
   }
 
   private[this] def handleDataLoadingNetty(byteBuffer : ByteBuffer): Unit = {
-    val index = byteBuffer.getInt()
-    _handleDataLoading(index, byteBuffer)
-    workers(index).actorRef ! Received()
+    val workerId = byteBuffer.getInt()
+    val threadId = ThreadId.getMod(jobSettings.nettyWorkers)
+    _handleDataLoading(threadId, byteBuffer)
+    workers(workerId).actorRef ! Received()
   }
 
   private[this] def handleSuperStepNetty(byteBuffer: ByteBuffer) = {
     try {
-      val index = byteBuffer.getInt()
-      _handleSuperStep(index, byteBuffer)
-      workers(index).actorRef ! Received()
+      val workerId = byteBuffer.getInt()
+      val threadId = ThreadId.getMod(jobSettings.nettyWorkers)
+      log.info(s"${id.get} received superstep message from $workerId with size ${byteBuffer.remaining()} of type ${currentOutgoingMessageClass}")
+      _handleSuperStep(threadId, byteBuffer)
+      workers(workerId).actorRef ! Received()
     } catch { case t : Throwable => t.printStackTrace()
     }
   }
@@ -173,38 +185,25 @@ abstract class Worker[I,V,E]
     }
   }
 
-  private[this] def handleSuperStepAkka(senderRef : ActorRef, byteString : ByteString) = {
-    Future {
-      // we only copy the buffer because Akka does not allow mutability by design
-      val byteBuffer = ByteBuffer.allocate(byteString.size)
-      val numCopied = byteString.copyToBuffer(byteBuffer)
-      byteBuffer.flip()
-      println(byteBuffer.order())
-      val index = workerPathsToIndex(senderRef)
-      println(s"received from $index size: ${byteString.size} numCopied: $numCopied")
-      _handleSuperStep(index, byteBuffer)
-      println(s"$id sending reply to $index")
-      senderRef ! Received()
-    }
-  }
-
   private[this] def addData(src :I, dst : I, value : E) = {
-    val index : Int = partitioner.destination(src)
-    val index2 : Int = partitioner.destination(dst)
-    ifMessageToSelf(index) {
+    val srcWorkerId : Int = partitioner.destination(src)
+    val dstWorkerId : Int = partitioner.destination(dst)
+    // TODO pick correct pool
+    val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+    ifMessageToSelf(srcWorkerId) {
       addEdge(src, dst, value)
     } {
-      edgeBufferNew.serialize(index, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
-        println(s"- sending to $index, size: ${byteBuffer.position()}")
-        messageSender.send(id.get, index, byteBuffer)
+      edgeBufferNew.serialize(threadId, srcWorkerId, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
+        println(s"- sending to $srcWorkerId, size: ${byteBuffer.position()}")
+        messageSender.send(id.get, srcWorkerId, byteBuffer)
       }
     }
-    ifMessageToSelf(index2) {
+    ifMessageToSelf(dstWorkerId) {
       addVertex(dst)
     } {
-      verticesBufferNew.serialize(index2, dst, vertexSerializer) { implicit byteBuffer =>
-        println(s"- sending to $index2, size: ${byteBuffer.position()}")
-        messageSender.send(id.get, index2, byteBuffer)
+      verticesBufferNew.serialize(threadId, dstWorkerId, dst, vertexSerializer) { implicit byteBuffer =>
+        println(s"- sending to $dstWorkerId, size: ${byteBuffer.position()}")
+        messageSender.send(id.get, dstWorkerId, byteBuffer)
       }
     }
   }
@@ -230,14 +229,14 @@ abstract class Worker[I,V,E]
           }
         }
 
-        verticesBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, index : Int) =>
-          println(s"final sending to $index, size: ${byteBuffer.position()}")
-          messageSender.send(id.get, index, byteBuffer)
+        verticesBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
+          println(s"final sending to $workerId, size: ${byteBuffer.position()}")
+          messageSender.send(id.get, workerId, byteBuffer)
         })
 
-        edgeBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, index : Int) =>
-          println(s"final sending to $index, size: ${byteBuffer.position()}")
-          messageSender.send(id.get, index, byteBuffer)
+        edgeBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
+          println(s"final sending to $workerId, size: ${byteBuffer.position()}")
+          messageSender.send(id.get, workerId, byteBuffer)
         })
         sendingComplete()
         loadingCompleteTrigger()
@@ -246,11 +245,9 @@ abstract class Worker[I,V,E]
       incrementReceived()
       loadingCompleteTrigger()
     case AllLoadingComplete() =>
-      println(s"taking edges: ${edgeBufferNew.timeSpentTaking} " +
-        s"taking vertices: ${verticesBufferNew.timeSpentTaking}")
       println(s"serializing edges: ${edgeBufferNew.timeSpent.get() / 1000}s " +
         s"vertices: ${verticesBufferNew.timeSpent.get() / 1000}s")
-      master() ! LoadingComplete(id.get, numVertices, numEdges)
+      master() ! LoadingComplete(id.get, localNumVertices, localNumEdges)
   }
 
   protected[this] def loadingCompleteTrigger(): Unit = {
@@ -281,8 +278,8 @@ abstract class Worker[I,V,E]
   private[this] def currentIncomingMessageClass : Class[_] = currentSuperStepFunction.clazzIn
   private[this] def currentOutgoingMessageClass : Class[_] = currentSuperStepFunction.clazzOut
 
-  private[this] def ifMessageToSelf(index : Int)(any : => Unit)(otherwise : => Unit) : Unit = {
-    if (index == id.get) {
+  private[this] def ifMessageToSelf(workerId : Int)(any : => Unit)(otherwise : => Unit) : Unit = {
+    if (workerId == id.get) {
       any
     } else {
       otherwise
@@ -304,38 +301,40 @@ abstract class Worker[I,V,E]
       reusableIterable
     }))
 
-    // last chance to retrieve aggregator
-    vertexProgramInstance.preSuperStep()
-    // possibly resetting aggregator
     vertexProgramInstance match {
       case aggregatable : Aggregatable => {
+        // cache saved values
+        aggregatable.saveAggregatedValues()
+
+        // possibly resetting aggregator
         aggregatable.aggregators().values.foreach(_.workerPrepareStep())
       }
       case _ =>
         // noop
     }
+    // preSuperStep can still access saved aggregated values
+    vertexProgramInstance.preSuperStep()
   }
 
   private[this] def barrier(superStep : Int): Unit = {
     prepareSuperStep(superStep)
   }
 
+  private[this] def initializeProgram(program : NewVertexProgram[I,V,E], totalNumVertices : Long, totalNumEdges : Long) = {
+    program.load(config)
+    program.totalNumVertices(totalNumVertices)
+    program.totalNumEdges(totalNumEdges)
+    program match {
+      case aggregatable: Aggregatable => {
+        aggregatable.workerInitializeAggregators()
+      }
+      case _ =>
+    }
+  }
+
   private[this] val RUN_SUPERSTEP : PartialFunction[Any, Unit] = {
     case PrepareSuperStep(numVertices, numEdges) =>
-      vertexProgramInstance match {
-        case program: NewVertexProgram[I, V, E] =>
-          program.load(config)
-          program.totalNumVertices(numVertices)
-          program.totalNumEdges(numEdges)
-          vertexProgramInstance match {
-            case aggregatable: Aggregatable => {
-              aggregatable.workerInitializeAggregators()
-            }
-            case _ =>
-          }
-        case _ =>
-      }
-
+      initializeProgram(vertexProgramInstance, numVertices, numEdges)
       prepareSuperStep(0)
       sender() ! true
     case DoBarrier(superStep, globalAggregatedValues) => {
@@ -358,32 +357,45 @@ abstract class Worker[I,V,E]
 
         val superStepFunctionPool : SimplePool[SuperStepFunction[I,V,E,_,_]] = new SimplePool[SuperStepFunction[I, V, E, _, _]](
           {
-            val ssF = vertexProgramInstance.currentSuperStepFunction(superStep)
+            // TODO this flow should be described.
+            val clonedVertexInstance = vertexProgramInstance.newInstance(config)
+            clonedVertexInstance match {
+              case aggregatable : Aggregatable =>
+                aggregatable.copyReferencesFrom(vertexProgramInstance.asInstanceOf[Aggregatable])
+              case _ =>
+                // noop
+            }
+            clonedVertexInstance.preSuperStep()
+            // TODO this flow should be described, aggregated values are available
+
+            val ssF = clonedVertexInstance.currentSuperStepFunction(superStep)
             ssF match {
               case combinable : Combinable[Any @unchecked] =>
                 implicit val c = combinable
                 ssF.messageSenders(
                   (m, dst) => {
-                    val index = partitioner.destination(dst)
-                    ifMessageToSelf(index) {
+                    val workerId = partitioner.destination(dst)
+                    val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+                    ifMessageToSelf(workerId) {
                       // could combine but.. it's not over the network
-                      _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                      _handleMessage(threadId, (dst,m), clazzI, currentOutgoingMessageClass)
                     } {
-                      messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
-                        messageSender.send(id.get, index, byteBuffer)
+                      messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
+                        messageSender.send(id.get, workerId, byteBuffer)
                       }
                     }
                   },
                   (v, m) => {
                     v.edges.foreach {
                       case Edge(dst, _) =>
-                        val index = partitioner.destination(dst)
-                        ifMessageToSelf(index) {
+                        val workerId = partitioner.destination(dst)
+                        val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+                        ifMessageToSelf(workerId) {
                           // could combine but.. it's not over the network
-                          _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                          _handleMessage(threadId, (dst,m), clazzI, currentOutgoingMessageClass)
                         } {
-                          messagesCombinableSerializer.serialize(index, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
-                            messageSender.send(id.get, index, byteBuffer)
+                          messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
+                            messageSender.send(id.get, workerId, byteBuffer)
                           }
                         }
                     }
@@ -391,24 +403,28 @@ abstract class Worker[I,V,E]
               case _ =>
                 ssF.messageSenders(
                   (m, dst) => {
-                    val index = partitioner.destination(dst)
-                    ifMessageToSelf(index) {
-                      _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                    val workerId = partitioner.destination(dst)
+                    val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+                    ifMessageToSelf(workerId) {
+                      _handleMessage(threadId, (dst,m), clazzI, currentOutgoingMessageClass)
                     } {
-                      messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-                        messageSender.send(id.get, index, byteBuffer)
+                      messagesSerializer.serialize(threadId, workerId, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                        log.info(s"${id.get} sending message to $workerId of size ${byteBuffer.position()} of type ${m.getClass}")
+                        messageSender.send(id.get, workerId, byteBuffer)
                       }
                     }
                   },
                   (v, m) => {
                     v.edges.foreach {
                       case Edge(dst, _) =>
-                        val index = partitioner.destination(dst)
-                        ifMessageToSelf(index) {
-                          _handleMessage(index, (dst,m), clazzI, currentOutgoingMessageClass)
+                        val workerId = partitioner.destination(dst)
+                        val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+                        ifMessageToSelf(workerId) {
+                          _handleMessage(threadId, (dst,m), clazzI, currentOutgoingMessageClass)
                         } {
-                          messagesSerializer.serialize(index, (dst, m), messagePairSerializer) { implicit byteBuffer =>
-                            messageSender.send(id.get, index, byteBuffer)
+                          messagesSerializer.serialize(threadId, workerId, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                            log.info(s"${id.get} sending message to $workerId of size ${byteBuffer.position()} of type ${m.getClass}")
+                            messageSender.send(id.get, workerId, byteBuffer)
                           }
                         }
                     }
@@ -459,12 +475,13 @@ abstract class Worker[I,V,E]
 
         currentSuperStepFunction match {
           case combinable : Combinable[_] =>
-            messagesCombinableSerializer.sendNonEmptyByteBuffers{ case (byteBuffer : ByteBuffer, index : Int) =>
-              messageSender.send(id.get, index, byteBuffer)
+            messagesCombinableSerializer.sendNonEmptyByteBuffers{ case (byteBuffer : ByteBuffer, targetWorkerId : Int) =>
+              messageSender.send(id.get, targetWorkerId, byteBuffer)
             }
           case _ =>
-            messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, index : Int) =>
-              messageSender.send(id.get, index, byteBuffer)
+            messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, targetWorkerId : Int) =>
+              log.info(s"${id.get} sending final message to $targetWorkerId of size ${byteBuffer.position()} of type ${currentOutgoingMessageClass}")
+              messageSender.send(id.get, targetWorkerId, byteBuffer)
             }
         }
 
@@ -474,8 +491,9 @@ abstract class Worker[I,V,E]
         sendingComplete()
         superStepCompleteTrigger()
       }(computationExecutionContext)
-    case byteString : ByteString =>
-      handleSuperStepAkka(sender(), byteString)
+        .recover{
+          case t : Throwable => computationNonFatalReporter(t)
+        }
     case AllSuperStepComplete() =>
       if (allHalted && emptyNextMessages) {
         log.info("Don't do next step! ")
@@ -542,34 +560,32 @@ abstract class Worker[I,V,E]
 
   private[this] def handleElasticGrowNetty(byteBuffer : ByteBuffer) : Unit = {
     try {
-      val index = byteBuffer.getInt() // reads the node Id which is prepended during netty send
+      val srcWorkerId = byteBuffer.getInt() // reads the node Id which is prepended during netty send
       val is = new ObjectByteBufferInputStream(byteBuffer)
-
-      importVerticesStoreData(index, is,
+      val threadId = ThreadId.getMod(jobSettings.nettyWorkers)
+      importVerticesStoreData(threadId, is,
         elasticGrowthDeserializer,
         elasticGrowthDeserializer,
         elasticGrowthDeserializer,
         elasticGrowthDeserializer
       )
 
-      importCurrentMessagesData(index, is, messagesDeserializer, messagePairDeserializer, clazzI, currentOutgoingMessageClass)
-      workers(index).actorRef ! Received()
+      importCurrentMessagesData(threadId, is, messagesDeserializer, messagePairDeserializer, clazzI, currentOutgoingMessageClass)
+      workers(srcWorkerId).actorRef ! Received()
     } catch {
       case t : Throwable => t.printStackTrace()
     }
   }
 
   /**
-    *
-    * @param prevWorkers
-    * @param nextWorkers
+    * uses computeExecutionContext
     */
   def distributeVerticesEdgesAndMessages(prevWorkers: Map[Int, AddressPair], nextWorkers: Map[Int, AddressPair]) = {
     // update partitioner
     partitioner.numWorkers(nextWorkers.size)
 
     // new workers
-    val verticesToBeRemoved = ArrayBuffer.empty[I]
+    val verticesToBeRemoved = TrieMap.empty[ThreadId, ArrayBuffer[I]]
     val newWorkersMap = nextWorkers.map{
       case (index, addressPair) =>
         index -> !prevWorkers.contains(index)
@@ -581,8 +597,9 @@ abstract class Worker[I,V,E]
     val edgesAsyncSerializer = new AsyncSerializer(3, () => new Kryo)
     val messagesAsyncSerializer = new AsyncSerializer(4, () => new Kryo)
 
-    val outputHandler = (byteBuffer : ByteBuffer, index : Int) => {
-      messageSender.send(id.get, index, byteBuffer)
+    val outputHandler = (byteBuffer : ByteBuffer, workerId : Int) => {
+      log.info(s"${id.get} sending elastic buffer ${byteBuffer.position()} to ${workerId}")
+      messageSender.send(id.get, workerId, byteBuffer)
     }
 
     // TODO change this, it's not so nice to tweak the ingoing and outgoing classes
@@ -596,42 +613,42 @@ abstract class Worker[I,V,E]
       reusableIterable
     }))
 
-    vertices.foreach{ vId =>
-      val index = partitioner.destination(vId)
-      if (newWorkersMap(index)) {
-        verticesToBeRemoved += vId
-        exportHaltedState(vId, index, haltedAsyncSerializer, (buffer) => outputHandler(buffer, index))
-        exportId(vId, index, idAsyncSerializer, (buffer) => outputHandler(buffer, index))
-        exportValue(vId, index, valueAsyncSerializer, (buffer) => outputHandler(buffer, index))
-        exportEdges(vId, index, edgesAsyncSerializer, (buffer) => outputHandler(buffer, index))
-        exportAndRemoveMessages(vId, currentOutgoingMessageClass, index, messagesAsyncSerializer, (buffer) => outputHandler(buffer, index))
+    parVertices.foreach{ vId =>
+      val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+      val workerId = partitioner.destination(vId)
+      if (newWorkersMap(workerId)) {
+        verticesToBeRemoved.getOrElseUpdate(threadId, ArrayBuffer.empty[I]) += vId
+        exportHaltedState(vId, threadId, workerId, haltedAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+        exportId(vId, threadId, workerId, idAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+        exportValue(vId, threadId, workerId, valueAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+        exportEdges(vId, threadId, workerId, edgesAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+        exportAndRemoveMessages(vId, currentOutgoingMessageClass, threadId, workerId, messagesAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
       }
     }
 
     haltedAsyncSerializer.sendNonEmptyByteBuffers{
-      case (byteBuffer : ByteBuffer, index : Int) =>
-        outputHandler(byteBuffer, index)
+      case (byteBuffer : ByteBuffer, workerId : Int) =>
+        outputHandler(byteBuffer, workerId)
     }
     idAsyncSerializer.sendNonEmptyByteBuffers{
-      case (byteBuffer : ByteBuffer, index : Int) =>
-        outputHandler(byteBuffer, index)
+      case (byteBuffer : ByteBuffer, workerId : Int) =>
+        outputHandler(byteBuffer, workerId)
     }
     valueAsyncSerializer.sendNonEmptyByteBuffers{
-      case (byteBuffer : ByteBuffer, index : Int) =>
-        outputHandler(byteBuffer, index)
+      case (byteBuffer : ByteBuffer, workerId : Int) =>
+        outputHandler(byteBuffer, workerId)
     }
     edgesAsyncSerializer.sendNonEmptyByteBuffers {
-      case (byteBuffer : ByteBuffer, index : Int) =>
-        outputHandler(byteBuffer, index)
+      case (byteBuffer : ByteBuffer, workerId : Int) =>
+        outputHandler(byteBuffer, workerId)
     }
 
     messagesAsyncSerializer.sendNonEmptyByteBuffers {
-      case (byteBuffer : ByteBuffer, index : Int) =>
-        outputHandler(byteBuffer, index)
+      case (byteBuffer : ByteBuffer, workerId : Int) =>
+        outputHandler(byteBuffer, workerId)
     }
 
-    verticesToBeRemoved.foreach(removeAllFromVertex)
-
+    verticesToBeRemoved.par.foreach(_._2.foreach(removeAllFromVertex))
     sendingComplete()
     elasticCompleteTrigger()
   }
@@ -660,7 +677,7 @@ abstract class Worker[I,V,E]
         // TODO check messages sent/received
         // TODO link import logic
         distributeVerticesEdgesAndMessages(prevWorkers, nextWorkers)
-      }
+      }(computationExecutionContext)
   }
 
   private[this] def addWorkers(senderRef : ActorRef, newWorkers : Map[Int, AddressPair]) = {
@@ -705,7 +722,7 @@ abstract class Worker[I,V,E]
       messageSender = new MessageSenderNetty(this)
       messageSender.setOnExceptionHandler(nettySenderException)
 
-      messageReceiver = new MessageReceiverNetty
+      messageReceiver = new MessageReceiverNetty(jobSettings.nettyWorkers)
       messageReceiver.setReceiverExceptionReporter(nettyReceiverException)
 
       messageReceiver.connect().foreach { success =>
@@ -725,6 +742,7 @@ abstract class Worker[I,V,E]
       log.info(s"workers: $workers")
       addWorkers(senderRef, workers)
     case State(newState) =>
+      log.info(s"Preparing to move from state $state -> $newState")
       state = newState
       state match {
         case GlobalState.LOAD_DATA =>

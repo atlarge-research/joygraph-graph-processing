@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 
 import com.esotericsoftware.kryo.io.Output
 import com.esotericsoftware.kryo.{Kryo, KryoException}
+import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferOutputStream
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Try}
@@ -14,40 +15,46 @@ class AsyncSerializer
  protected[this] val bufferExceededThreshold : Int = 1 * 1024 * 1024)
   extends AsyncBufferedSerializer {
 
-  def serialize[T](index: Int, o: T, serializer: (Kryo, Output, T) => Unit)(outputHandler: ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit = {
-    val kryo = kryos(index)
+  def serialize[T](index : ThreadId, workerId: WorkerId, o: T, serializer: (Kryo, Output, T) => Unit)(outputHandler: ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit = {
+    val kryo = kryos(index) // zero contention
     kryo.synchronized {
       val start = System.currentTimeMillis()
-      val os = buffers(index)
+      val os = buffers(workerId)
       // get original position for catch condition
       val originalPos = os.position()
       Try {
         serializer(kryo, os, o)
         os.increment()
+        returnBuffers(workerId, os)
       } match {
         case Failure(_: KryoException) => // overflow
-          // hand off and swap buffer
+          // hand off
           os.setPosition(originalPos)
           os.writeCounter()
 
-          // by using the linkedblockingqueue we ensure that there is at most ONE ByteBuffer being processed
-          val bufferSwap = bufferSwaps(index)
-          val startTake = System.currentTimeMillis()
-          val osSwap = bufferSwap.take()
-          val diffTake = System.currentTimeMillis() - startTake
-          timeSpentTaking.addAndGet(diffTake)
-          returnBuffers(index, osSwap)
-          serializer(kryo, osSwap, o) // TODO exception may occur here IFF object does not fit in the output...
-          osSwap.increment()
           // hand it off to the output handler, which will forward it to the network stack
           // when the network stack is finished with the bytebuffer, we put it back into the bufferSwap
           outputHandler(os.handOff()).foreach { _ =>
             // reset the osSwap, it's been used and needs to be set to pos 0
             os.resetOOS()
             // buffers in bufferswap are now clean!
-            bufferSwap.add(os)
+            returnBuffers(workerId, os)
           } // sweet I got it back!)
+
+          // TODO if it fails here it means that the message is larger than the entire buffer...
+          try {
+            val otherOs = buffers(workerId)
+            serializer(kryo, otherOs, o)
+            otherOs.increment()
+            returnBuffers(workerId, otherOs)
+          } catch {
+            case t : Throwable => t.printStackTrace()
+          }
+        case Failure(t : Throwable) =>
+          println("some other failure what")
+          t.printStackTrace()
         case _ =>
+          // noop
       }
 
       val diff = System.currentTimeMillis() - start
@@ -55,11 +62,36 @@ class AsyncSerializer
     }
   }
 
-  def sendNonEmptyByteBuffers(outputHandler: ((ByteBuffer, Int)) => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit ={
-    rawBuffers().filter(_._2.hasElements).foreach {
-      case (index, os) =>
-        os.writeCounter()
-        outputHandler((os.handOff(), index)).foreach(_ => buffers(index).resetOOS())
+  def sendNonEmptyByteBuffers(outputHandler: ((ByteBuffer, WorkerId)) => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit ={
+    val emptyBuffers = new Array[ObjectByteBufferOutputStream](numBuffersPerWorkerId)
+    rawBuffers().foreach {
+      case (workerId, osList) =>
+        var continue = true
+        var emptyBufferIndex = 0
+        while (continue) {
+          Option(osList.poll()) match {
+            case Some(os) =>
+              if (os.hasElements) {
+                os.writeCounter()
+                outputHandler((os.handOff(), workerId)).foreach{ _ =>
+                  os.resetOOS()
+                  returnBuffers(workerId, os)
+                }
+              } else {
+                emptyBuffers(emptyBufferIndex) = os
+                emptyBufferIndex += 1
+              }
+            case None =>
+              continue = false
+          }
+        }
+
+        var i = 0
+        while(i < emptyBufferIndex) {
+          returnBuffers(workerId, emptyBuffers(i))
+          i += 1
+        }
+
     }
   }
 }

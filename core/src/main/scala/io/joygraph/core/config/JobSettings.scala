@@ -10,6 +10,7 @@ case class JobSettings(private val conf : Config) {
   val masterCores : Int = conf.getInt("job.master.cores")
   val workerMemory : Int = conf.getInt("job.worker.memory")
   val workerCores : Int = conf.getInt("job.worker.cores")
+  val nettyWorkers : Int = workerCores  // TODO own option
   val initialNumberOfWorkers : Int = conf.getInt("job.workers.initial")
   val dataPath : String = conf.getString("job.data.path")
   val outputPath : String = conf.getString("job.output.path")

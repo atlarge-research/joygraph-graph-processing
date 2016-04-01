@@ -12,10 +12,10 @@ import io.netty.channel.{Channel, ChannelFuture, ChannelFutureListener, ChannelO
 
 import scala.concurrent.{Future, Promise}
 
-class MessageReceiverNetty {
+class MessageReceiverNetty(workerGroupThreads : Int) {
 
   val bossGroup = new NioEventLoopGroup(1)
-  val workerGroup = new NioEventLoopGroup(2)
+  val workerGroup = new NioEventLoopGroup(workerGroupThreads) // worker threads
   var currentChannel : Option[Channel] = None
   val messageChannelInitializer = new MessageChannelInitializer
 

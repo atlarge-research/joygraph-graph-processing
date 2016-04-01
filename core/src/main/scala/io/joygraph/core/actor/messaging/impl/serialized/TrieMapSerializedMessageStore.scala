@@ -22,9 +22,9 @@ trait TrieMapSerializedMessageStore extends MessageStore with KryoSerialization 
   }
   private def reusableIterablePool(): SimplePool[ReusableIterable[Any]] = _pool
 
-  override protected[this] def _handleMessage[I](index : Int, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any]) {
+  override protected[this] def _handleMessage[I](index : ThreadId, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any]) {
     implicit val kryoInstance = kryo(index)
-    kryoInstance.synchronized {
+    kryoInstance.synchronized { // TODO remove after conversion to class
       implicit val kryoOutputInstance = kryoOutput(index)
       val (dst, m) = dstMPair
       messaging.add(dst, m)

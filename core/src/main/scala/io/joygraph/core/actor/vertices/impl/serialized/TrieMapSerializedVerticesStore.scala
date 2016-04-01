@@ -87,7 +87,7 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
     numEdgesCounter.incrementAndGet()
     val index = partitioner.destination(src)
     implicit val kryoInstance = kryo(index)
-    kryoInstance.synchronized {
+    kryoInstance.synchronized { // TODO remove after conversion to class
       implicit val kryoOutputInstance = kryoOutput(index)
       implicit val os = getStream(src)
       serializeEdge(dst, value)
@@ -96,18 +96,19 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
 
   private[this] def serializeEdge(dst : I, value : E)
                                  (implicit kryo : Kryo, kryoOutput : KryoOutput, os : DirectByteBufferGrowingOutputStream): Unit = {
-
-    kryoOutput.setOutputStream(os)
-    kryo.writeObject(kryoOutput, dst)
-    if (!isNullClass) {
-      kryo.writeObject(kryoOutput, value)
+    os.synchronized {
+      kryoOutput.setOutputStream(os)
+      kryo.writeObject(kryoOutput, dst)
+      if (!isNullClass) {
+        kryo.writeObject(kryoOutput, value)
+      }
+      kryoOutput.flush()
+      os.trim()
     }
-    kryoOutput.flush()
-    os.trim()
   }
 
 
-  override protected[this] def numEdges: Int = numEdgesCounter.intValue()
+  override protected[this] def localNumEdges: Int = numEdgesCounter.intValue()
 
   protected[this] def parVertices : ParIterable[I] = {
     _vEdges.par.keys
@@ -117,7 +118,7 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
     override def iterator: Iterator[I] = _vEdges.keysIterator
   }
 
-  override protected[this] def numVertices: Int = _vEdges.size
+  override protected[this] def localNumVertices: Int = _vEdges.size
 
   override protected[this] def halted(vId : I) : Boolean = _halted.getOrElse(vId, false)
 
@@ -165,7 +166,7 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
         val src = mutableIterable.vId
         val index = partitioner.destination(src)
         implicit val kryoInstance = kryo(index)
-        kryoInstance.synchronized {
+        kryoInstance.synchronized {  // TODO remove after conversion to class
           implicit val kryoOutputInstance = kryoOutput(index)
           implicit val os = getStream(src)
           if (mutableIterable.hasBeenUsed) {

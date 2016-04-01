@@ -55,8 +55,8 @@ trait TrieMapVerticesStore[I,V,E] extends VerticesStore[I,V,E] {
       _halted.remove(vId)
     }
 
-  protected[this] def numVertices : Int = _vEdges.size
-  protected[this] def numEdges : Int = _vEdges.values.map(_.size()).sum
+  protected[this] def localNumVertices : Int = _vEdges.size
+  protected[this] def localNumEdges : Int = _vEdges.values.map(_.size()).sum
 
   protected[this] def removeAllFromVertex(vId : I): Unit = {
     _halted.remove(vId)

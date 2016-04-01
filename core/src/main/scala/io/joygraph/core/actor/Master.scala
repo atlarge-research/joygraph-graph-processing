@@ -81,6 +81,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
     // wait for all members to be up
     log.info("Initializing")
+    log.info(s"There are ${cluster.state.members.size} members")
 
     // we are up
     var workerId = 0
@@ -92,9 +93,9 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       // give each member an id
       val fActorRef: Future[AddressPair] = (context.actorSelection(akkaPath) ? WorkerId(workerId)).mapTo[AddressPair]
       val currentWorkerId = workerId
-      fActorRef.foreach(x => workerIdAddressMapBuilder(currentWorkerId) = x)
+      val assignedFuture: Future[Unit] = fActorRef.map(x => workerIdAddressMapBuilder(currentWorkerId) = x)
       workerId += 1
-      fActorRef
+      assignedFuture
     }) {
       workerIdAddressMap = workerIdAddressMapBuilder.toMap
       log.info("Distributing ActorRefs")
@@ -122,6 +123,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   protected[this] def mkdirs(path : String) : Boolean
 
   def sendPaths(actorRefs : Iterable[ActorRef], dataPath : String) = {
+    log.info(s"Sending paths to ${actorRefs.size} workers")
     successReceived = new AtomicInteger(actorRefs.size)
     // set the state
     FutureUtil.callbackOnAllComplete(actorRefs.map(x => (x ? State(GlobalState.LOAD_DATA)).mapTo[Boolean])) {
@@ -297,8 +299,8 @@ class ElasticityPromise(currentWorkers : Map[Int, AddressPair], implicit val ask
 
   private[this] val defaultPromise : Promise[Map[Int, AddressPair]] = Promise[Map[Int, AddressPair]]
   private[this] var _numWorkersExpected : Option[Int] = None
-  private[this] var nextWorkers : mutable.Map[Int, AddressPair] = mutable.Map.empty
-  private[this] var newWorkers : mutable.Map[Int, AddressPair] = mutable.Map.empty
+  private[this] var nextWorkers : TrieMap[Int, AddressPair] = TrieMap.empty
+  private[this] var newWorkers : TrieMap[Int, AddressPair] = TrieMap.empty
   private[this] val elasticGrowComplete = new AtomicInteger(0)
   private[this] val workerCounter : AtomicInteger = new AtomicInteger(0)
   nextWorkers ++= currentWorkers

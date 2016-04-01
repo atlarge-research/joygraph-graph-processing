@@ -9,6 +9,8 @@ import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStr
 import scala.collection.concurrent.TrieMap
 
 class AsyncDeserializer(kryoFactory : => Kryo) {
+  type ThreadId = Int
+
   private[this] val _kryos : TrieMap[Int, Kryo] = TrieMap.empty
   val timeSpent = new AtomicLong(0)
 
@@ -16,7 +18,7 @@ class AsyncDeserializer(kryoFactory : => Kryo) {
     _kryos.getOrElseUpdate(index, kryoFactory)
   }
 
-  def deserialize[T](is : ObjectByteBufferInputStream, index : Int, deserializer : (Kryo, Input) => T)(any : Iterator[T] => Unit) : Unit = {
+  def deserialize[T](is : ObjectByteBufferInputStream, index : ThreadId, deserializer : (Kryo, Input) => T)(any : Iterator[T] => Unit) : Unit = {
     val kryo = kryos(index)
     kryo.synchronized{
       val objects = new Iterator[T] {

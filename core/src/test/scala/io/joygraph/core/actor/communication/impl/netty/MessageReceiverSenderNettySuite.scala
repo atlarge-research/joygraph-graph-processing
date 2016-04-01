@@ -16,7 +16,7 @@ class MessageReceiverSenderNettySuite extends FunSuite with TimeLimitedTests{
   val timeLimit = Span(100, Seconds)
 
   test("Receiver should bind and shut down") {
-    val receiver = new MessageReceiverNetty()
+    val receiver = new MessageReceiverNetty(1)
     receiver.setOnReceivedMessage((b) => ())
     assert(Await.result(receiver.connect(), 10 seconds))
     receiver.shutdown()
@@ -24,7 +24,7 @@ class MessageReceiverSenderNettySuite extends FunSuite with TimeLimitedTests{
 
   test("Receiver should be able to receive something") {
     val latch = new CountDownLatch(1)
-    val receiver = new MessageReceiverNetty()
+    val receiver = new MessageReceiverNetty(1)
     receiver.setOnReceivedMessage((b) => latch.countDown())
     assert(Await.result(receiver.connect(), 10 seconds))
     val port = receiver.port
@@ -42,7 +42,7 @@ class MessageReceiverSenderNettySuite extends FunSuite with TimeLimitedTests{
 
   test("Receiver should receive same data as written sender id and data") {
     val latch = new CountDownLatch(1)
-    val receiver = new MessageReceiverNetty()
+    val receiver = new MessageReceiverNetty(1)
     receiver.setOnReceivedMessage((b) => {
       val senderId = b.getInt()
       val payload = b.getInt()

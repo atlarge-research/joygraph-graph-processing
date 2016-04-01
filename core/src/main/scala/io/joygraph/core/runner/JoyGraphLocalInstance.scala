@@ -34,6 +34,12 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
   protected[this] var _outputPath : Option[String] = None
   protected[this] var _isElastic : Boolean = false
   protected[this] var _isDirected : Option[Boolean] = None
+  protected[this] var _workerCores : Option[Int] = None
+
+  def workerCores(workerCores : Int) : BuilderType = {
+    _workerCores = Option(workerCores)
+    this
+  }
 
   def directed() : BuilderType = {
     _isDirected = Some(true)
@@ -128,6 +134,11 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
       case None => throw new IllegalArgumentException("Directness of graph is missing")
     }
 
+    _workerCores match {
+      case Some(workerCores) => graphTestInstance.workerCores(workerCores)
+      case None => graphTestInstance.workerCores(Runtime.getRuntime.availableProcessors() - 1)
+    }
+
     graphTestInstance.setElastic(_isElastic)
 
     graphTestInstance
@@ -142,6 +153,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
 
   protected[this] type Type = JoyGraphLocalInstance
 
+  protected[this] var _workerCores : Int = _
   protected[this] var _workers : Int = _
   protected[this] var _dataPath : String = _
   protected[this] var _workerFactory : (Config, ProgramDefinition[String, _,_,_], VertexPartitioner) => Worker[_,_,_] = _
@@ -199,6 +211,12 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
 
   def programParameters(programParameters : ArrayBuffer[(String, String)]) : Type = {
     _programParameters = programParameters
+    this
+  }
+
+
+  def workerCores(workerCores: Int) : Type = {
+    _workerCores = workerCores
     this
   }
 
@@ -273,7 +291,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
         master.memory = 1000
         master.cores = 1
         worker.memory = 2000
-        worker.cores = 1
+        worker.cores = ${_workerCores}
         workers.initial = ${_workers}
         data.path = "file://${_dataPath}"
         output.path = "file://${_outputPath}"
