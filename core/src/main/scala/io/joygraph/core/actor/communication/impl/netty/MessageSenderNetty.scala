@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 
 import io.joygraph.core.actor.communication.MessageSender
 import io.joygraph.core.util.MessageCounting
+import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferOutputStream
 import io.netty.bootstrap.Bootstrap
 import io.netty.buffer.{ByteBuf, Unpooled}
 import io.netty.channel._
@@ -21,6 +22,27 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting) exten
   private[this] val b = new Bootstrap()
   private[this] val messageSenderChannelInitializer = new MessageSenderChannelInitializer
   private[this] var errorReporter : (Throwable) => Unit = _
+  private[this] val RECEIVED_MESSAGE_ID : Byte = -1
+  private[this] val RECEIVED_MESSAGE : ByteBuffer = {
+    val os = new ObjectByteBufferOutputStream(RECEIVED_MESSAGE_ID, 4096)
+    os.writeCounter()
+    os.handOff()
+  }
+  private[this] val RECEIVED_MESSAGE_WRITTER_FLUSHED_LISTENER = new ChannelFutureListener {
+    override def operationComplete(future: ChannelFuture): Unit = {
+      if (!future.isSuccess) {
+        errorReporter(future.cause())
+      }
+    }
+  }
+
+  private[this] def receivedMessageInstance() : ByteBuffer = {
+    val singleton = RECEIVED_MESSAGE.duplicate()
+    val bb = ByteBuffer.allocate(singleton.position())
+    singleton.flip()
+    bb.put(singleton)
+    bb
+  }
 
   b.group(workerGroup)
   b.channel(classOf[NioSocketChannel])
@@ -69,6 +91,11 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting) exten
     channel(destination).pipeline().writeAndFlush(byteBuffer).addListener(new MessageWrittenAndFlushedListener(promise, payload))
     msgCounting.incrementSent()
     promise.future
+  }
+
+  override def sendAck(source : Int, destination : Int) = {
+    val byteBuffer = transform(source, receivedMessageInstance())
+    channel(destination).pipeline().writeAndFlush(byteBuffer).addListener(RECEIVED_MESSAGE_WRITTER_FLUSHED_LISTENER)
   }
 
   private class MessageWrittenAndFlushedListener(promise : Promise[ByteBuffer], payload : ByteBuffer) extends ChannelFutureListener {

@@ -4,6 +4,6 @@ import scala.compat.Platform._
 
 object Errors {
   def messageAndStackTraceString(t : Throwable) : String = {
-    s"${t.getMessage} : : ${t.getStackTrace.mkString("", EOL, EOL)}"
+    s"$t: {t.getMessage} \n${t.getStackTrace.mkString("", EOL, EOL)}"
   }
 }

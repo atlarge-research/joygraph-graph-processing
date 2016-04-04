@@ -13,7 +13,7 @@ trait MessageCounting {
     sentLastMessage.set(false)
   }
 
-  protected[this] def incrementReceived(): Unit = {
+  def incrementReceived(): Unit = {
     messagesReceived.incrementAndGet()
   }
 

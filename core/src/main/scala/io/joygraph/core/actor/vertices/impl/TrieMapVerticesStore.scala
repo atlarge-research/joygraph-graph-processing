@@ -9,19 +9,22 @@ import scala.collection.JavaConversions._
 import scala.collection.concurrent.TrieMap
 import scala.collection.parallel.ParIterable
 
-trait TrieMapVerticesStore[I,V,E] extends VerticesStore[I,V,E] {
+class TrieMapVerticesStore[I,V,E]
+(protected[this] val clazzI : Class[I],
+protected[this] val clazzE : Class[E],
+protected[this] val clazzV : Class[V]) extends VerticesStore[I,V,E] {
 
   private[this] val _halted = TrieMap.empty[I, Boolean]
   private[this] val _vEdges = TrieMap.empty[I, ConcurrentLinkedQueue[Edge[I,E]]]
   private[this] val _vValues = TrieMap.empty[I, V]
 
-  protected[this] def addVertex(vertex : I) : Unit = getCollection(vertex)
+  def addVertex(vertex : I) : Unit = getCollection(vertex)
 
-  protected[this] def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]]) = {
+  def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]]) = {
     // noop
   }
 
-  protected[this] def addEdge(src :I, dst : I, value : E): Unit = {
+  def addEdge(src :I, dst : I, value : E): Unit = {
     val neighbours = getCollection(src)
     neighbours.add(Edge(dst, value))
   }
@@ -30,35 +33,35 @@ trait TrieMapVerticesStore[I,V,E] extends VerticesStore[I,V,E] {
     _vEdges.getOrElseUpdate(vertex, new ConcurrentLinkedQueue[Edge[I,E]])
   }
 
-  protected[this] def edges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
+  def edges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
 
-  protected[this] def mutableEdges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
+  def mutableEdges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
 
-  protected[this] def parVertices : ParIterable[I] = {
+  def parVertices : ParIterable[I] = {
     _vEdges.par.keys
   }
 
-  protected[this] def vertices : Iterable[I] = new Iterable[I] {
+  def vertices : Iterable[I] = new Iterable[I] {
     override def iterator: Iterator[I] = _vEdges.keysIterator
   }
 
-  protected[this] def halted(vId : I) : Boolean = _halted.getOrElse(vId, false)
+  def halted(vId : I) : Boolean = _halted.getOrElse(vId, false)
 
-  protected[this] def vertexValue(vId : I) : V = _vValues.getOrElse(vId, null.asInstanceOf[V])
+  def vertexValue(vId : I) : V = _vValues.getOrElse(vId, null.asInstanceOf[V])
 
-  protected[this] def setVertexValue(vId : I, v : V) = _vValues(vId) = v
+  def setVertexValue(vId : I, v : V) = _vValues(vId) = v
 
-  protected[this] def setHalted(vId : I, halted : Boolean) =
+  def setHalted(vId : I, halted : Boolean) =
     if (halted) {
       _halted(vId) = true
     } else {
       _halted.remove(vId)
     }
 
-  protected[this] def localNumVertices : Int = _vEdges.size
-  protected[this] def localNumEdges : Int = _vEdges.values.map(_.size()).sum
+  def localNumVertices : Int = _vEdges.size
+  def localNumEdges : Int = _vEdges.values.map(_.size()).sum
 
-  protected[this] def removeAllFromVertex(vId : I): Unit = {
+  def removeAllFromVertex(vId : I): Unit = {
     _halted.remove(vId)
     _vEdges.remove(vId)
     _vValues.remove(vId)

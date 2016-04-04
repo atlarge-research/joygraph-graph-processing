@@ -180,6 +180,8 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   }
 
   override def receive = {
+    case Terminate() =>
+      terminate()
     case ElasticGrowComplete() => {
       elasticityPromise.elasticGrowCompleted()
     }
@@ -273,7 +275,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
             } else {
               sendDoOutput()
-              println(s"we're done, fuckers at ${currentSuperStep}")
+              log.info(s"we're done at step ${currentSuperStep}")
             }
         }
       }

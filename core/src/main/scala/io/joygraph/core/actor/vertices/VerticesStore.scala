@@ -18,7 +18,7 @@ trait VerticesStore[I,V,E] extends Types {
   protected[this] val clazzV : Class[V]
   protected[this] val isNullClass = clazzE == classOf[NullClass]
 
-  protected[this] def importVerticesStoreData
+  def importVerticesStoreData
   (index : Int,
    is : ObjectByteBufferInputStream,
    haltedDeserializer : AsyncDeserializer,
@@ -70,7 +70,7 @@ trait VerticesStore[I,V,E] extends Types {
     * only propagate the halted == true
     * @param vId
     */
-  protected[this] def exportHaltedState
+  def exportHaltedState
   (vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext) = {
     val vHalted = halted(vId)
     if (vHalted) {
@@ -81,7 +81,7 @@ trait VerticesStore[I,V,E] extends Types {
     }
   }
 
-  protected[this] def exportValue(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
+  def exportValue(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
     val vValue : V = vertexValue(vId)
     Option(vValue) match {
       case Some(vValue) =>
@@ -94,13 +94,13 @@ trait VerticesStore[I,V,E] extends Types {
     }
   }
 
-  protected[this] def exportId(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
+  def exportId(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
     asyncSerializer.serialize[I](index, workerId, vId, (kryo, output, o) => {
       kryo.writeObject(output, vId)
     })(outputHandler)
   }
 
-  protected[this] def exportEdges(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
+  def exportEdges(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
     edges(vId).foreach{ edge =>
       asyncSerializer.serialize[Edge[I,E]](index, workerId, edge, (kryo, output, o) => {
         kryo.writeObject(output, vId)
@@ -112,18 +112,18 @@ trait VerticesStore[I,V,E] extends Types {
     }
   }
 
-  protected[this] def removeAllFromVertex(vId : I)
-  protected[this] def addVertex(vertex : I)
-  protected[this] def addEdge(src :I, dst : I, value : E)
-  protected[this] def edges(vId : I) : Iterable[Edge[I,E]]
-  protected[this] def mutableEdges(vId : I) : Iterable[Edge[I,E]]
-  protected[this] def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]])
-  protected[this] def parVertices : ParIterable[I]
-  protected[this] def vertices : Iterable[I]
-  protected[this] def halted(vId : I) : Boolean
-  protected[this] def vertexValue(vId : I) : V
-  protected[this] def setVertexValue(vId : I, v : V)
-  protected[this] def setHalted(vId : I, halted : Boolean)
-  protected[this] def localNumVertices : Int
-  protected[this] def localNumEdges : Int
+  def removeAllFromVertex(vId : I)
+  def addVertex(vertex : I)
+  def addEdge(src :I, dst : I, value : E)
+  def edges(vId : I) : Iterable[Edge[I,E]]
+  def mutableEdges(vId : I) : Iterable[Edge[I,E]]
+  def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]])
+  def parVertices : ParIterable[I]
+  def vertices : Iterable[I]
+  def halted(vId : I) : Boolean
+  def vertexValue(vId : I) : V
+  def setVertexValue(vId : I, v : V)
+  def setHalted(vId : I, halted : Boolean)
+  def localNumVertices : Int
+  def localNumEdges : Int
 }

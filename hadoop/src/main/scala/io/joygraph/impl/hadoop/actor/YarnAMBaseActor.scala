@@ -68,6 +68,10 @@ object YarnAMBaseActor {
          |      "akka.tcp://$actorSystemName@$hostName:$port"
          |    ]
          |    auto-down = on
+         |    failure-detector {
+         |      acceptable-heartbeat-pause = 30
+         |      threshold = 12
+         |    }
          |  }
          |}
        """.stripMargin)

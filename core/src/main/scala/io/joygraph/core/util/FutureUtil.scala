@@ -36,11 +36,11 @@ object FutureUtil {
     })
     futures.foreach(_.foreach(_ => latch.countDown()))
     // todo on fail
-    println("Waiting is a bitch")
+    println("Waiting for futures to complete")
     latch.await()
-    println("done waiting")
+    println("Futures are complete")
     val results = futures.map(Await.result(_, 0 nanos))
-    println("Got results?")
+    println("Results retrieved")
     val res = try {
       anyFunc(results)
     } catch {

@@ -7,22 +7,21 @@ import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.{KryoSerialization, SimplePool}
 
-trait TrieMapSerializedMessageStore extends MessageStore with KryoSerialization {
+class TrieMapSerializedMessageStore(protected[this] var partitioner : VertexPartitioner) extends MessageStore with KryoSerialization {
 
   private[this] val messaging = new TrieMapSerializedMessaging
-  protected[this] var partitioner : VertexPartitioner
   private[this] var _pool : SimplePool[ReusableIterable[Any]] = _
   // TODO inject factory from worker
   private[this] val kryoPool = new KryoPool.Builder(new KryoFactory {
     override def create(): Kryo = new Kryo()
   }).build()
 
-  override protected[this] def setReusableIterablePool(pool : SimplePool[ReusableIterable[Any]]) : Unit = {
+  override def setReusableIterablePool(pool : SimplePool[ReusableIterable[Any]]) : Unit = {
     _pool = pool
   }
   private def reusableIterablePool(): SimplePool[ReusableIterable[Any]] = _pool
 
-  override protected[this] def _handleMessage[I](index : ThreadId, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any]) {
+  def _handleMessage[I](index : ThreadId, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any]) {
     implicit val kryoInstance = kryo(index)
     kryoInstance.synchronized { // TODO remove after conversion to class
       implicit val kryoOutputInstance = kryoOutput(index)
@@ -31,11 +30,11 @@ trait TrieMapSerializedMessageStore extends MessageStore with KryoSerialization 
     }
   }
 
-  override protected[this] def removeMessages[I](dst : I): Unit = {
+  protected[this] def removeMessages[I](dst : I): Unit = {
     messaging.remove(dst)
   }
 
-  override protected[this] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {
+  protected[this] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {
     // todo remove code duplication with messages
     implicit val iterable = reusableIterablePool().borrow()
     iterable.kryo(kryoPool.borrow())
@@ -46,7 +45,7 @@ trait TrieMapSerializedMessageStore extends MessageStore with KryoSerialization 
     messages.asInstanceOf[Iterable[M]]
   }
 
-  override protected[this] def messages[I, M](dst : I, clazzM : Class[M]) : Iterable[M] = {
+  def messages[I, M](dst : I, clazzM : Class[M]) : Iterable[M] = {
     implicit val iterable = reusableIterablePool().borrow()
     iterable.kryo(kryoPool.borrow())
     val messages = messaging.get(dst)
@@ -56,7 +55,7 @@ trait TrieMapSerializedMessageStore extends MessageStore with KryoSerialization 
     messages.asInstanceOf[Iterable[M]]
   }
 
-  override protected[this] def releaseMessages(messages : Iterable[_ <: Any], clazz : Class[_ <: Any]) = {
+  def releaseMessages(messages : Iterable[_ <: Any], clazz : Class[_ <: Any]) = {
     messages match {
       case reusableIterable : ReusableIterable[Any] =>
         kryoPool.release(reusableIterable.kryo)
@@ -65,11 +64,11 @@ trait TrieMapSerializedMessageStore extends MessageStore with KryoSerialization 
     }
   }
 
-  override protected[this] def messagesOnBarrier() = {
+  def messagesOnBarrier() = {
     messaging.onBarrier()
   }
 
-  override protected[this] def emptyNextMessages : Boolean = {
+  def emptyNextMessages : Boolean = {
     messaging.emptyNextMessages
   }
 }

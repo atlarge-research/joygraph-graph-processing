@@ -45,9 +45,9 @@ class BaseActor(private[this] val jobConf : Config, masterFactory : (Config, Clu
       println("Leader Changed {}", address)
 //      changeToClass(address);
     case x : MemberEvent => // ignore
-      println("agaga " + x)
-    case _ =>
-      println("what the fuck")
+      println("unhandled member event " + x)
+    case x @ _ =>
+      println("what's this " + x)
   }
 
   @deprecated

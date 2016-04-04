@@ -14,7 +14,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 trait MessageStore extends Types {
 
-  protected[this] def importCurrentMessagesData[I, M]
+  def importCurrentMessagesData[I, M]
   (index : ThreadId,
    is : ObjectByteBufferInputStream,
    messagesDeserializer : AsyncDeserializer,
@@ -31,7 +31,7 @@ trait MessageStore extends Types {
     }
   }
 
-  protected[this] def exportAndRemoveMessages[I,M](vId : I, clazzM : Class[M], threadId : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext) = {
+  def exportAndRemoveMessages[I,M](vId : I, clazzM : Class[M], threadId : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext) = {
     val vMessages = nextMessages(vId, clazzM)
     if (vMessages.nonEmpty) {
       vMessages.foreach{ m =>
@@ -49,17 +49,17 @@ trait MessageStore extends Types {
     }
   }
 
-  protected[this] def _handleMessage[I](index : Int, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any])
+  def _handleMessage[I](index : Int, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any])
   protected[this] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
-  protected[this] def messages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
+  def messages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
   protected[this] def removeMessages[I](dst : I)
-  protected[this] def releaseMessages(messages : Iterable[_ <: Any], clazz : Class[_ <: Any])
-  protected[this] def messagesOnBarrier()
-  protected[this] def emptyNextMessages : Boolean
+  def releaseMessages(messages : Iterable[_ <: Any], clazz : Class[_ <: Any])
+  def messagesOnBarrier()
+  def emptyNextMessages : Boolean
 
   // TODO move to a different interface
   /**
     * Pooling for serialized message iterables
     */
-  protected[this] def setReusableIterablePool(pool : SimplePool[ReusableIterable[Any]]) : Unit = {}
+  def setReusableIterablePool(pool : SimplePool[ReusableIterable[Any]]) : Unit = {}
 }

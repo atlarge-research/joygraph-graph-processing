@@ -16,9 +16,12 @@ import scala.collection.concurrent.TrieMap
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.parallel.ParIterable
 
-trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with KryoSerialization {
-
-  protected[this] var partitioner : VertexPartitioner
+class TrieMapSerializedVerticesStore[I,V,E]
+(protected[this] val clazzI : Class[I],
+protected[this] val clazzE : Class[E],
+protected[this] val clazzV : Class[V],
+protected[this] var partitioner : VertexPartitioner
+) extends VerticesStore[I,V,E] with KryoSerialization {
 
   private[this] val _halted = TrieMap.empty[I, Boolean]
   private[this] val _vEdges = TrieMap.empty[I, DirectByteBufferGrowingOutputStream]
@@ -81,9 +84,9 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
 
   private[this] def getStream(vertex : I) = _vEdges.getOrElseUpdate(vertex, new DirectByteBufferGrowingOutputStream(0))
 
-  override protected[this] def addVertex(vertex: I): Unit = getStream(vertex)
+  def addVertex(vertex: I): Unit = getStream(vertex)
 
-  override protected[this] def addEdge(src: I, dst: I, value: E): Unit = {
+  def addEdge(src: I, dst: I, value: E): Unit = {
     numEdgesCounter.incrementAndGet()
     val index = partitioner.destination(src)
     implicit val kryoInstance = kryo(index)
@@ -108,28 +111,28 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
   }
 
 
-  override protected[this] def localNumEdges: Int = numEdgesCounter.intValue()
+  def localNumEdges: Int = numEdgesCounter.intValue()
 
-  protected[this] def parVertices : ParIterable[I] = {
+  def parVertices : ParIterable[I] = {
     _vEdges.par.keys
   }
 
-  override protected[this] def vertices: Iterable[I] = new Iterable[I] {
+  def vertices: Iterable[I] = new Iterable[I] {
     override def iterator: Iterator[I] = _vEdges.keysIterator
   }
 
-  override protected[this] def localNumVertices: Int = _vEdges.size
+  def localNumVertices: Int = _vEdges.size
 
-  override protected[this] def halted(vId : I) : Boolean = _halted.getOrElse(vId, false)
+  def halted(vId : I) : Boolean = _halted.getOrElse(vId, false)
 
-  override protected[this] def setHalted(vId : I, halted : Boolean) =
+  def setHalted(vId : I, halted : Boolean) =
     if (halted) {
       _halted(vId) = true
     } else {
       _halted.remove(vId)
     }
 
-  override protected[this] def edges(vId: I): Iterable[Edge[I, E]] = {
+  def edges(vId: I): Iterable[Edge[I, E]] = {
     _vEdges.get(vId) match {
       case Some(os) =>
         if (os.isEmpty) {
@@ -144,7 +147,7 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
     }
   }
 
-  override protected[this] def mutableEdges(vId : I) : Iterable[Edge[I,E]] = {
+  def mutableEdges(vId : I) : Iterable[Edge[I,E]] = {
     _vEdges.get(vId) match {
       case Some(os) =>
         if (os.isEmpty) {
@@ -160,7 +163,7 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
     }
   }
 
-  protected[this] def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]]) = {
+  def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]]) = {
     edgesIterable match {
       case mutableIterable : MutableReusableIterable[I,Edge[I,E] @unchecked] =>
         val src = mutableIterable.vId
@@ -190,11 +193,11 @@ trait TrieMapSerializedVerticesStore[I,V,E] extends VerticesStore[I,V,E] with Kr
     }
   }
 
-  protected[this] def vertexValue(vId : I) : V = _vValues.getOrElse(vId, null.asInstanceOf[V])
+  def vertexValue(vId : I) : V = _vValues.getOrElse(vId, null.asInstanceOf[V])
 
-  protected[this] def setVertexValue(vId : I, v : V) = _vValues(vId) = v
+  def setVertexValue(vId : I, v : V) = _vValues(vId) = v
 
-  protected[this] def removeAllFromVertex(vId : I): Unit = {
+  def removeAllFromVertex(vId : I): Unit = {
     _halted.remove(vId)
     _vEdges.remove(vId)
     _vValues.remove(vId)
