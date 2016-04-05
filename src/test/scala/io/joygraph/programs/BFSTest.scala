@@ -11,12 +11,18 @@ import io.joygraph.impl.hadoop.actor.HadoopMaster
 import org.scalatest.FunSuite
 
 class BFSTest extends FunSuite {
-    val file = "/home/sietse/amazon0302.e"
-    val source_id = "99843"
+//    val file = "/home/sietse/amazon0302.e"
+//    val vfile = "/home/sietse/amazon0302.v"
+//    val source_id = "99843"
 //  val file = "/home/sietse/cit-Patents-edge.txt"
 //  val source_id = "4949326"
 //  val file = "/home/sietse/dota-league.e"
 //  val source_id = "287770"
+  val file ="/home/sietse/wiki-Talk.e"
+  val vfile ="/home/sietse/wiki-Talk.v"
+  val source_id = "2"
+//  val file = "/home/sietse/datagen-100-fb-cc0_05.e"
+//val source_id = "594259"
 
   test("DLCC elastic test") {
     val programDefinition = new DLCCEdgeListDefinition
@@ -49,7 +55,7 @@ class BFSTest extends FunSuite {
       .programParameters(("maxIterations", "2"))
       .vertexPartitioner(new VertexHashPartitioner())
       .dataPath(file)
-      .numWorkers(16)
+      .numWorkers(3)
       .outputPath("/home/sietse/outputPathDCDLP2")
       .directed()
       .build()
@@ -151,6 +157,7 @@ class BFSTest extends FunSuite {
           val s = l.split("\\s")
           (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
         },
+        (l) => l.toLong,
         (v : Vertex[_,_,_], outputStream) => {
           outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8))
         },
@@ -162,10 +169,11 @@ class BFSTest extends FunSuite {
       .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
       .vertexPartitioner(new VertexHashPartitioner())
       .dataPath(file)
+      .vertexPath(vfile)
       .programParameters(("source_id", source_id))
-      .numWorkers(1)
+      .numWorkers(8)
       .directed()
-      .outputPath("/home/sietse/outputPath")
+      .outputPath("/home/sietse/outputPathWikitalk8")
       .build()
     instance.run()
   }
@@ -177,6 +185,7 @@ class BFSTest extends FunSuite {
           val s = l.split("\\s")
           (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
         },
+        (l) => l.toLong,
         (v : Vertex[_,_,_], outputStream) => {
           outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8))
         },
@@ -203,6 +212,7 @@ class BFSTest extends FunSuite {
           val s = l.split("\\s")
           (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
         },
+        (l) => l.toLong,
         (v : Vertex[_,_,_], outputStream) => {
           outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8))
         },
