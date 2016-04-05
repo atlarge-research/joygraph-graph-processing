@@ -5,9 +5,17 @@ import java.nio.ByteBuffer
 import com.esotericsoftware.kryo.io.Output
 import com.esotericsoftware.kryo.{Kryo, KryoException}
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferOutputStream
+import io.joygraph.core.util.serde.AsyncSerializer.AsyncSerializerException
 
+import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Try}
+
+object AsyncSerializer {
+  private class AsyncSerializerException(msg : String) extends Exception(msg) {
+
+  }
+}
 
 class AsyncSerializer
 (protected[this] val msgType : Byte,
@@ -15,48 +23,51 @@ class AsyncSerializer
  protected[this] val bufferExceededThreshold : Int = 1 * 1024 * 1024)
   extends AsyncBufferedSerializer {
 
+  private[this] val maxRetries = 10
+
+  @tailrec
+  private[this] def serialize[T](kryo : Kryo, workerId: WorkerId, o: T, serializer: (Kryo, Output, T) => Unit, tryCount : Int = 1)(outputHandler: ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit = {
+    if (tryCount >= maxRetries) {
+      throw new AsyncSerializerException("Max tries exceeded, could not serialize object" + o)
+    }
+
+    val os = buffers(workerId)
+    // get original position for catch condition
+    val originalPos = os.position()
+    Try {
+      serializer(kryo, os, o)
+      os.increment()
+      returnBuffers(workerId, os)
+    } match {
+      case Failure(_: KryoException) => // overflow
+        // hand off
+        os.setPosition(originalPos)
+        os.writeCounter()
+
+        // hand it off to the output handler, which will forward it to the network stack
+        // when the network stack is finished with the bytebuffer, we put it back into the bufferSwap
+        outputHandler(os.handOff()).foreach { _ =>
+          // reset the osSwap, it's been used and needs to be set to pos 0
+          os.resetOOS()
+          // buffers in bufferswap are now clean!
+          returnBuffers(workerId, os)
+        } // sweet I got it back!)
+
+        serialize(kryo, workerId, o, serializer, tryCount + 1)(outputHandler)
+      case Failure(t : Throwable) =>
+        println("some other failure what")
+        t.printStackTrace()
+        throw t
+      case _ =>
+      // noop
+    }
+  }
+
   def serialize[T](index : ThreadId, workerId: WorkerId, o: T, serializer: (Kryo, Output, T) => Unit)(outputHandler: ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit = {
     val kryo = kryos(index) // zero contention
     kryo.synchronized {
       val start = System.currentTimeMillis()
-      val os = buffers(workerId)
-      // get original position for catch condition
-      val originalPos = os.position()
-      Try {
-        serializer(kryo, os, o)
-        os.increment()
-        returnBuffers(workerId, os)
-      } match {
-        case Failure(_: KryoException) => // overflow
-          // hand off
-          os.setPosition(originalPos)
-          os.writeCounter()
-
-          // hand it off to the output handler, which will forward it to the network stack
-          // when the network stack is finished with the bytebuffer, we put it back into the bufferSwap
-          outputHandler(os.handOff()).foreach { _ =>
-            // reset the osSwap, it's been used and needs to be set to pos 0
-            os.resetOOS()
-            // buffers in bufferswap are now clean!
-            returnBuffers(workerId, os)
-          } // sweet I got it back!)
-
-          // TODO if it fails here it means that the message is larger than the entire buffer...
-          try {
-            val otherOs = buffers(workerId)
-            serializer(kryo, otherOs, o)
-            otherOs.increment()
-            returnBuffers(workerId, otherOs)
-          } catch {
-            case t : Throwable => t.printStackTrace()
-          }
-        case Failure(t : Throwable) =>
-          println("some other failure what")
-          t.printStackTrace()
-        case _ =>
-          // noop
-      }
-
+      serialize(kryo, workerId, o, serializer)(outputHandler)
       val diff = System.currentTimeMillis() - start
       timeSpent.addAndGet(diff)
     }

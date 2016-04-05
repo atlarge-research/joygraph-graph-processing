@@ -13,6 +13,7 @@ case class JobSettings(private val conf : Config) {
   val nettyWorkers : Int = workerCores  // TODO own option
   val initialNumberOfWorkers : Int = conf.getInt("job.workers.initial")
   val dataPath : String = conf.getString("job.data.path")
+  val verticesPath : Option[String] = if (conf.hasPath("job.data.vertices.path")) Some(conf.getString("job.data.vertices.path")) else None
   val outputPath : String = conf.getString("job.output.path")
   val inputDataLineProvider : Class[_ <: LineProvider]= Class.forName(conf.getString("worker.input.lineProviderClass")).asInstanceOf[Class[LineProvider]]
   val outputDataLineWriter : Class[_ <: LineWriter] = Class.forName(conf.getString("worker.output.lineWriterClass")).asInstanceOf[Class[LineWriter]]

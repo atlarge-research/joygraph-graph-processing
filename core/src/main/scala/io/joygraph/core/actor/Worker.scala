@@ -194,11 +194,7 @@ abstract class Worker[I,V,E]
     }
   }
 
-  private[this] def addData(src :I, dst : I, value : E) = {
-    val srcWorkerId : Int = partitioner.destination(src)
-    val dstWorkerId : Int = partitioner.destination(dst)
-    // TODO pick correct pool
-    val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+  private[this] def addEdge(threadId : ThreadId, srcWorkerId : WorkerId, src : I, dst : I, value : E): Unit = {
     ifMessageToSelf(srcWorkerId) {
       verticesStore.addEdge(src, dst, value)
     } {
@@ -207,14 +203,27 @@ abstract class Worker[I,V,E]
         messageSender.send(id.get, srcWorkerId, byteBuffer)
       }
     }
-    ifMessageToSelf(dstWorkerId) {
-      verticesStore.addVertex(dst)
+  }
+
+  private[this] def addVertex(threadId : ThreadId, workerId : WorkerId, vertexId : I) : Unit = {
+    ifMessageToSelf(workerId) {
+      verticesStore.addVertex(vertexId)
     } {
-      verticesBufferNew.serialize(threadId, dstWorkerId, dst, vertexSerializer) { implicit byteBuffer =>
-        println(s"- sending to $dstWorkerId, size: ${byteBuffer.position()}")
-        messageSender.send(id.get, dstWorkerId, byteBuffer)
+      verticesBufferNew.serialize(threadId, workerId, vertexId, vertexSerializer) { implicit byteBuffer =>
+        println(s"- sending to $workerId, size: ${byteBuffer.position()}")
+        messageSender.send(id.get, workerId, byteBuffer)
       }
     }
+  }
+
+  private[this] def addDataNoVerticesData(src :I, dst : I, value : E) = {
+    // TODO pick correct pool
+    val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+    val srcWorkerId : Int = partitioner.destination(src)
+    addEdge(threadId, srcWorkerId, src, dst, value)
+
+    val dstWorkerId : Int = partitioner.destination(dst)
+    addVertex(threadId, dstWorkerId, dst)
   }
 
   private[this] val DATA_LOADING_OPERATION : PartialFunction[Any, Unit] = {
@@ -225,26 +234,61 @@ abstract class Worker[I,V,E]
       this.verticesBufferNew = new AsyncSerializer(1, () => new Kryo())
       this.dataLoadingDeserializer = new AsyncDeserializer(new Kryo())
       sender() ! true
+    case LoadDataWithVertices(verticesPath, verticesPathPosition, verticesPathLength, path, start, length) => Future {
+      val lineProvider : LineProvider = jobSettings.inputDataLineProvider.newInstance()
+      lineProvider.read(config, path, start, length) {
+        _.foreach {l =>
+          val (src, dst, value) = programDefinition.edgeParser(l)
+          val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+          val srcWorkerId : Int = partitioner.destination(src)
+          addEdge(threadId, srcWorkerId, src, dst, value)
+          if (!jobSettings.isDirected) {
+            val dstWorkerId : Int = partitioner.destination(dst)
+            addEdge(threadId, dstWorkerId, dst, src, value)
+          }
+        }
+      }
+
+      lineProvider.read(config, verticesPath, verticesPathPosition, verticesPathLength) {
+        _.foreach { l =>
+          val vertexId = programDefinition.vertexParser(l)
+          val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+          val workerId : Int = partitioner.destination(vertexId)
+          addVertex(threadId, workerId, vertexId)
+        }
+      }
+      verticesBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
+        println(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
+        messageSender.send(id.get, workerId, byteBuffer)
+      })
+
+      edgeBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
+        println(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
+        messageSender.send(id.get, workerId, byteBuffer)
+      })
+      sendingComplete()
+      loadingCompleteTrigger()
+    }
     case LoadData(path, start, length) =>
       Future {
         val lineProvider : LineProvider = jobSettings.inputDataLineProvider.newInstance()
         lineProvider.read(config, path, start, length) {
           _.foreach{ l =>
-            val (src, dst, value) = programDefinition.inputParser(l)
-            addData(src, dst, value)
+            val (src, dst, value) = programDefinition.edgeParser(l)
+            addDataNoVerticesData(src, dst, value)
             if (!jobSettings.isDirected) {
-              addData(dst, src, value)
+              addDataNoVerticesData(dst, src, value)
             }
           }
         }
 
         verticesBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
-          println(s"final sending to $workerId, size: ${byteBuffer.position()}")
+          println(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
           messageSender.send(id.get, workerId, byteBuffer)
         })
 
         edgeBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
-          println(s"final sending to $workerId, size: ${byteBuffer.position()}")
+          println(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
           messageSender.send(id.get, workerId, byteBuffer)
         })
         sendingComplete()

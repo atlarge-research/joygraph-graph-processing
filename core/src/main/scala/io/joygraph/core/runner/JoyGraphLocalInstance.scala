@@ -27,6 +27,7 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
   protected[this] type BuilderType = JoyGraphLocalInstanceBuilder[I,V,E]
   protected[this] var _workers : Option[Int] = None
   protected[this] var _dataPath : Option[String] = None
+  protected[this] var _vertexPath : Option[String] = None
   protected[this] var _workerFactory : Option[(Config, ProgramDefinition[String, _,_,_], VertexPartitioner) => Worker[_,_,_]] = None
   protected[this] var _masterFactory : Option[(Config, Cluster) => Master] = None
   protected[this] var _partitioner : Option[VertexPartitioner] = None
@@ -71,6 +72,11 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
     this
   }
 
+  def vertexPath(path : String) : BuilderType = {
+    _vertexPath = Option(path)
+    this
+  }
+
   def dataPath(path : String) : BuilderType = {
     _dataPath = Option(path)
     this
@@ -100,6 +106,11 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
     _dataPath match {
       case Some(dataPath) => graphTestInstance.dataPath(dataPath)
       case None => throw new IllegalArgumentException("Missing path")
+    }
+
+    _vertexPath match {
+      case Some(vertexPath) => graphTestInstance.vertexPath(vertexPath)
+      case None => // noop
     }
 
     _workers match {
@@ -155,6 +166,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
 
   protected[this] var _workerCores : Int = _
   protected[this] var _workers : Int = _
+  protected[this] var _vertexPath : String = _
   protected[this] var _dataPath : String = _
   protected[this] var _workerFactory : (Config, ProgramDefinition[String, _,_,_], VertexPartitioner) => Worker[_,_,_] = _
   protected[this] var _masterFactory : (Config, Cluster) => Master = _
@@ -225,6 +237,12 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
     this
   }
 
+  def vertexPath(vertexPath: String) : Type = {
+    _vertexPath = vertexPath
+    this
+  }
+
+
   def dataPath(path : String) : Type = {
     _dataPath = path
     this
@@ -284,6 +302,15 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
   }
 
   private[this] def createJobConfig() : Config = {
+    val vertexPathKeyValue : String = Option[String](_vertexPath) match {
+      case Some(vertexPath) =>
+        s"""
+           |job.vertices.path = "file://${_vertexPath}"
+             """.stripMargin
+      case None =>
+        ""
+    }
+
     val jobCfg =
       s"""
       job {
@@ -303,12 +330,13 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
         input.lineProviderClass = "io.joygraph.impl.hadoop.reader.HadoopLineProvider"
       }
       master.suffix = "master"
-    """ + {
-        if (_programParameters.isEmpty)
-          "\n"
-        else
-          _programParameters.map(kv => s"""${kv._1} = ${kv._2}\n""").reduce(_ + "" + _)
-      }
+    """ + vertexPathKeyValue + "\n" +
+        {
+          if (_programParameters.isEmpty)
+            "\n"
+          else
+            _programParameters.map(kv => s"""${kv._1} = ${kv._2}\n""").reduce(_ + "" + _)
+        }
     ConfigFactory.parseString(jobCfg)
   }
 

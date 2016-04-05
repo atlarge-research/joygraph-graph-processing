@@ -133,7 +133,14 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         actorRefs.zipWithIndex.foreach {
           case (actor, index) =>
             val (position, length) = split(index, workerMembers().size, dataPath)
-            actor ! LoadData(dataPath, position, length)
+            jobSettings.verticesPath match {
+              case Some(verticesPath) =>
+                val (verticesPosition, verticesLength) = split(index, workerMembers().size, verticesPath)
+                actor ! LoadDataWithVertices(verticesPath, verticesPosition, verticesLength, dataPath, position, length)
+              case None =>
+                actor ! LoadData(dataPath, position, length)
+            }
+
         }
       }
     }
