@@ -35,6 +35,7 @@ protected[this] val clazzV : Class[V]) extends VerticesStore[I,V,E] {
 
   def edges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
 
+  // TODO mutable edges are not functional
   def mutableEdges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
 
   def parVertices : ParIterable[I] = {
