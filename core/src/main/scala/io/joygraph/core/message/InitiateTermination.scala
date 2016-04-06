@@ -1,5 +1,5 @@
 package io.joygraph.core.message
 
-case class Terminate() {
+case class InitiateTermination() {
 
 }

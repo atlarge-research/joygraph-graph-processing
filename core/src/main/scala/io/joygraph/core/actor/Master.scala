@@ -81,6 +81,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
     // wait for all members to be up
     log.info("Initializing")
+    // TODO cluster.state.members.size may not be always up to date, retrieve count from parent (BaseActor)
     log.info(s"There are ${cluster.state.members.size} members")
 
     // we are up
@@ -187,7 +188,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   }
 
   override def receive = {
-    case Terminate() =>
+    case InitiateTermination() =>
       terminate()
     case ElasticGrowComplete() => {
       elasticityPromise.elasticGrowCompleted()
@@ -296,10 +297,17 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       }
   }
 
-  def terminate(): Unit = {
-    allWorkers().foreach(_.actorRef ! Terminate())
-    log.info("Shutting down.")
+
+  @scala.throws[Exception](classOf[Exception])
+  override def postStop(): Unit = {
+    log.info("Terminating master")
     context.system.terminate()
+  }
+
+  def terminate(): Unit = {
+    log.info("Initiating cluster termination")
+    allWorkers().foreach(x => context.stop(x.actorRef))
+    context.stop(self)
   }
 }
 

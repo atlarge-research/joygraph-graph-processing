@@ -4,6 +4,7 @@ import java.lang.Thread.UncaughtExceptionHandler
 import java.nio.ByteBuffer
 
 import akka.actor._
+import akka.cluster.ClusterEvent.UnreachableMember
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{ByteBufferInput, Input, Output}
 import com.typesafe.config.Config
@@ -82,7 +83,7 @@ abstract class Worker[I,V,E]
 
   private[this] val exceptionReporter : (Throwable) => Unit = (t : Throwable) => {
     log.info("Sending terminate to master on exception\n" + Errors.messageAndStackTraceString(t))
-    master ! Terminate()
+    terminate()
   }
 
   private[this] implicit val messageHandlingExecutionContext = ExecutionContext.fromExecutor(
@@ -746,6 +747,11 @@ abstract class Worker[I,V,E]
   }
 
   private[this] val BASE_OPERATION : PartialFunction[Any, Unit] = {
+    case UnreachableMember(member) =>
+      println(s"${member.address} ${master().path.address}")
+      if (member.address == master().path.address) {
+        context.system.terminate()
+      }
     case MasterAddress(address) =>
       masterActorRef = address
       sender() ! true
@@ -811,15 +817,20 @@ abstract class Worker[I,V,E]
       context.become(currentReceive, true)
       log.info(s"Set state to $newState")
       sender() ! true
-    case Terminate() =>
-      terminate()
   }
 
-  private[this] def terminate() = {
+  private[this] def terminate(): Unit = {
+    // send terminatation to Master
+    master() ! InitiateTermination()
+  }
+
+  @scala.throws[Exception](classOf[Exception])
+  override def postStop(): Unit = {
     //terminate netty
     messageSender.shutDown()
     messageReceiver.shutdown()
-    // terminate akka
+
+    log.info("Terminating worker")
     context.system.terminate()
   }
 
