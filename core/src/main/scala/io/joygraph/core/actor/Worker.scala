@@ -163,6 +163,7 @@ abstract class Worker[I,V,E]
 
   private[this] def handleNettyMessage(byteBuffer : ByteBuffer) : Unit = {
     val workerId = byteBuffer.getInt()
+    println(s"${id.get} receiving message from $workerId")
     val is = new ObjectByteBufferInputStream(byteBuffer)
     is.msgType match {
       case -1 =>
@@ -271,6 +272,7 @@ abstract class Worker[I,V,E]
       loadingCompleteTrigger()
     }
     case LoadData(path, start, length) =>
+      println(s"${id.get} reading $path $start $length")
       Future {
         val lineProvider : LineProvider = jobSettings.inputDataLineProvider.newInstance()
         lineProvider.read(config, path, start, length) {

@@ -3,7 +3,7 @@ package io.joygraph.core.util.buffers.streams
 trait ObjectOutputStream[T] {
 
   val msgType : Byte
-  protected[this] var _counter = 0
+  @volatile protected[this] var _counter = 0
   // offset 4 for total length
   // offset 4 for source
   // offset 1 for message type

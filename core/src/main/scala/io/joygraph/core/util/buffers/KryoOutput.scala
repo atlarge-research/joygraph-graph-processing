@@ -2,10 +2,23 @@ package io.joygraph.core.util.buffers
 
 import java.io.OutputStream
 
+import com.esotericsoftware.kryo.KryoException
 import com.esotericsoftware.kryo.io.ByteBufferOutput
 import io.joygraph.core.util.DirectByteBufferGrowingOutputStream
 
+object KryoOutput {
+  class KryoOutputOverflowException extends KryoException
+  val OVERFLOW_EXCEPTION = new KryoOutputOverflowException()
+}
+
 class KryoOutput(bufferSize : Int, maxBufferSize : Int) extends ByteBufferOutput(bufferSize, maxBufferSize) {
+
+  override def require(required: Int): Boolean = try {
+    super.require(required)
+  } catch {
+    case e : KryoException =>
+      throw KryoOutput.OVERFLOW_EXCEPTION
+  }
 
   override def setOutputStream(os : OutputStream): Unit = {
     super.setOutputStream(os)

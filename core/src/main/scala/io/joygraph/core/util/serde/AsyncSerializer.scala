@@ -2,8 +2,9 @@ package io.joygraph.core.util.serde
 
 import java.nio.ByteBuffer
 
+import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.Output
-import com.esotericsoftware.kryo.{Kryo, KryoException}
+import io.joygraph.core.util.buffers.KryoOutput.KryoOutputOverflowException
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferOutputStream
 import io.joygraph.core.util.serde.AsyncSerializer.AsyncSerializerException
 
@@ -39,7 +40,7 @@ class AsyncSerializer
       os.increment()
       returnBuffers(workerId, os)
     } match {
-      case Failure(_: KryoException) => // overflow
+      case Failure(_: KryoOutputOverflowException) => // overflow
         // hand off
         os.setPosition(originalPos)
         os.writeCounter()
@@ -77,11 +78,9 @@ class AsyncSerializer
     val emptyBuffers = new Array[ObjectByteBufferOutputStream](numBuffersPerWorkerId)
     rawBuffers().foreach {
       case (workerId, osList) =>
-        var continue = true
         var emptyBufferIndex = 0
-        while (continue) {
-          Option(osList.poll()) match {
-            case Some(os) =>
+        while (emptyBufferIndex < numBuffersPerWorkerId) {
+          val os = osList.take()
               if (os.hasElements) {
                 os.writeCounter()
                 outputHandler((os.handOff(), workerId)).foreach{ _ =>
@@ -92,9 +91,6 @@ class AsyncSerializer
                 emptyBuffers(emptyBufferIndex) = os
                 emptyBufferIndex += 1
               }
-            case None =>
-              continue = false
-          }
         }
 
         var i = 0
