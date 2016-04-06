@@ -36,7 +36,11 @@ trait HadoopMaster extends Master with FileSystemMap {
     else {
       position = (size / totalNumNodes) * workerId
     }
-    val len: Long = size / totalNumNodes
+    val len: Long = if (workerId == totalNumNodes - 1) {
+      size - position
+    } else {
+      size / totalNumNodes
+    }
 
     (position, len)
   }

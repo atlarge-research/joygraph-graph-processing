@@ -105,7 +105,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       // TODO the worker sometimes sends a null reference as the actorRef field in AddressPair, this will result in a nullpointer exception
       FutureUtil.callbackOnAllComplete(sendMasterAddress(actorSelections)) {
         FutureUtil.callbackOnAllComplete(sendMapping(actorSelections)) {
-          sendPaths(actorSelections, jobSettings.dataPath)
+          sendPaths(workerIdAddressMap, jobSettings.dataPath)
           initialized = true
           initializationLock.release()
         }
@@ -123,16 +123,17 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   protected[this] def split(workerId : Int, totalNumNodes : Int, path : String) : (Long, Long)
   protected[this] def mkdirs(path : String) : Boolean
 
-  def sendPaths(actorRefs : Iterable[ActorRef], dataPath : String) = {
-    log.info(s"Sending paths to ${actorRefs.size} workers")
-    successReceived = new AtomicInteger(actorRefs.size)
+  def sendPaths(workerIdToAddress : Map[Int, AddressPair], dataPath : String) = {
+    log.info(s"Sending paths to ${workerIdToAddress.size} workers")
+    successReceived = new AtomicInteger(workerIdToAddress.size)
+    val workerActorRefs = workerIdToAddress.map(_._2.actorRef)
     // set the state
-    FutureUtil.callbackOnAllComplete(actorRefs.map(x => (x ? State(GlobalState.LOAD_DATA)).mapTo[Boolean])) {
+    FutureUtil.callbackOnAllComplete(workerActorRefs.map(x => (x ? State(GlobalState.LOAD_DATA)).mapTo[Boolean])) {
       log.info("State set to LOAD_DATA")
       log.info("Sending PrepareLoadData")
-      FutureUtil.callbackOnAllComplete(actorRefs.map(x => (x ? PrepareLoadData()).mapTo[Boolean])) {
-        actorRefs.zipWithIndex.foreach {
-          case (actor, index) =>
+      FutureUtil.callbackOnAllComplete(workerActorRefs.map(x => (x ? PrepareLoadData()).mapTo[Boolean])) {
+        workerIdToAddress.foreach {
+          case (index, AddressPair(actor, _)) =>
             val (position, length) = split(index, workerMembers().size, dataPath)
             jobSettings.verticesPath match {
               case Some(verticesPath) =>
@@ -141,7 +142,6 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
               case None =>
                 actor ! LoadData(dataPath, position, length)
             }
-
         }
       }
     }
