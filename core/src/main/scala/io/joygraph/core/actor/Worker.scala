@@ -163,7 +163,7 @@ abstract class Worker[I,V,E]
 
   private[this] def handleNettyMessage(byteBuffer : ByteBuffer) : Unit = {
     val workerId = byteBuffer.getInt()
-    println(s"${id.get} receiving message from $workerId")
+//    println(s"${id.get} receiving message from $workerId")
     val is = new ObjectByteBufferInputStream(byteBuffer)
     is.msgType match {
       case -1 =>

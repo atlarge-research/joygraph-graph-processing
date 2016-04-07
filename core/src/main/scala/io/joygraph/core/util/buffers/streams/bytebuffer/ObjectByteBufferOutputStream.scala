@@ -2,10 +2,10 @@ package io.joygraph.core.util.buffers.streams.bytebuffer
 
 import java.nio.ByteBuffer
 
-import com.esotericsoftware.kryo.io.ByteBufferOutput
+import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.buffers.streams.ObjectOutputStream
 
-class ObjectByteBufferOutputStream(val msgType : Byte, maxBufferSize : Int) extends ByteBufferOutput(maxBufferSize, maxBufferSize) with ObjectOutputStream[ByteBuffer] {
+class ObjectByteBufferOutputStream(val msgType : Byte, maxBufferSize : Int) extends KryoOutput(maxBufferSize, maxBufferSize) with ObjectOutputStream[ByteBuffer] {
   resetOOS()
 //  this.varIntsEnabled = false
 
