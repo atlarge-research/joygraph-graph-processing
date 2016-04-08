@@ -44,7 +44,6 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   val jobSettings : JobSettings = JobSettings(conf)
   var workerIdAddressMap : Map[Int, AddressPair] = Map.empty
-  var successReceived : AtomicInteger = _
   var doneDoOutput : AtomicInteger = _
   var elasticityPromise : ElasticityPromise = _
   val initializationLock = new Semaphore(1)
@@ -61,6 +60,11 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   val numEdges = new AtomicLong(0)
 
   var currentSuperStep = 0
+
+  private[this] val allLoadDataCompleteReceived = new AtomicInteger
+  private[this] val barrierSuccessReceived = new AtomicInteger
+  private[this] val loadDataSuccessReceived = new AtomicInteger()
+  private[this] val superStepSuccessReceived = new AtomicInteger()
 
   def workerMembers() = cluster.state.members.filterNot(_.address == cluster.selfAddress)
 
@@ -125,13 +129,13 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   def sendPaths(workerIdToAddress : Map[Int, AddressPair], dataPath : String) = {
     log.info(s"Sending paths to ${workerIdToAddress.size} workers")
-    successReceived = new AtomicInteger(workerIdToAddress.size)
     val workerActorRefs = workerIdToAddress.map(_._2.actorRef)
     // set the state
     FutureUtil.callbackOnAllComplete(workerActorRefs.map(x => (x ? State(GlobalState.LOAD_DATA)).mapTo[Boolean])) {
       log.info("State set to LOAD_DATA")
       log.info("Sending PrepareLoadData")
       FutureUtil.callbackOnAllComplete(workerActorRefs.map(x => (x ? PrepareLoadData()).mapTo[Boolean])) {
+        loadDataSuccessReceived.set(workerIdToAddress.size)
         workerIdToAddress.foreach {
           case (index, AddressPair(actor, _)) =>
             val (position, length) = split(index, workerMembers().size, dataPath)
@@ -158,7 +162,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       log.info("Sending prepare superstep")
       FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x.actorRef ? PrepareSuperStep(numVertices, numEdges)).mapTo[Boolean])) {
         log.info("Sending runsuperstep")
-        successReceived = new AtomicInteger(allWorkers().size)
+        superStepSuccessReceived.set(allWorkers().size)
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
@@ -220,30 +224,30 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       println(s"$workerId $numV $numEdge done")
       numVertices.addAndGet(numV)
       numEdges.addAndGet(numEdge)
-      if (successReceived.decrementAndGet() == 0) {
+      if (allLoadDataCompleteReceived.decrementAndGet() == 0) {
         println(s"total : ${numVertices.get} ${numEdges.get}")
         // set to superstep
         sendSuperStepState(numVertices.get, numEdges.get)
       }
     case AllLoadingComplete() =>
-      if (successReceived.decrementAndGet() == 0) {
-        successReceived = new AtomicInteger(allWorkers().size)
+      if (loadDataSuccessReceived.decrementAndGet() == 0) {
+        allLoadDataCompleteReceived.set(allWorkers().size)
         allWorkers().foreach(_.actorRef ! AllLoadingComplete())
       }
     case BarrierComplete() => {
-      if (successReceived.decrementAndGet() == 0) {
+      if (barrierSuccessReceived.decrementAndGet() == 0) {
         log.info("Barrier complete")
         //reset aggregator
         _aggregatorMapping.foreach{
           case (name, aggregator) =>
             _aggregatorMapping(name).masterPrepareStep()
         }
-        successReceived = new AtomicInteger(allWorkers().size)
+        superStepSuccessReceived.set(allWorkers().size)
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
     case SuperStepComplete(aggregators) =>
-      log.info(s"Left : ${successReceived.get()}")
+      log.info(s"Left : ${superStepSuccessReceived.get()}")
 
       aggregators match {
         case Some(aggregatorMapping) =>
@@ -260,9 +264,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
           // noop
       }
 
-      if (successReceived.decrementAndGet() == 0) {
-        successReceived = new AtomicInteger(allWorkers().size)
-
+      if (superStepSuccessReceived.decrementAndGet() == 0) {
         FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? AllSuperStepComplete()).mapTo[DoNextStep])) {
           implicit results =>
             log.info("Do next step ?")
@@ -278,6 +280,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
                 workerIdAddressMap = newWorkersMapping
                 currentSuperStep += 1
                 doingElasticity = false
+                barrierSuccessReceived.set(allWorkers().size)
                 allWorkers().foreach(_.actorRef ! DoBarrier(currentSuperStep, _aggregatorMapping.toMap))
               })
 
