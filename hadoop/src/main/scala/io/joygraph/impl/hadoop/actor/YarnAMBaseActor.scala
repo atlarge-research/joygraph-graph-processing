@@ -2,6 +2,7 @@ package io.joygraph.impl.hadoop.actor
 
 import java.nio.ByteBuffer
 import java.util
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{Executors, ThreadFactory, TimeUnit}
 
 import akka.actor.{ActorSystem, Props}
@@ -114,7 +115,18 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
   private[this] val hdfsConfiguration: Configuration = new HdfsConfiguration()
   private[this] val fs = FileSystem.get(hdfsConfiguration)
 
-  val allocListener : AMRMClientAsync.CallbackHandler = new AMRMClientAsync.CallbackHandler {
+  private[this] val jobSettings = JobSettings(jobConf)
+
+  // check job.workers.initial
+  private[this] val numWorkers = jobSettings.initialNumberOfWorkers
+  private[this] val workerMemory = jobSettings.workerMemory
+  private[this] val workerCores = jobSettings.workerCores
+  private[this] val capability = Resource.newInstance(workerMemory, workerCores)
+  private[this] val priority = Priority.UNDEFINED // TODO set in conf?
+
+  private[this] val allocatedContainers = new AtomicInteger(0)
+
+  private[this] val allocListener : AMRMClientAsync.CallbackHandler = new AMRMClientAsync.CallbackHandler {
     override def onError(e: Throwable): Unit = log.error(e, "container allocation error")
 
     override def getProgress: Float = 0f
@@ -130,12 +142,35 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
       // noop
     }
 
-    override def onContainersAllocated(containers: util.List[Container]): Unit = {
+    override def onContainersAllocated(containers: util.List[Container]): Unit = synchronized {
+      log.info("Received {} containers", containers.size())
+      val currentlyAllocatedContainers = allocatedContainers.addAndGet(containers.size())
+      log.info("Currently allocated {} containers", currentlyAllocatedContainers)
+      val containersToUse = containers
 
-      implicit val executionContext = launcherExecutionContext
+      if (currentlyAllocatedContainers < numWorkers) {
+        log.info("Did not receive enough containers : {}/{}", currentlyAllocatedContainers, numWorkers)
+        val numToRequest = numWorkers - currentlyAllocatedContainers
+        log.info("Requesting missing {} containers", numToRequest)
+        (1 to numToRequest).foreach(_ => addContainerRequest())
+      }
 
-      containers.par.foreach { container =>
+      if (currentlyAllocatedContainers > numWorkers) {
+        val diff = currentlyAllocatedContainers - numWorkers
+        allocatedContainers.addAndGet(-diff)
+        log.info("Releasing {} excess containers", diff)
+        // release excess containers
+        var i = 0
+        while (i < diff) {
+          val containerToRelease = containers.last
+          containersToUse.remove(containerToRelease)
+          amRMClient.releaseAssignedContainer(containerToRelease.getId)
+          i += 1
+        }
+      }
 
+      log.info("Launching {} containers", containersToUse.size)
+      containersToUse.foreach { container =>
         val localResources : util.Map[String, LocalResource] = new util.HashMap[String, LocalResource]
         val commands : util.List[String] = new util.ArrayList[String]()
         val env : util.Map[String, String] = new util.HashMap[String, String]()
@@ -168,15 +203,12 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
     }
   }
 
-  val conf = new YarnConfiguration()
+  private[this] val conf = new YarnConfiguration()
   //    conf.addResource() // TODO get configuration from classpath?
 
+  private[this] val amRMClient = AMRMClientAsync.createAMRMClientAsync[ContainerRequest](1000, allocListener)
 
-  val amRMClient = AMRMClientAsync.createAMRMClientAsync[ContainerRequest](1000, allocListener)
-  amRMClient.init(conf)
-  amRMClient.start()
-
-  val containerListener = new NMClientAsync.CallbackHandler {
+  private[this] val containerListener = new NMClientAsync.CallbackHandler {
     override def onContainerStarted(containerId: ContainerId, allServiceResponse: util.Map[String, ByteBuffer]): Unit =
       log.info(s"Container $containerId started")
 
@@ -196,34 +228,41 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
       log.info(s"Container $containerId status error: $t")
   }
 
-  val nmClientAsync = new NMClientAsyncImpl(containerListener)
-  nmClientAsync.init(conf)
-  nmClientAsync.start()
+  private[this] val nmClientAsync = new NMClientAsyncImpl(containerListener)
 
-  val workerMemory = JobSettings(jobConf).workerMemory
-  val workerCores = JobSettings(jobConf).workerCores
-
-  val capability = Resource.newInstance(workerMemory, workerCores)
-  val priority = Priority.UNDEFINED // TODO set in conf?
-
-  val appMasterHostname = NetUtils.getHostName
-  val appMasterRpcPort = PortFinder.findFreePort()
-  val appMasterTrackingUrl = null
-  val response = amRMClient
-    .registerApplicationMaster(appMasterHostname, appMasterRpcPort,
-      appMasterTrackingUrl)
-
-  // check job.workers.initial
-  val numWorkers = JobSettings(jobConf).initialNumberOfWorkers
-
-  for (i <- 1 to numWorkers) {
+  private[this] def addContainerRequest(): Unit = {
     amRMClient.addContainerRequest(new AMRMClient.ContainerRequest(capability, null, null, priority, true))
+  }
+
+  override def preStart(): Unit = {
+    super.preStart()
+    log.info("Starting AMRMClient")
+    amRMClient.init(conf)
+    amRMClient.start()
+    log.info("Starting NMClient")
+    nmClientAsync.init(conf)
+    nmClientAsync.start()
+
+    val appMasterHostname = NetUtils.getHostName
+    val appMasterRpcPort = PortFinder.findFreePort()
+    val appMasterTrackingUrl = null
+    log.info("Registering application master")
+    val response = amRMClient
+      .registerApplicationMaster(appMasterHostname, appMasterRpcPort,
+        appMasterTrackingUrl)
+
+    log.info("Requesting {} containers", numWorkers)
+    // request containers
+    for (i <- 1 to numWorkers) {
+      addContainerRequest()
+    }
   }
 
   override def postStop(): Unit = {
     super.postStop()
     // TODO propagate fail/success state
     val appStatus = FinalApplicationStatus.SUCCEEDED
+    // TODO kill all containers
     amRMClient.unregisterApplicationMaster(appStatus, "Shut down successfully", null)
     amRMClient.stop()
     nmClientAsync.stop()
