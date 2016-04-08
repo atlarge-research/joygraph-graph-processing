@@ -73,6 +73,16 @@ object YarnAMBaseActor {
          |      acceptable-heartbeat-pause = 30
          |      threshold = 12
          |    }
+         |    use-dispatcher = cluster-dispatcher
+         |  }
+         |}
+         |
+         |cluster-dispatcher {
+         |  type = "Dispatcher"
+         |  executor = "fork-join-executor"
+         |  fork-join-executor {
+         |    parallelism-min = 2
+         |    parallelism-max = 4
          |  }
          |}
        """.stripMargin)
