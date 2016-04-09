@@ -4,6 +4,7 @@ import java.lang.Thread.UncaughtExceptionHandler
 import java.nio.ByteBuffer
 
 import akka.actor._
+import akka.cluster.Cluster
 import akka.cluster.ClusterEvent.UnreachableMember
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{ByteBufferInput, Input, Output}
@@ -780,7 +781,8 @@ abstract class Worker[I,V,E]
 
       messageReceiver.connect().foreach { success =>
         if (success) {
-          senderRef ! AddressPair(self, NettyAddress(messageReceiver.host, messageReceiver.port))
+          // TODO Cluster(context.system) is not the nicest way to do this
+          senderRef ! AddressPair(self, NettyAddress(Cluster(context.system).selfAddress.host.get, messageReceiver.port))
           log.info(s"$workerId sent self: $self ?!?!")
         } else {
           log.error("Could not listen on ANY port")

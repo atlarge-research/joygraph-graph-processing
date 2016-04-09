@@ -57,21 +57,23 @@ class MessageReceiverNetty(workerGroupThreads : Int) {
     bossGroup.shutdownGracefully()
   }
 
-  def address : String = {
-    currentChannel match {
-      case Some(channel) =>
-        channel.localAddress().asInstanceOf[InetSocketAddress].getAddress.toString
-      case None => null
-    }
-  }
 
-  def host : String = {
-    currentChannel match {
-      case Some(channel) =>
-        channel.localAddress().asInstanceOf[InetSocketAddress].getHostName
-      case None => null
-    }
-  }
+  // TODO fix the host/address, it does not return the correct hostname...
+//  def address : String = {
+//    currentChannel match {
+//      case Some(channel) =>
+//        channel.localAddress().asInstanceOf[InetSocketAddress].getAddress.toString
+//      case None => null
+//    }
+//  }
+//
+//  def host : String = {
+//    currentChannel match {
+//      case Some(channel) =>
+//        channel.localAddress().asInstanceOf[InetSocketAddress].getHostName
+//      case None => null
+//    }
+//  }
 
   // returns -1 if there is no channel
   def port : Int = {
