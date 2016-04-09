@@ -6,6 +6,7 @@ import java.util
 import com.typesafe.config.ConfigFactory
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.submission.SubmissionClient
+import io.joygraph.impl.hadoop.util.YARNUtils
 import io.joygraph.impl.hadoop.util.YARNUtils._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileSystem
@@ -165,6 +166,7 @@ class YARNSubmissionClient protected(
 
     context.setAMContainerSpec(amContainer)
     context.setResource(capability)
+    context.setPriority(YARNUtils.defaultPriority)
     context.setQueue(queue)
 
     yarnClient.submitApplication(context)

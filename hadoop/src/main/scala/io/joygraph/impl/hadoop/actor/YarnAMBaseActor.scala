@@ -132,7 +132,8 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
   private[this] val workerMemory = jobSettings.workerMemory
   private[this] val workerCores = jobSettings.workerCores
   private[this] val capability = Resource.newInstance(workerMemory, workerCores)
-  private[this] val priority = Priority.UNDEFINED // TODO set in conf?
+  // TODO non-homogeneous priorities have a side-effect in YARN
+  private[this] val priority = YARNUtils.defaultPriority
 
   private[this] val allocatedContainers = new AtomicInteger(0)
 

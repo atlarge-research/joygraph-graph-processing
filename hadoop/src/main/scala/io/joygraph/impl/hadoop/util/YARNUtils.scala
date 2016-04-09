@@ -6,7 +6,7 @@ import io.joygraph.impl.hadoop.actor.{YarnAMBaseActor, YarnBaseActor}
 import org.apache.hadoop.fs.{FileStatus, FileSystem, FsUrlStreamHandlerFactory, Path}
 import org.apache.hadoop.yarn.api.ApplicationConstants
 import org.apache.hadoop.yarn.api.ApplicationConstants.Environment
-import org.apache.hadoop.yarn.api.records.{LocalResource, LocalResourceType, LocalResourceVisibility, URL}
+import org.apache.hadoop.yarn.api.records._
 import org.apache.hadoop.yarn.conf.YarnConfiguration
 
 object YARNUtils {
@@ -14,6 +14,10 @@ object YARNUtils {
   {
     // Adding the hdfs protocol to java.net.URL
     java.net.URL.setURLStreamHandlerFactory(new FsUrlStreamHandlerFactory())
+  }
+
+  def defaultPriority : Priority = {
+    Priority.newInstance(1)
   }
 
   /**
