@@ -24,7 +24,7 @@ class HadoopLineProvider extends LineProvider {
     val lineReader : mapreduce.RecordReader[LongWritable, Text] = textInputFormat.createRecordReader(null, taskAttemptContext)
     try {
       val dfsPath = new Path(path)
-      // TODO bug in 2.7.2, where splits cannot be larger than Integer.Max, switch to 2.7.3 when released
+      // TODO MAPREDUCE-6635 bug in 2.7.2, where splits cannot be larger than Integer.Max, switch to 2.7.3 when released
       lineReader.initialize(new FileSplit(dfsPath, start, length, null), taskAttemptContext)
       // Does not implement hasNext properly, as nextKeyValue READS the next value
       // and getCurrentValue does not advance the pointer.
