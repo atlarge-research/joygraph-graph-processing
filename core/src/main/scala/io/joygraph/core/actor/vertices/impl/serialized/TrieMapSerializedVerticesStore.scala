@@ -150,14 +150,10 @@ protected[this] var partitioner : VertexPartitioner
   def mutableEdges(vId : I) : Iterable[Edge[I,E]] = {
     _vEdges.get(vId) match {
       case Some(os) =>
-        if (os.isEmpty) {
-          NO_EDGES
-        } else {
-          reusableMutableIterablePool.borrow()
-            .vId(vId)
-            .kryo(kryoPool.borrow())
-            .bufferProvider(() => os.getBuf)
-        }
+        reusableMutableIterablePool.borrow()
+          .vId(vId)
+          .kryo(kryoPool.borrow())
+          .bufferProvider(() => os.getBuf)
       case None =>
         NO_EDGES
     }
