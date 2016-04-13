@@ -1,20 +1,25 @@
 package io.joygraph.core.actor.vertices.impl.serialized
 
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
 import com.esotericsoftware.kryo.pool.{KryoFactory, KryoPool}
+import io.joygraph.core.actor.VertexComputation
+import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.partitioning.VertexPartitioner
-import io.joygraph.core.program.Edge
+import io.joygraph.core.program.{Edge, Vertex, VertexImpl}
 import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.collection.ReusableIterable
-import io.joygraph.core.util.{DirectByteBufferGrowingOutputStream, KryoSerialization, SimplePool}
+import io.joygraph.core.util.serde.AsyncSerializer
+import io.joygraph.core.util.{DirectByteBufferGrowingOutputStream, KryoSerialization, SimplePool, ThreadId}
 
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.parallel.ParIterable
+import scala.concurrent.{ExecutionContext, Future}
 
 class TrieMapSerializedVerticesStore[I,V,E]
 (protected[this] val clazzI : Class[I],
@@ -197,6 +202,55 @@ protected[this] var partitioner : VertexPartitioner
     _halted.remove(vId)
     _vEdges.remove(vId)
     _vValues.remove(vId)
+  }
+
+  override def computeVertices(computation: VertexComputation[I, V, E]): Boolean = {
+    val verticesStore = this
+    val simpleVertexInstancePool = new SimplePool[Vertex[I,V,E]](new VertexImpl[I,V,E] {
+      override def addEdge(dst: I, e: E): Unit = {
+        verticesStore.addEdge(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
+      }
+    })
+    parVertices.foreach(vId => computation.computeVertex(vId, verticesStore, simpleVertexInstancePool))
+    computation.hasHalted
+  }
+
+  override def distributeVertices
+  (newWorkersMap: Map[WorkerId, Boolean],
+   haltedAsyncSerializer: AsyncSerializer,
+   idAsyncSerializer: AsyncSerializer,
+   valueAsyncSerializer: AsyncSerializer,
+   edgesAsyncSerializer: AsyncSerializer,
+   hashPartitioner: VertexPartitioner,
+   outputHandler: (ByteBuffer, WorkerId) => Future[ByteBuffer],
+   messageStore: MessageStore,
+   messagesAsyncSerializer: AsyncSerializer,
+   currentOutgoingMessageClass: Class[_])(implicit exeContext: ExecutionContext): Unit = {
+
+    val verticesToBeRemoved = TrieMap.empty[ThreadId, ArrayBuffer[I]]
+    parVertices.foreach{ vId =>
+      val workerId = partitioner.destination(vId)
+      if (newWorkersMap(workerId)) {
+        val threadId = ThreadId.getMod(8) // TODO
+        ???
+        verticesToBeRemoved.getOrElseUpdate(threadId, ArrayBuffer.empty[I]) += vId
+
+        distributeVertex(
+          vId,
+          workerId,
+          threadId,
+          haltedAsyncSerializer,
+          idAsyncSerializer,
+          valueAsyncSerializer,
+          edgesAsyncSerializer,
+          outputHandler,
+          messageStore,
+          messagesAsyncSerializer,
+          currentOutgoingMessageClass
+        )
+      }
+    }
+    verticesToBeRemoved.par.foreach(_._2.foreach(removeAllFromVertex))
   }
 }
 

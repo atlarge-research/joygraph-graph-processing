@@ -288,6 +288,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
 
   private[this] def createAkkaClusterConfig(actorSystemName : String, seedPort : Int) : String = {
     s"""
+  akka.actor.warn-about-java-serializer-usage = false
   akka {
       actor {
         provider = "akka.cluster.ClusterActorRefProvider"

@@ -257,7 +257,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
             aggregatorMapping.foreach{
               case (name, aggregator) =>
                 _aggregatorMapping(name).aggregate(aggregator)
-                println("MASTER aggregate " + name + " " + _aggregatorMapping(name).value)
+                log.info("MASTER aggregate " + name + " " + _aggregatorMapping(name).value)
             }
           }
         case None =>

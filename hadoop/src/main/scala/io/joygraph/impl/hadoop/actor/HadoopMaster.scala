@@ -2,6 +2,7 @@ package io.joygraph.impl.hadoop.actor
 
 import com.typesafe.config.Config
 import io.joygraph.core.actor.Master
+import io.joygraph.core.util.IOUtil
 import io.joygraph.impl.hadoop.util.FileSystemMap
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.hadoop.hdfs.HdfsConfiguration
@@ -27,21 +28,8 @@ trait HadoopMaster extends Master with FileSystemMap {
         // TODO throw exception
         println(x + " fagaga")
     }
+
     val size: Long = fileStatus.getLen
-    var position: Long = 0L
-
-    if (workerId == 0) {
-      position = 0
-    }
-    else {
-      position = (size / totalNumNodes) * workerId
-    }
-    val len: Long = if (workerId == totalNumNodes - 1) {
-      size - position
-    } else {
-      size / totalNumNodes
-    }
-
-    (position, len)
+    IOUtil.split(workerId, size, totalNumNodes)
   }
 }

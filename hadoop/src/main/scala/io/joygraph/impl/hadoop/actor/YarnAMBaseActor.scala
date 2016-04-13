@@ -104,7 +104,8 @@ object YarnAMBaseActor {
         val master = new Master(conf, cluster) with HadoopMaster
         Master.initialize(master)
       }, () => {
-         Worker.workerWithSerializedTrieMapMessageStore(masterConf, definition, new VertexHashPartitioner)
+//         Worker.workerWithSerializedTrieMapMessageStore(masterConf, definition, new VertexHashPartitioner)
+         Worker.workerWithSerializeOpenHashMapStore(masterConf, definition, new VertexHashPartitioner)
       }
     ))
     // wait indefinitely until it terminates
@@ -242,6 +243,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
   private[this] val nmClientAsync = new NMClientAsyncImpl(containerListener)
 
   private[this] def addContainerRequest(): Unit = {
+    log.info("Requesting container with {} memory and {} cores", capability.getMemory, capability.getVirtualCores)
     amRMClient.addContainerRequest(new AMRMClient.ContainerRequest(capability, null, null, priority, true))
   }
 

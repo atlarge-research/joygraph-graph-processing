@@ -16,7 +16,7 @@ import io.joygraph.core.actor.messaging.impl.serialized.TrieMapSerializedMessage
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.actor.vertices.impl.TrieMapVerticesStore
-import io.joygraph.core.actor.vertices.impl.serialized.TrieMapSerializedVerticesStore
+import io.joygraph.core.actor.vertices.impl.serialized.{OpenHashMapSerializedVerticesStore, TrieMapSerializedVerticesStore}
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
 import io.joygraph.core.message.elasticity._
@@ -30,8 +30,6 @@ import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.Types
 import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer, CombinableAsyncSerializer}
 
-import scala.collection.concurrent.TrieMap
-import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{ExecutionContext, Future}
 
 object Worker{
@@ -47,6 +45,25 @@ object Worker{
           clazzI, clazzE, clazzV
         )
         messageStore = new TrieMapMessageStore
+      }
+    }
+    worker.initialize()
+    worker
+  }
+
+  def workerWithSerializeOpenHashMapStore[I,V,E]
+  (config: Config,
+   programDefinition: ProgramDefinition[String, I,V,E],
+   partitioner : VertexPartitioner
+  ): Worker[I,V,E] = {
+    val worker = new Worker[I,V,E](config, programDefinition, partitioner) {
+      override def initialize(): Unit = {
+        super.initialize()
+
+        verticesStore = new OpenHashMapSerializedVerticesStore[I,V,E](
+          clazzI, clazzE, clazzV, jobSettings.workerCores, exceptionReporter
+        )
+        messageStore = new TrieMapSerializedMessageStore(partitioner)
       }
     }
     worker.initialize()
@@ -78,11 +95,11 @@ abstract class Worker[I,V,E]
  protected[this] var partitioner : VertexPartitioner)
   extends Actor with ActorLogging with MessageCounting with Types {
 
-  private[this] val jobSettings = JobSettings(config)
+  protected[this] val jobSettings = JobSettings(config)
   protected[this] var verticesStore : VerticesStore[I,V,E] = _
   protected[this] var messageStore : MessageStore = _
 
-  private[this] val exceptionReporter : (Throwable) => Unit = (t : Throwable) => {
+  protected[this] val exceptionReporter : (Throwable) => Unit = (t : Throwable) => {
     log.info("Sending terminate to master on exception\n" + Errors.messageAndStackTraceString(t))
     terminate()
   }
@@ -202,7 +219,7 @@ abstract class Worker[I,V,E]
       verticesStore.addEdge(src, dst, value)
     } {
       edgeBufferNew.serialize(threadId, srcWorkerId, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
-        println(s"- sending to $srcWorkerId, size: ${byteBuffer.position()}")
+        log.info(s"${id.get} sending to $srcWorkerId, size: ${byteBuffer.position()}")
         messageSender.send(id.get, srcWorkerId, byteBuffer)
       }
     }
@@ -213,7 +230,7 @@ abstract class Worker[I,V,E]
       verticesStore.addVertex(vertexId)
     } {
       verticesBufferNew.serialize(threadId, workerId, vertexId, vertexSerializer) { implicit byteBuffer =>
-        println(s"- sending to $workerId, size: ${byteBuffer.position()}")
+        log.info(s"${id.get} sending to $workerId, size: ${byteBuffer.position()}")
         messageSender.send(id.get, workerId, byteBuffer)
       }
     }
@@ -231,98 +248,121 @@ abstract class Worker[I,V,E]
 
   private[this] val DATA_LOADING_OPERATION : PartialFunction[Any, Unit] = {
     case PrepareLoadData() =>
-      println(s"$id: prepare load data!~ $state")
+      log.info(s"$id: prepare load data!~ $state")
       // TODO create KryoFactory
       this.edgeBufferNew = new AsyncSerializer(0, () => new Kryo())
       this.verticesBufferNew = new AsyncSerializer(1, () => new Kryo())
       this.dataLoadingDeserializer = new AsyncDeserializer(new Kryo())
       sender() ! true
     case LoadDataWithVertices(verticesPath, verticesPathPosition, verticesPathLength, path, start, length) => Future {
-      val lineProvider : LineProvider = jobSettings.inputDataLineProvider.newInstance()
-      lineProvider.read(config, path, start, length) {
-        _.foreach {l =>
-          val (src, dst, value) = programDefinition.edgeParser(l)
-          val threadId = ThreadId.getMod(computationFjPool.getParallelism)
-          val srcWorkerId : Int = partitioner.destination(src)
-          addEdge(threadId, srcWorkerId, src, dst, value)
-          if (!jobSettings.isDirected) {
-            val dstWorkerId : Int = partitioner.destination(dst)
-            addEdge(threadId, dstWorkerId, dst, src, value)
+      log.info(s"${id.get} reading $path $start $length")
+      log.info(s"${id.get} reading $verticesPath $verticesPathPosition $verticesPathLength")
+
+      val lineProvider: LineProvider = jobSettings.inputDataLineProvider.newInstance()
+      IOUtil.splits(length, jobSettings.workerCores, start).par.foreach {
+        case (position, splitLength) =>
+          log.info(s"${id.get} parsing $path $position $splitLength")
+          lineProvider.read(config, path, position, splitLength) {
+            _.foreach { l =>
+              val (src, dst, value) = programDefinition.edgeParser(l)
+              val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+              val srcWorkerId: Int = partitioner.destination(src)
+              addEdge(threadId, srcWorkerId, src, dst, value)
+              if (!jobSettings.isDirected) {
+                val dstWorkerId: Int = partitioner.destination(dst)
+                addEdge(threadId, dstWorkerId, dst, src, value)
+              }
+            }
           }
-        }
       }
 
-      lineProvider.read(config, verticesPath, verticesPathPosition, verticesPathLength) {
-        _.foreach { l =>
-          val vertexId = programDefinition.vertexParser(l)
-          val threadId = ThreadId.getMod(computationFjPool.getParallelism)
-          val workerId : Int = partitioner.destination(vertexId)
-          addVertex(threadId, workerId, vertexId)
-        }
+      IOUtil.splits(verticesPathLength, jobSettings.workerCores, verticesPathPosition).par.foreach {
+        case (position, splitLength) =>
+          lineProvider.read(config, verticesPath, position, splitLength) {
+            log.info(s"${id.get} parsing $verticesPath $position $splitLength")
+            _.foreach { l =>
+              val vertexId = programDefinition.vertexParser(l)
+              val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+              val workerId: Int = partitioner.destination(vertexId)
+              addVertex(threadId, workerId, vertexId)
+            }
+          }
       }
       verticesBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
-        println(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
+        log.info(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
         messageSender.send(id.get, workerId, byteBuffer)
       })
 
       edgeBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
-        println(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
+        log.info(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
         messageSender.send(id.get, workerId, byteBuffer)
       })
       sendingComplete()
       loadingCompleteTrigger()
-    }
+    }(computationExecutionContext)
     case LoadData(path, start, length) =>
-      println(s"${id.get} reading $path $start $length")
+      log.info(s"${id.get} reading $path $start $length")
       Future {
-        val lineProvider : LineProvider = jobSettings.inputDataLineProvider.newInstance()
-        lineProvider.read(config, path, start, length) {
-          _.foreach{ l =>
-            val (src, dst, value) = programDefinition.edgeParser(l)
-            addDataNoVerticesData(src, dst, value)
-            if (!jobSettings.isDirected) {
-              addDataNoVerticesData(dst, src, value)
+        val lineProvider: LineProvider = jobSettings.inputDataLineProvider.newInstance()
+        IOUtil.splits(length, jobSettings.workerCores, start).par.foreach {
+          case (position, splitLength) =>
+            log.info(s"${id.get} parsing $path $position $splitLength")
+            lineProvider.read(config, path, position, splitLength) {
+              _.foreach { l =>
+                val (src, dst, value) = programDefinition.edgeParser(l)
+                addDataNoVerticesData(src, dst, value)
+                if (!jobSettings.isDirected) {
+                  addDataNoVerticesData(dst, src, value)
+                }
+              }
             }
-          }
         }
 
         verticesBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
-          println(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
+          log.info(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
           messageSender.send(id.get, workerId, byteBuffer)
         })
 
         edgeBufferNew.sendNonEmptyByteBuffers({ case (byteBuffer : ByteBuffer, workerId : Int) =>
-          println(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
+          log.info(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
           messageSender.send(id.get, workerId, byteBuffer)
         })
         sendingComplete()
         loadingCompleteTrigger()
-      }
+      }(computationExecutionContext)
     case AllLoadingComplete() =>
-      println(s"serializing edges: ${edgeBufferNew.timeSpent.get() / 1000}s " +
+      log.info(s"serializing edges: ${edgeBufferNew.timeSpent.get() / 1000}s " +
         s"vertices: ${verticesBufferNew.timeSpent.get() / 1000}s")
       master() ! LoadingComplete(id.get, verticesStore.localNumVertices, verticesStore.localNumEdges)
   }
 
   protected[this] def loadingCompleteTrigger(): Unit = {
     if (doneAllSentReceived) {
-      resetSentReceived()
-      println(s"$id phase ended")
-      master() ! AllLoadingComplete()
+      synchronized {
+        if (doneAllSentReceived) {
+          resetSentReceived()
+          log.info(s"$id phase ended")
+          master() ! AllLoadingComplete()
+        }
+      }
     }
   }
 
   protected[this] def superStepCompleteTrigger(): Unit = {
     if (doneAllSentReceived) {
-      resetSentReceived()
-      println(s"$id phase ended")
-      vertexProgramInstance match {
-        case aggregatable : Aggregatable => {
-          aggregatable.printAggregatedValues()
-          master() ! SuperStepComplete(Some(aggregatable.aggregators()))
+      synchronized {
+        if (doneAllSentReceived) {
+          resetSentReceived()
+          log.info(s"$id phase ended")
+          vertexProgramInstance match {
+            case aggregatable: Aggregatable => {
+              aggregatable.printAggregatedValues()
+              master() ! SuperStepComplete(Some(aggregatable.aggregators()))
+            }
+            case _ =>
+              master() ! SuperStepComplete()
+          }
         }
-        case _ =>
-          master() ! SuperStepComplete()
       }
     } else {
       log.info(s"${id} Triggered but not completed : $numMessagesSent $numMessagesReceived")
@@ -342,7 +382,7 @@ abstract class Worker[I,V,E]
   private[this] def prepareSuperStep(superStep : Int) : Unit = {
     currentSuperStepFunction = vertexProgramInstance.currentSuperStepFunction(superStep)
 
-    println(s"current INOUT $currentIncomingMessageClass $currentOutgoingMessageClass")
+    log.info(s"current INOUT $currentIncomingMessageClass $currentOutgoingMessageClass")
 
     // set current deserializer
     messageStore.setReusableIterablePool(new SimplePool[ReusableIterable[Any]]({
@@ -407,7 +447,6 @@ abstract class Worker[I,V,E]
     case RunSuperStep(superStep) =>
       Future {
         log.info(s"Running superstep $superStep")
-        def addEdgeVertex : (I, I, E) => Unit = verticesStore.addEdge
 
         val superStepFunctionPool : SimplePool[SuperStepFunction[I,V,E,_,_]] = new SimplePool[SuperStepFunction[I, V, E, _, _]](
           {
@@ -488,44 +527,8 @@ abstract class Worker[I,V,E]
           }
         )
 
-        val simpleVertexInstancePool = new SimplePool[Vertex[I,V,E]](new VertexImpl[I,V,E] {
-          override def addEdge(dst: I, e: E): Unit = {
-            addEdgeVertex(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
-          }
-        })
-
-        allHalted = true
-
-        verticesStore.parVertices.foreach { vId =>
-          val vMessages = messageStore.messages(vId, currentIncomingMessageClass)
-          val vHalted = verticesStore.halted(vId)
-          val hasMessage = vMessages.nonEmpty
-          if (!vHalted || hasMessage) {
-            val value : V = verticesStore.vertexValue(vId)
-            val edgesIterable : Iterable[Edge[I,E]] = verticesStore.edges(vId)
-            val mutableEdgesIterable : Iterable[Edge[I,E]] = verticesStore.mutableEdges(vId)
-            // get vertex impl
-            val v : Vertex[I,V,E] = simpleVertexInstancePool.borrow()
-            v.load(vId, value, edgesIterable, mutableEdgesIterable)
-
-            // get superstepfunction instance
-            val superStepFunctionInstance = superStepFunctionPool.borrow()
-            val hasHalted = superStepFunctionInstance(v, vMessages)
-            // release superstepfunction instance
-            superStepFunctionPool.release(superStepFunctionInstance)
-            verticesStore.setVertexValue(vId, v.value)
-            verticesStore.setHalted(vId, hasHalted)
-            simpleVertexInstancePool.release(v)
-            // release vertex impl
-            if (!hasHalted) {
-              allHalted = false
-            }
-
-            verticesStore.releaseEdgesIterable(edgesIterable)
-            verticesStore.releaseEdgesIterable(mutableEdgesIterable)
-          }
-          messageStore.releaseMessages(vMessages, currentIncomingMessageClass)
-        }
+        val vertexComputation: VertexComputation[I, V, E] = new VertexComputation(currentIncomingMessageClass, messageStore, superStepFunctionPool)
+        allHalted = verticesStore.computeVertices(vertexComputation)
 
         currentSuperStepFunction match {
           case combinable : Combinable[_] =>
@@ -544,7 +547,7 @@ abstract class Worker[I,V,E]
 
         sendingComplete()
         superStepCompleteTrigger()
-      }(computationExecutionContext)
+      }(computationExecutionContext) // TODO move computationcontext to VerticesStores
         .recover{
           case t : Throwable => computationNonFatalReporter(t)
         }
@@ -593,7 +596,7 @@ abstract class Worker[I,V,E]
             override def addEdge(dst: I, e: E): Unit = {} // noop
           }
           verticesStore.vertices.foreach { vId =>
-            v.load(vId, verticesStore.vertexValue(vId), verticesStore.edges(vId), verticesStore.mutableEdges(vId))
+            v.load(vId, verticesStore.vertexValue(vId), verticesStore.edges(vId))
             programDefinition.outputWriter(v, outputStream)
           }
         })
@@ -636,7 +639,6 @@ abstract class Worker[I,V,E]
     partitioner.numWorkers(nextWorkers.size)
 
     // new workers
-    val verticesToBeRemoved = TrieMap.empty[ThreadId, ArrayBuffer[I]]
     val newWorkersMap = nextWorkers.map{
       case (index, addressPair) =>
         index -> !prevWorkers.contains(index)
@@ -664,18 +666,18 @@ abstract class Worker[I,V,E]
       reusableIterable
     }))
 
-    verticesStore.parVertices.foreach{ vId =>
-      val threadId = ThreadId.getMod(computationFjPool.getParallelism)
-      val workerId = partitioner.destination(vId)
-      if (newWorkersMap(workerId)) {
-        verticesToBeRemoved.getOrElseUpdate(threadId, ArrayBuffer.empty[I]) += vId
-        verticesStore.exportHaltedState(vId, threadId, workerId, haltedAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
-        verticesStore.exportId(vId, threadId, workerId, idAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
-        verticesStore.exportValue(vId, threadId, workerId, valueAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
-        verticesStore.exportEdges(vId, threadId, workerId, edgesAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
-        messageStore.exportAndRemoveMessages(vId, currentOutgoingMessageClass, threadId, workerId, messagesAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
-      }
-    }
+    verticesStore.distributeVertices(
+      newWorkersMap,
+      haltedAsyncSerializer,
+      idAsyncSerializer,
+      valueAsyncSerializer,
+      edgesAsyncSerializer,
+      partitioner,
+      outputHandler,
+      messageStore,
+      messagesAsyncSerializer,
+      currentOutgoingMessageClass
+    )
 
     haltedAsyncSerializer.sendNonEmptyByteBuffers{
       case (byteBuffer : ByteBuffer, workerId : Int) =>
@@ -699,16 +701,19 @@ abstract class Worker[I,V,E]
         outputHandler(byteBuffer, workerId)
     }
 
-    verticesToBeRemoved.par.foreach(_._2.foreach(verticesStore.removeAllFromVertex))
     sendingComplete()
     elasticCompleteTrigger()
   }
 
   private[this] def elasticCompleteTrigger() = {
     if (doneAllSentReceived) {
-      resetSentReceived()
-      println(s"$id elastic phase ended")
-      master() ! ElasticGrowComplete()
+      synchronized {
+        if (doneAllSentReceived) {
+          resetSentReceived()
+          log.info(s"$id elastic phase ended")
+          master() ! ElasticGrowComplete()
+        }
+      }
     } else {
       log.info(s"${id} elastic Triggered but not completed : $numMessagesSent $numMessagesReceived")
     }
@@ -726,6 +731,9 @@ abstract class Worker[I,V,E]
         // TODO link import logic
         distributeVerticesEdgesAndMessages(prevWorkers, nextWorkers)
       }(computationExecutionContext)
+        .recover{
+          case t : Throwable => computationNonFatalReporter(t)
+        }
   }
 
   private[this] def addWorkers(senderRef : ActorRef, newWorkers : Map[Int, AddressPair]) = {
@@ -751,7 +759,7 @@ abstract class Worker[I,V,E]
 
   private[this] val BASE_OPERATION : PartialFunction[Any, Unit] = {
     case UnreachableMember(member) =>
-      println(s"${member.address} ${master().path.address}")
+      log.info(s"${member.address} ${master().path.address}")
       if (member.address == master().path.address) {
         context.system.terminate()
       }
@@ -841,12 +849,6 @@ abstract class Worker[I,V,E]
   private[this] var _currentReceive : PartialFunction[Any, Unit] = BASE_OPERATION
 
   override def receive = currentReceive
-
-  def sendByteArray(dst : ActorRef, bytes: Array[Byte]): Unit = {
-    println(s"$id sending to dst: $dst ${bytes.length}")
-    dst ! bytes
-    incrementSent()
-  }
 
   private[this] def vertexDeserializer(kryo : Kryo, input : Input) : I = {
     kryo.readObject(input, clazzI)

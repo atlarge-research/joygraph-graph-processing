@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 
 import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.buffers.streams.ObjectOutputStream
+import io.netty.util.internal.PlatformDependent
 
 class ObjectByteBufferOutputStream(val msgType : Byte, maxBufferSize : Int) extends KryoOutput(maxBufferSize, maxBufferSize) with ObjectOutputStream[ByteBuffer] {
   resetOOS()
@@ -45,4 +46,10 @@ class ObjectByteBufferOutputStream(val msgType : Byte, maxBufferSize : Int) exte
     this.niobuffer.position(offset)
   }
 
+  /**
+    * Once called this object will be useless
+    */
+  def freeMemory() : Unit = {
+    PlatformDependent.freeDirectBuffer(this.niobuffer)
+  }
 }

@@ -2,6 +2,9 @@ package io.joygraph.core.actor.vertices
 
 import java.nio.ByteBuffer
 
+import io.joygraph.core.actor.VertexComputation
+import io.joygraph.core.actor.messaging.MessageStore
+import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program.{Edge, NullClass}
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.concurrency.Types
@@ -68,6 +71,7 @@ trait VerticesStore[I,V,E] extends Types {
   /**
     * Note that if halted is false is the default state,
     * only propagate the halted == true
+    *
     * @param vId
     */
   def exportHaltedState
@@ -126,4 +130,39 @@ trait VerticesStore[I,V,E] extends Types {
   def setHalted(vId : I, halted : Boolean)
   def localNumVertices : Int
   def localNumEdges : Int
+  def computeVertices(computation: VertexComputation[I,V,E]) : Boolean
+
+  def distributeVertices
+  (newWorkersMap : Map[WorkerId, Boolean],
+   haltedAsyncSerializer : AsyncSerializer,
+   idAsyncSerializer : AsyncSerializer,
+   valueAsyncSerializer : AsyncSerializer,
+   edgesAsyncSerializer : AsyncSerializer,
+   hashPartitioner: VertexPartitioner,
+   outputHandler : (ByteBuffer, WorkerId) => Future[ByteBuffer],
+   messageStore : MessageStore, // TODO move this to messageStore,
+   messagesAsyncSerializer : AsyncSerializer,
+   currentOutgoingMessageClass : Class[_]
+  )(implicit exeContext : ExecutionContext) : Unit
+
+  protected[this] def distributeVertex
+  (vId : I,
+   workerId : WorkerId,
+   threadId : ThreadId,
+   haltedAsyncSerializer : AsyncSerializer,
+   idAsyncSerializer : AsyncSerializer,
+   valueAsyncSerializer : AsyncSerializer,
+   edgesAsyncSerializer : AsyncSerializer,
+   outputHandler : (ByteBuffer, WorkerId) => Future[ByteBuffer],
+   messageStore : MessageStore, // TODO move this to Messagestore
+   messagesAsyncSerializer : AsyncSerializer,
+   currentOutgoingMessageClass : Class[_]
+  )(implicit exeContext : ExecutionContext) {
+    exportHaltedState(vId, threadId, workerId, haltedAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+    exportId(vId, threadId, workerId, idAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+    exportValue(vId, threadId, workerId, valueAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+    exportEdges(vId, threadId, workerId, edgesAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+    // TODO move this to Messagestore
+    messageStore.exportAndRemoveMessages(vId, currentOutgoingMessageClass, threadId, workerId, messagesAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+  }
 }

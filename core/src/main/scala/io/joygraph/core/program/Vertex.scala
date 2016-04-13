@@ -10,6 +10,7 @@ trait Vertex[I,V,E] {
   def edges : Iterable[Edge[I,E]]
   def mutableEdges : Iterable[Edge[I,E]]
   def addEdge(dst : I, e : E)
+  def load(id: I, value: V, edges: Iterable[Edge[I,E]])
   def load(id: I, value: V, edges: Iterable[Edge[I,E]], mutableEdges : Iterable[Edge[I,E]])
   def load(bytes: Array[Byte])
   def load(is : InputStream)
