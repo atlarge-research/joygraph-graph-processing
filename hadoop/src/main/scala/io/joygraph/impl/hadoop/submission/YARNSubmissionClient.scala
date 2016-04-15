@@ -150,6 +150,7 @@ class YARNSubmissionClient protected(
   private[this] def _submitApplication() : ApplicationId = {
     val application = yarnClient.createApplication()
     val context = application.getApplicationSubmissionContext
+    val response = application.getNewApplicationResponse
     context.setApplicationName(applicationName)
     context.setKeepContainersAcrossApplicationAttempts(false)
     context.setMaxAppAttempts(1) // TODO configurable maybe
@@ -158,7 +159,8 @@ class YARNSubmissionClient protected(
     env += classPath()
     commands += masterCommand(APPMASTERJARNAME, JOYGRAPHCONFIGNAME, RESOURCEPATHSNAME, amMemory)
 
-    val capability = Resource.newInstance(amMemory, amVCores)
+    val capability = YARNUtils.cappedResource(response.getMaximumResourceCapability, amMemory, amVCores)
+    println("Actual resource: " + capability)
     context.setResource(capability)
 
     val amContainer = ContainerLaunchContext.newInstance(

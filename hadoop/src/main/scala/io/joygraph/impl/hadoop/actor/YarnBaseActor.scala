@@ -46,7 +46,7 @@ object YarnBaseActor {
         val master = new Master(conf, cluster) with HadoopMaster
         Master.initialize(master)
       }, () => {
-        Worker.workerWithSerializedTrieMapMessageStore(workerConf, definition, new VertexHashPartitioner)
+        Worker.workerWithSerializeOpenHashMapStore(workerConf, definition, new VertexHashPartitioner)
       }
     ))
     // wait indefinitely until it terminates

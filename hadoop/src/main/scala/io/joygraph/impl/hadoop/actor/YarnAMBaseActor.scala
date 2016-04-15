@@ -70,8 +70,9 @@ object YarnAMBaseActor {
          |    ]
          |    auto-down = on
          |    failure-detector {
-         |      acceptable-heartbeat-pause = 30
-         |      threshold = 12
+         |      acceptable-heartbeat-pause = 120 s
+         |      threshold = 24
+         |      min-std-deviation = 30 s
          |    }
          |    use-dispatcher = cluster-dispatcher
          |  }
@@ -132,7 +133,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
   private[this] val numWorkers = jobSettings.initialNumberOfWorkers
   private[this] val workerMemory = jobSettings.workerMemory
   private[this] val workerCores = jobSettings.workerCores
-  private[this] val capability = Resource.newInstance(workerMemory, workerCores)
+  private[this] var capability : Resource = _
   // TODO non-homogeneous priorities have a side-effect in YARN
   private[this] val priority = YARNUtils.defaultPriority
 
@@ -263,6 +264,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
     val response = amRMClient
       .registerApplicationMaster(appMasterHostname, appMasterRpcPort,
         appMasterTrackingUrl)
+    capability = YARNUtils.cappedResource(response.getMaximumResourceCapability, workerMemory, workerCores)
 
     log.info("Requesting {} containers", numWorkers)
     // request containers

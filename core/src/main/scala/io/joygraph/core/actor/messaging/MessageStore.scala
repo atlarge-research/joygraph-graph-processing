@@ -4,7 +4,6 @@ import java.nio.ByteBuffer
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.Input
-import io.joygraph.core.util.SimplePool
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.Types
@@ -50,9 +49,9 @@ trait MessageStore extends Types {
   }
 
   def _handleMessage[I](index : Int, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any])
-  protected[this] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
+  protected[messaging] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
   def messages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
-  protected[this] def removeMessages[I](dst : I)
+  protected[messaging] def removeMessages[I](dst : I)
   def releaseMessages(messages : Iterable[_ <: Any], clazz : Class[_ <: Any])
   def messagesOnBarrier()
   def emptyNextMessages : Boolean
@@ -61,5 +60,5 @@ trait MessageStore extends Types {
   /**
     * Pooling for serialized message iterables
     */
-  def setReusableIterablePool(pool : SimplePool[ReusableIterable[Any]]) : Unit = {}
+  def setReusableIterableFactory(factory: => ReusableIterable[Any]): Unit = {}
 }

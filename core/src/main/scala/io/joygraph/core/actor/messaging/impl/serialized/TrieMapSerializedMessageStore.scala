@@ -16,8 +16,8 @@ class TrieMapSerializedMessageStore(protected[this] var partitioner : VertexPart
     override def create(): Kryo = new Kryo()
   }).build()
 
-  override def setReusableIterablePool(pool : SimplePool[ReusableIterable[Any]]) : Unit = {
-    _pool = pool
+  override def setReusableIterableFactory(factory: => ReusableIterable[Any]): Unit = {
+    _pool = new SimplePool[ReusableIterable[Any]](factory)
   }
   private def reusableIterablePool(): SimplePool[ReusableIterable[Any]] = _pool
 
@@ -30,11 +30,11 @@ class TrieMapSerializedMessageStore(protected[this] var partitioner : VertexPart
     }
   }
 
-  protected[this] def removeMessages[I](dst : I): Unit = {
+  protected[messaging] def removeMessages[I](dst : I): Unit = {
     messaging.remove(dst)
   }
 
-  protected[this] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {
+  protected[messaging] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {
     // todo remove code duplication with messages
     implicit val iterable = reusableIterablePool().borrow()
     iterable.kryo(kryoPool.borrow())

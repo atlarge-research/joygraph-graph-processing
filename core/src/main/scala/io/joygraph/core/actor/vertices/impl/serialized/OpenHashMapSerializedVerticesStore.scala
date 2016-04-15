@@ -1,20 +1,19 @@
 package io.joygraph.core.actor.vertices.impl.serialized
 
-import java.lang.Thread.UncaughtExceptionHandler
 import java.nio.ByteBuffer
-import java.util.concurrent._
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
 import io.joygraph.core.actor.VertexComputation
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.vertices.VerticesStore
-import io.joygraph.core.actor.vertices.impl.serialized.OpenHashMapSerializedVerticesStore.{Partition, Worker}
+import io.joygraph.core.actor.vertices.impl.serialized.OpenHashMapSerializedVerticesStore.Partition
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program.{Edge, Vertex, VertexImpl}
 import io.joygraph.core.util._
 import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.collection.ReusableIterable
+import io.joygraph.core.util.concurrency.PartitionWorker
 import io.joygraph.core.util.serde.AsyncSerializer
 
 import scala.collection.concurrent.TrieMap
@@ -25,65 +24,6 @@ import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 
 object OpenHashMapSerializedVerticesStore {
-
-  protected[OpenHashMapSerializedVerticesStore] class ForeverThread extends Thread {
-
-
-    // TODO put in a sane number for capacity
-    private[this] val taskQueue = new LinkedBlockingQueue[Runnable]()
-    @volatile private[this] var running = true
-    @volatile private[this] var taskIsRunning = false
-    private[this] val waitObject = new Object
-
-    Runtime.getRuntime.addShutdownHook(new Thread() {
-      override def run(): Unit = {
-        running = false
-        interruptMe()
-      }
-    })
-    private[this] def interruptMe(): Unit = {
-      interrupt()
-    }
-
-    override def run(): Unit = {
-      try {
-      var runnable : Runnable = null
-      while (running) {
-        runnable = taskQueue.take()
-        taskIsRunning = true
-        runnable.run()
-        taskIsRunning = false
-        if (taskQueue.isEmpty) {
-          waitObject.synchronized{
-            waitObject.notify()
-          }
-        }
-      }
-      } catch {
-        case e : InterruptedException =>
-          // noop
-      }
-    }
-
-    def execute(r : Runnable) : Unit = {
-      // pass runnable to thread
-      taskQueue.add(r)
-    }
-  }
-
-  protected[OpenHashMapSerializedVerticesStore] class Worker(name : String, errorReporter : (Throwable) => Unit) {
-    private[this] val EXCEPTIONHANDLER = new UncaughtExceptionHandler {
-      override def uncaughtException(t: Thread, e: Throwable): Unit = errorReporter(e)
-    }
-
-    private[this] val foreverThread = new ForeverThread()
-    foreverThread.start()
-
-    def execute(runnable: Runnable): Unit = {
-      foreverThread.execute(runnable)
-    }
-
-  }
 
   protected[OpenHashMapSerializedVerticesStore] class Partition[I,V,E]
   (override protected[this] val clazzI: Class[I],
@@ -195,7 +135,7 @@ object OpenHashMapSerializedVerticesStore {
         kryo.writeObject(kryoOutput, value)
       }
       kryoOutput.flush()
-      os.trim()
+//      os.trim()
     }
 
     override def localNumEdges: WorkerId = numEdges
@@ -275,10 +215,10 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
  errorReporter : (Throwable) => Unit
 ) extends VerticesStore[I,V,E] {
 
-  private[this] val workers = new Array[Worker](numPartitions)
+  private[this] val workers = new Array[PartitionWorker](numPartitions)
   private[this] val partitions = new Array[Partition[I,V,E]](numPartitions)
   for(i <- 0 until numPartitions) {
-    workers(i) = new Worker("vertex-partition-" + i, errorReporter)
+    workers(i) = new PartitionWorker("vertex-partition-" + i, errorReporter)
     partitions(i) = new Partition[I, V, E](clazzI, clazzE, clazzV, i, numPartitions)
   }
 
@@ -289,15 +229,9 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
 
   override def removeAllFromVertex(vId: I): Unit = {
     val part = partition(vId)
-    val worker = workers(part.partitionIndex)
-    val promise = Promise[Unit]
-    worker.execute(new Runnable {
-      override def run(): Unit = {
-        part.removeAllFromVertex(vId)
-        promise.success()
-      }
-    })
-    Await.ready(promise.future, Duration.Inf)
+    part.synchronized {
+      part.removeAllFromVertex(vId)
+    }
   }
 
   override def halted(vId: I): Boolean = throw new UnsupportedOperationException
@@ -312,15 +246,9 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
 
   override def setHalted(vId: I, halted: Boolean): Unit = {
     val part = partition(vId)
-    val worker = workers(part.partitionIndex)
-    val promise = Promise[Unit]
-    worker.execute(new Runnable {
-      override def run(): Unit = {
-        part.setHalted(vId, halted)
-        promise.success()
-      }
-    })
-    Await.ready(promise.future, Duration.Inf)
+    part.synchronized{
+      part.setHalted(vId, halted)
+    }
   }
 
   override def edges(vId: I): Iterable[Edge[I, E]] = partition(vId).edges(vId)
@@ -329,15 +257,9 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
 
   override def addEdge(src: I, dst: I, value: E): Unit = {
     val part = partition(src)
-    val worker = workers(part.partitionIndex)
-    val promise = Promise[Unit]
-    worker.execute(new Runnable {
-      override def run(): Unit = {
-        part.addEdge(src, dst, value)
-        promise.success()
-      }
-    })
-    Await.ready(promise.future, Duration.Inf)
+    part.synchronized {
+      part.addEdge(src, dst, value)
+    }
   }
 
   override def localNumEdges: WorkerId = partitions.map(_.localNumEdges).sum
@@ -346,30 +268,18 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
 
   override def addVertex(vertex: I): Unit = {
     val part = partition(vertex)
-    val worker = workers(part.partitionIndex)
-    val promise = Promise[Unit]
-    worker.execute(new Runnable {
-      override def run(): Unit = {
-        part.addVertex(vertex)
-        promise.success()
-      }
-    })
-    Await.ready(promise.future, Duration.Inf)
+    part.synchronized {
+      part.addVertex(vertex)
+    }
   }
 
   override def mutableEdges(vId: I): Iterable[Edge[I, E]] = throw new UnsupportedOperationException
 
   override def setVertexValue(vId: I, v: V): Unit = {
     val part = partition(vId)
-    val worker = workers(part.partitionIndex)
-    val promise = Promise[Unit]
-    worker.execute(new Runnable {
-      override def run(): Unit = {
-        part.setVertexValue(vId, v)
-        promise.success()
-      }
-    })
-    Await.ready(promise.future, Duration.Inf)
+    part.synchronized {
+      part.setVertexValue(vId, v)
+    }
   }
 
   override def parVertices: ParIterable[I] = throw new UnsupportedOperationException

@@ -83,6 +83,10 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
         buf.clear();
     }
 
+    synchronized public void destroy() {
+        PlatformDependent.freeDirectBuffer(buf);
+    }
+
     public int size() {
         return buf.duplicate().flip().remaining();
     }

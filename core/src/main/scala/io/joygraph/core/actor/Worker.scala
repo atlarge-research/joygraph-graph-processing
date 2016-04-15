@@ -12,7 +12,7 @@ import com.typesafe.config.Config
 import io.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.messaging.impl.TrieMapMessageStore
-import io.joygraph.core.actor.messaging.impl.serialized.TrieMapSerializedMessageStore
+import io.joygraph.core.actor.messaging.impl.serialized.{OpenHashMapSerializedMessageStore, TrieMapSerializedMessageStore}
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.actor.vertices.impl.TrieMapVerticesStore
@@ -63,7 +63,7 @@ object Worker{
         verticesStore = new OpenHashMapSerializedVerticesStore[I,V,E](
           clazzI, clazzE, clazzV, jobSettings.workerCores, exceptionReporter
         )
-        messageStore = new TrieMapSerializedMessageStore(partitioner)
+        messageStore = new OpenHashMapSerializedMessageStore(jobSettings.workerCores, exceptionReporter)
       }
     }
     worker.initialize()
@@ -385,7 +385,7 @@ abstract class Worker[I,V,E]
     log.info(s"current INOUT $currentIncomingMessageClass $currentOutgoingMessageClass")
 
     // set current deserializer
-    messageStore.setReusableIterablePool(new SimplePool[ReusableIterable[Any]]({
+    messageStore.setReusableIterableFactory({
       val reusableIterable = new ReusableIterable[Any] {
         override protected[this] def deserializeObject(): Any = incomingMessageDeserializer(_kryo, _input)
       }
@@ -393,7 +393,7 @@ abstract class Worker[I,V,E]
       // prior to this it was retrieved from KryoSerialization
       reusableIterable.input(new ByteBufferInput(4096))
       reusableIterable
-    }))
+    })
 
     vertexProgramInstance match {
       case aggregatable : Aggregatable => {
@@ -656,7 +656,7 @@ abstract class Worker[I,V,E]
     }
 
     // TODO change this, it's not so nice to tweak the ingoing and outgoing classes
-    messageStore.setReusableIterablePool(new SimplePool[ReusableIterable[Any]]({
+    messageStore.setReusableIterableFactory({
       val reusableIterable = new ReusableIterable[Any] {
         override protected[this] def deserializeObject(): Any = messageDeserializer(_kryo, _input)
       }
@@ -664,7 +664,7 @@ abstract class Worker[I,V,E]
       // prior to this it was retrieved from KryoSerialization
       reusableIterable.input(new ByteBufferInput(4096))
       reusableIterable
-    }))
+    })
 
     verticesStore.distributeVertices(
       newWorkersMap,

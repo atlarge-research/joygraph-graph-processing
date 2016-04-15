@@ -21,6 +21,22 @@ object YARNUtils {
   }
 
   /**
+    * MaxCapability returned by ApplicationResponse is not guaranteed to be correct (2.7.2),
+    * there may be discrepancies between different properties in YARN, namely
+    * yarn.scheduler.maximum-allocation-vcores
+    * yarn.nodemanager.resource.cpu-vcores
+    * The cap returned is maximum-allocation-vcores rather than resource.cpu-vcores.
+    * However when submitted, YARN checks the request for both properties and may reject your request
+    * @return
+    */
+  def cappedResource(maxResource : Resource, memory : Int, vCores : Int): Resource = {
+    println("MAX RESOURCE: " + maxResource)
+    val maxNumCores = math.min(maxResource.getVirtualCores, vCores)
+    val maxMemory = math.min(maxResource.getMemory, memory)
+    Resource.newInstance(maxMemory, maxNumCores)
+  }
+
+  /**
     * Copies local `fileSrcPath` to `{fs.getHomeDirectory}/{appId}_{fileName}`, symbolically links `fileName` for
     * application master.
     *
