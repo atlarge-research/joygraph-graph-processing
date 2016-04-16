@@ -19,8 +19,6 @@ class UCDLP extends NewVertexProgram[Long, Long, NullClass] {
     maxIterations = conf.getInt(CDLP.MAX_INTERATIONS_CONF_KEY)
   }
 
-  private[this] val labelMessage = new LabelMessage
-  private[this] val messageSet = new mutable.HashSet[Long]()
   private[this] val labelOccurences = new mutable.OpenHashMap[Long, Long]().withDefaultValue(0L)
 
   override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, NullClass, _, _]] = {
@@ -206,4 +204,6 @@ class LabelMessage extends KryoSerializable {
     label = input.readLong()
     count = input.readInt()
   }
+
+  override def toString: String = "label: " + label + " " + "count: " + count
 }

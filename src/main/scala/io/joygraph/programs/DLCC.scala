@@ -13,6 +13,7 @@ class ULCC extends NewVertexProgram[Long, Double, NullClass] {
 
   // TODO neighbours creates a lot of garbage, maybe replace with something else
   private[this] val neighbours = mutable.HashSet.empty[Long]
+  private[this] val inquiry = Inquiry(null.asInstanceOf[Long], null.asInstanceOf[Array[Long]])
 
   override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, NullClass, _, _]] = {
     case 0 =>
@@ -22,6 +23,9 @@ class ULCC extends NewVertexProgram[Long, Double, NullClass] {
           v.edges.foreach(x => neighbours += x.dst)
           if (neighbours.size > 1) {
             val nArray: Array[Long] = neighbours.toArray
+            inquiry.src = v.id
+            inquiry.edges = nArray
+            neighbours.foreach(dst => send(inquiry, dst))
             neighbours.foreach(dst => send(Inquiry(v.id, nArray), dst))
           }
           v.value = neighbours.size
@@ -67,6 +71,7 @@ class DLCC extends NewVertexProgram[Long, Double, NullClass] {
 
   // TODO neighbours creates a lot of garbage, maybe replace with something else
   private[this] val neighbours = mutable.HashSet.empty[Long]
+  private[this] val inquiry = Inquiry(null.asInstanceOf[Long], null.asInstanceOf[Array[Long]])
   override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, NullClass, _, _]] = {
     case 0 =>
       new SuperStepFunction(this, classOf[NullClass], classOf[Long]) {
@@ -83,7 +88,9 @@ class DLCC extends NewVertexProgram[Long, Double, NullClass] {
           v.edges.foreach(x => neighbours += x.dst)
           if (neighbours.size > 1) {
             val nArray: Array[Long] = neighbours.toArray
-            neighbours.foreach(dst => send(Inquiry(v.id, nArray), dst))
+            inquiry.src = v.id
+            inquiry.edges = nArray
+            neighbours.foreach(dst => send(inquiry, dst))
           }
           v.value = neighbours.size
           false
