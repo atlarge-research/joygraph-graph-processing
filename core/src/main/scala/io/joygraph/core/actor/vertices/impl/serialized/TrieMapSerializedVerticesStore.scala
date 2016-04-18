@@ -38,7 +38,7 @@ protected[this] var partitioner : VertexPartitioner
       private[this] val reusableEdge : Edge[I,E] = Edge[I,E](null.asInstanceOf[I], null.asInstanceOf[E])
       override protected[this] def deserializeObject(): Edge[I, E] = {
         reusableEdge.dst = _kryo.readObject(_input, clazzI)
-        if (!isNullClass) {
+        if (!voidOrUnitClass) {
           reusableEdge.e = _kryo.readObject(_input, clazzE)
         }
         reusableEdge
@@ -49,7 +49,7 @@ protected[this] var partitioner : VertexPartitioner
   private[this] val reusableMutableIterablePool = new SimplePool[MutableReusableIterable[I, Edge[I,E]]]( {
     val mRIterable = new MutableReusableIterable[I, Edge[I, E]] {
       override protected[this] def deserializeObject(): Edge[I, E] = {
-        if (!isNullClass) {
+        if (!voidOrUnitClass) {
           Edge(_kryo.readObject(_input, clazzI), _kryo.readObject(_input, clazzE))
         } else {
           Edge(_kryo.readObject(_input, clazzI), null.asInstanceOf[E])
@@ -107,7 +107,7 @@ protected[this] var partitioner : VertexPartitioner
     os.synchronized {
       kryoOutput.setOutputStream(os)
       kryo.writeObject(kryoOutput, dst)
-      if (!isNullClass) {
+      if (!voidOrUnitClass) {
         kryo.writeObject(kryoOutput, value)
       }
       kryoOutput.flush()

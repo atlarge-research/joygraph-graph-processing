@@ -1,8 +1,8 @@
 package io.joygraph.core.actor.messaging.impl.serialized
 
 import com.esotericsoftware.kryo.Kryo
-import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.messaging.impl.serialized.OpenHashMapSerializedMessageStore.Partition
+import io.joygraph.core.actor.messaging.{Message, MessageStore}
 import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.PartitionWorker
@@ -35,10 +35,10 @@ object OpenHashMapSerializedMessageStore {
       _reusableIterable.asInstanceOf[ReusableIterable[M]]
     }
 
-    override def _handleMessage[I](index: WorkerId, dstMPair: (I, _), clazzI: Class[I], clazzM: Class[_]): Unit = {
-      val os = nextMessages.getOrElseUpdate(dstMPair._1, new DirectByteBufferGrowingOutputStream(8))
+    override def _handleMessage[I](index: WorkerId, dstMPair: Message[I], clazzI: Class[I], clazzM: Class[_]): Unit = {
+      val os = nextMessages.getOrElseUpdate(dstMPair.dst, new DirectByteBufferGrowingOutputStream(8))
       kryoOutput.setOutputStream(os)
-      kryoWrite.writeObject(kryoOutput, dstMPair._2)
+      kryoWrite.writeObject(kryoOutput, dstMPair.msg)
       kryoOutput.flush()
       // TODO evaluate the removal of trim
       //    outputStream.trim()
@@ -99,8 +99,8 @@ class OpenHashMapSerializedMessageStore
     partitions.foreach(_.setReusableIterableFactory(factory))
   }
 
-  override def _handleMessage[I](index: WorkerId, dstMPair: (I, _), clazzI: Class[I], clazzM: Class[_]): Unit = {
-    val part = partition(dstMPair._1)
+  override def _handleMessage[I](index: WorkerId, dstMPair: Message[I], clazzI: Class[I], clazzM: Class[_]): Unit = {
+    val part = partition(dstMPair.dst)
     part.synchronized {
       part._handleMessage(index, dstMPair, clazzI, clazzM)
     }

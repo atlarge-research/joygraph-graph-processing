@@ -1,13 +1,12 @@
 package io.joygraph.core.actor.messaging.impl
 
-import io.joygraph.core.actor.messaging.{MessageStore, Messaging}
+import io.joygraph.core.actor.messaging.{Message, MessageStore, Messaging}
 
 class TrieMapMessageStore extends MessageStore {
   private[this] val messaging : Messaging = new TrieMapMessaging
 
-  def _handleMessage[I](index : Int, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any]) {
-  val (dst, m) = dstMPair
-    messaging.add(dst, m)
+  def _handleMessage[I](index: WorkerId, dstMPair: Message[I], clazzI: Class[I], clazzM: Class[_]) {
+    messaging.add(dstMPair.dst, dstMPair.msg)
   }
 
   protected[messaging] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {

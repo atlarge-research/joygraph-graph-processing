@@ -5,7 +5,8 @@ import java.nio.ByteBuffer
 import io.joygraph.core.actor.VertexComputation
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.partitioning.VertexPartitioner
-import io.joygraph.core.program.{Edge, NullClass}
+import io.joygraph.core.program.Edge
+import io.joygraph.core.util.TypeUtil
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.concurrency.Types
 import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
@@ -19,7 +20,7 @@ trait VerticesStore[I,V,E] extends Types {
   protected[this] val clazzI : Class[I]
   protected[this] val clazzE : Class[E]
   protected[this] val clazzV : Class[V]
-  protected[this] val isNullClass = clazzE == classOf[NullClass]
+  protected[this] val voidOrUnitClass = TypeUtil.unitOrVoid(clazzE)
 
   def importVerticesStoreData
   (index : Int,
@@ -50,7 +51,7 @@ trait VerticesStore[I,V,E] extends Types {
         }
       case 3 => // edge
         edgeDeserializer.deserialize(is, index, (kryo, input) => {
-          if (!isNullClass) {
+          if (!voidOrUnitClass) {
             (kryo.readObject(input, clazzI),
               kryo.readObject(input, clazzI),
               kryo.readObject(input, clazzE)
@@ -109,7 +110,7 @@ trait VerticesStore[I,V,E] extends Types {
       asyncSerializer.serialize[Edge[I,E]](index, workerId, edge, (kryo, output, o) => {
         kryo.writeObject(output, vId)
         kryo.writeObject(output, o.dst)
-        if (!isNullClass) {
+        if (!voidOrUnitClass) {
           kryo.writeObject(output, o.e)
         }
       })(outputHandler)

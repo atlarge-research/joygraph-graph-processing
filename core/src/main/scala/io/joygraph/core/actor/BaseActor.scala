@@ -41,11 +41,11 @@ class BaseActor(private[this] val jobConf : Config, masterFactory : (Config, Clu
       }
     case m @ UnreachableMember(member) =>
       log.info("Member detected as unreachable: {}", member)
-      workerRef match {
-        case Some(x) =>
-          x ! m
-        case None =>
-      }
+//      workerRef match {
+//        case Some(x) =>
+//          x ! m
+//        case None =>
+//      }
     case LeaderChanged(leader) =>
       log.info("Leader Changed {}", leader)
     case x : MemberEvent => // ignore

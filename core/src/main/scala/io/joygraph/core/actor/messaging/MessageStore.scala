@@ -17,7 +17,7 @@ trait MessageStore extends Types {
   (index : ThreadId,
    is : ObjectByteBufferInputStream,
    messagesDeserializer : AsyncDeserializer,
-   deserializer : (Kryo, Input) => (I, Any),
+   deserializer : (Kryo, Input) => Message[I],
    clazzI : Class[I],
    currentOutgoingMessageClass : Class[M]
   ): Unit = {
@@ -48,7 +48,7 @@ trait MessageStore extends Types {
     }
   }
 
-  def _handleMessage[I](index : Int, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any])
+  def _handleMessage[I](index: WorkerId, message: Message[I], clazzI: Class[I], clazzM: Class[_])
   protected[messaging] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
   def messages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
   protected[messaging] def removeMessages[I](dst : I)

@@ -2,7 +2,7 @@ package io.joygraph.core.actor.messaging.impl.serialized
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.pool.{KryoFactory, KryoPool}
-import io.joygraph.core.actor.messaging.MessageStore
+import io.joygraph.core.actor.messaging.{Message, MessageStore}
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.{KryoSerialization, SimplePool}
@@ -21,12 +21,11 @@ class TrieMapSerializedMessageStore(protected[this] var partitioner : VertexPart
   }
   private def reusableIterablePool(): SimplePool[ReusableIterable[Any]] = _pool
 
-  def _handleMessage[I](index : ThreadId, dstMPair : (I, _ <: Any), clazzI : Class[I], clazzM: Class[_ <: Any]) {
+  def _handleMessage[I](index: WorkerId, dstMPair: Message[I], clazzI: Class[I], clazzM: Class[_]) {
     implicit val kryoInstance = kryo(index)
     kryoInstance.synchronized { // TODO remove after conversion to class
       implicit val kryoOutputInstance = kryoOutput(index)
-      val (dst, m) = dstMPair
-      messaging.add(dst, m)
+      messaging.add(dstMPair.dst, dstMPair.msg)
     }
   }
 

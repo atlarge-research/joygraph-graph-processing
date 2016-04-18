@@ -10,13 +10,13 @@ import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{ByteBufferInput, Input, Output}
 import com.typesafe.config.Config
 import io.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
-import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.messaging.impl.TrieMapMessageStore
 import io.joygraph.core.actor.messaging.impl.serialized.{OpenHashMapSerializedMessageStore, TrieMapSerializedMessageStore}
+import io.joygraph.core.actor.messaging.{Message, MessageStore}
 import io.joygraph.core.actor.state.GlobalState
-import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.actor.vertices.impl.TrieMapVerticesStore
 import io.joygraph.core.actor.vertices.impl.serialized.{OpenHashMapSerializedVerticesStore, TrieMapSerializedVerticesStore}
+import io.joygraph.core.actor.vertices.{VertexEdge, VerticesStore}
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
 import io.joygraph.core.message.elasticity._
@@ -28,7 +28,7 @@ import io.joygraph.core.util._
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.Types
-import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer, CombinableAsyncSerializer}
+import io.joygraph.core.util.serde._
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -129,8 +129,9 @@ abstract class Worker[I,V,E]
 
   protected[this] val clazzI : Class[I] = programDefinition.clazzI
   protected[this] val clazzV : Class[V] = programDefinition.clazzV
-
   protected[this] val clazzE : Class[E] = programDefinition.clazzE
+  protected[this] val voidOrUnitClass = TypeUtil.unitOrVoid(clazzE)
+
   private[this] var id : Option[Int] = None
   private[this] var workers : Map[Int, AddressPair] = Map.empty
 
@@ -166,11 +167,19 @@ abstract class Worker[I,V,E]
     _state = state
   }
 
+  private[this] val edgeSerDes = new SimplePool[EdgeDeserializer[I,E]]({
+    new EdgeDeserializer[I,E](clazzI, clazzE)
+  })
+
+  private[this] val edgeSerializer = new EdgeSerializer[I,E](clazzI, clazzE)
+
   private[this] def _handleDataLoading(index : Int, is : ObjectByteBufferInputStream): Unit = {
     is.msgType match {
       case 0 => // edge
-        dataLoadingDeserializer.deserialize(is, index, edgeDeserializer){ implicit edges =>
-          edges.foreach(x => verticesStore.addEdge(x._1, x._2, x._3))
+        edgeSerDes { implicit edgeSerDe =>
+          dataLoadingDeserializer.deserialize(is, index, edgeSerDe.edgeDeserializer){ implicit edges =>
+            edges.foreach(x => verticesStore.addEdge(x.src, x.dst, x.value))
+          }
         }
       case 1 => // vertex
         dataLoadingDeserializer.deserialize(is, index, vertexDeserializer) { implicit vertices =>
@@ -205,20 +214,31 @@ abstract class Worker[I,V,E]
     }
   }
 
+  private[this] val messageSerDes = new SimplePool({
+    val msgSerDe = new MessageSerDe[I](clazzI)
+    msgSerDe.setIncomingClass(currentIncomingMessageClass)
+    msgSerDe.setOutgoingClass(currentOutgoingMessageClass)
+    msgSerDe
+  })
+  private[this] val messageSerDeSharable = new MessageSerDe[I](clazzI)
+
   private[this] def _handleSuperStep(index : Int, is: ObjectByteBufferInputStream) = {
     is.msgType match {
       case 0 => // edge
-        messagesDeserializer.deserialize(is, index, messagePairDeserializer){ implicit dstMPairs =>
-          dstMPairs.foreach(messageStore._handleMessage(index, _, clazzI, currentOutgoingMessageClass))
+        messageSerDes { implicit messageSerDe =>
+          messagesDeserializer.deserialize(is, index, messageSerDe.messagePairDeserializer){ implicit dstMPairs =>
+            dstMPairs.foreach(messageStore._handleMessage(index, _, clazzI, currentOutgoingMessageClass))
+          }
         }
+
     }
   }
 
-  private[this] def addEdge(threadId : ThreadId, srcWorkerId : WorkerId, src : I, dst : I, value : E): Unit = {
+  private[this] def addEdge(threadId : ThreadId, srcWorkerId : WorkerId, vertexEdge : VertexEdge[I,E]): Unit = {
     ifMessageToSelf(srcWorkerId) {
-      verticesStore.addEdge(src, dst, value)
+      verticesStore.addEdge(vertexEdge.src, vertexEdge.dst, vertexEdge.value)
     } {
-      edgeBufferNew.serialize(threadId, srcWorkerId, (src, dst, value), edgeSerializer) { implicit byteBuffer =>
+      edgeBufferNew.serialize(threadId, srcWorkerId, vertexEdge, edgeSerializer.edgeSerializer) { implicit byteBuffer =>
         log.info(s"${id.get} sending to $srcWorkerId, size: ${byteBuffer.position()}")
         messageSender.send(id.get, srcWorkerId, byteBuffer)
       }
@@ -236,14 +256,14 @@ abstract class Worker[I,V,E]
     }
   }
 
-  private[this] def addDataNoVerticesData(src :I, dst : I, value : E) = {
+  private[this] def addDataNoVerticesData(vertexEdge : VertexEdge[I,E]) = {
     // TODO pick correct pool
     val threadId = ThreadId.getMod(computationFjPool.getParallelism)
-    val srcWorkerId : Int = partitioner.destination(src)
-    addEdge(threadId, srcWorkerId, src, dst, value)
+    val srcWorkerId : Int = partitioner.destination(vertexEdge.src)
+    addEdge(threadId, srcWorkerId, vertexEdge)
 
-    val dstWorkerId : Int = partitioner.destination(dst)
-    addVertex(threadId, dstWorkerId, dst)
+    val dstWorkerId : Int = partitioner.destination(vertexEdge.dst)
+    addVertex(threadId, dstWorkerId, vertexEdge.dst)
   }
 
   private[this] val DATA_LOADING_OPERATION : PartialFunction[Any, Unit] = {
@@ -263,14 +283,19 @@ abstract class Worker[I,V,E]
         case (position, splitLength) =>
           log.info(s"${id.get} parsing $path $position $splitLength")
           lineProvider.read(config, path, position, splitLength) {
+            val vertexEdge = VertexEdge[I,E](null.asInstanceOf[I], null.asInstanceOf[I], null.asInstanceOf[E])
+            val vertexEdgeReversed = VertexEdge[I,E](null.asInstanceOf[I], null.asInstanceOf[I], null.asInstanceOf[E])
             _.foreach { l =>
-              val (src, dst, value) = programDefinition.edgeParser(l)
+              programDefinition.edgeParser(l, vertexEdge)
               val threadId = ThreadId.getMod(computationFjPool.getParallelism)
-              val srcWorkerId: Int = partitioner.destination(src)
-              addEdge(threadId, srcWorkerId, src, dst, value)
+              val srcWorkerId: Int = partitioner.destination(vertexEdge.src)
+              addEdge(threadId, srcWorkerId, vertexEdge)
               if (!jobSettings.isDirected) {
-                val dstWorkerId: Int = partitioner.destination(dst)
-                addEdge(threadId, dstWorkerId, dst, src, value)
+                val dstWorkerId: Int = partitioner.destination(vertexEdge.dst)
+                vertexEdgeReversed.src = vertexEdge.dst
+                vertexEdgeReversed.dst = vertexEdge.src
+                vertexEdgeReversed.value = vertexEdge.value
+                addEdge(threadId, dstWorkerId, vertexEdgeReversed)
               }
             }
           }
@@ -307,12 +332,17 @@ abstract class Worker[I,V,E]
         IOUtil.splits(length, jobSettings.workerCores, start).par.foreach {
           case (position, splitLength) =>
             log.info(s"${id.get} parsing $path $position $splitLength")
+            val vertexEdge = VertexEdge[I,E](null.asInstanceOf[I], null.asInstanceOf[I], null.asInstanceOf[E])
+            val vertexEdgeReversed = VertexEdge[I,E](null.asInstanceOf[I], null.asInstanceOf[I], null.asInstanceOf[E])
             lineProvider.read(config, path, position, splitLength) {
               _.foreach { l =>
-                val (src, dst, value) = programDefinition.edgeParser(l)
-                addDataNoVerticesData(src, dst, value)
+                programDefinition.edgeParser(l, vertexEdge)
+                addDataNoVerticesData(vertexEdge)
                 if (!jobSettings.isDirected) {
-                  addDataNoVerticesData(dst, src, value)
+                  vertexEdgeReversed.src = vertexEdge.dst
+                  vertexEdgeReversed.dst = vertexEdge.src
+                  vertexEdgeReversed.value = vertexEdge.value
+                  addDataNoVerticesData(vertexEdgeReversed)
                 }
               }
             }
@@ -384,10 +414,15 @@ abstract class Worker[I,V,E]
 
     log.info(s"current INOUT $currentIncomingMessageClass $currentOutgoingMessageClass")
 
+    messageSerDes.foreach(_.setIncomingClass(currentIncomingMessageClass))
+    messageSerDeSharable.setIncomingClass(currentIncomingMessageClass)
+    messageSerDes.foreach(_.setOutgoingClass(currentOutgoingMessageClass))
+    messageSerDeSharable.setOutgoingClass(currentOutgoingMessageClass)
+
     // set current deserializer
     messageStore.setReusableIterableFactory({
       val reusableIterable = new ReusableIterable[Any] {
-        override protected[this] def deserializeObject(): Any = incomingMessageDeserializer(_kryo, _input)
+        override protected[this] def deserializeObject(): Any = messageSerDeSharable.incomingMessageDeserializer(_kryo, _input)
       }
       // TODO 4096 max message size should be retrieved somewhere else,
       // prior to this it was retrieved from KryoSerialization
@@ -465,16 +500,21 @@ abstract class Worker[I,V,E]
             ssF match {
               case combinable : Combinable[Any @unchecked] =>
                 implicit val c = combinable
+                val message = Message[I](null.asInstanceOf[I], null)
                 ssF.messageSenders(
                   (m, dst) => {
                     val workerId = partitioner.destination(dst)
                     val threadId = ThreadId.getMod(computationFjPool.getParallelism)
                     ifMessageToSelf(workerId) {
                       // could combine but.. it's not over the network
-                      messageStore._handleMessage(threadId, (dst,m), clazzI, currentOutgoingMessageClass)
+                      message.dst = dst
+                      message.msg = m
+                      messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
                     } {
-                      messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
-                        messageSender.send(id.get, workerId, byteBuffer)
+                      messageSerDes { implicit messageSerDe =>
+                        messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerDe.messageSerializer, messageSerDe.messageDeserializer) { implicit byteBuffer =>
+                          messageSender.send(id.get, workerId, byteBuffer)
+                        }
                       }
                     }
                   },
@@ -485,23 +525,31 @@ abstract class Worker[I,V,E]
                         val threadId = ThreadId.getMod(computationFjPool.getParallelism)
                         ifMessageToSelf(workerId) {
                           // could combine but.. it's not over the network
-                          messageStore._handleMessage(threadId, (dst,m), clazzI, currentOutgoingMessageClass)
+                          message.dst = dst
+                          message.msg = m
+                          messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
                         } {
-                          messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerializer, messageDeserializer) { implicit byteBuffer =>
-                            messageSender.send(id.get, workerId, byteBuffer)
+                          messageSerDes { implicit messageSerDe =>
+                            messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerDe.messageSerializer, messageSerDe.messageDeserializer) { implicit byteBuffer =>
+                              messageSender.send(id.get, workerId, byteBuffer)
+                            }
                           }
                         }
                     }
                   })
               case _ =>
+                val message = Message[I](null.asInstanceOf[I], null)
                 ssF.messageSenders(
                   (m, dst) => {
                     val workerId = partitioner.destination(dst)
                     val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+                    message.dst = dst
+                    message.msg = m
+
                     ifMessageToSelf(workerId) {
-                      messageStore._handleMessage(threadId, (dst,m), clazzI, currentOutgoingMessageClass)
+                      messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
                     } {
-                      messagesSerializer.serialize(threadId, workerId, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                      messagesSerializer.serialize(threadId, workerId, message, messageSerDeSharable.messagePairSerializer) { implicit byteBuffer =>
                         log.info(s"${id.get} sending message to $workerId of size ${byteBuffer.position()} of type ${m.getClass}")
                         messageSender.send(id.get, workerId, byteBuffer)
                       }
@@ -512,10 +560,12 @@ abstract class Worker[I,V,E]
                       case Edge(dst, _) =>
                         val workerId = partitioner.destination(dst)
                         val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+                        message.dst = dst
+                        message.msg = m
                         ifMessageToSelf(workerId) {
-                          messageStore._handleMessage(threadId, (dst,m), clazzI, currentOutgoingMessageClass)
+                          messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
                         } {
-                          messagesSerializer.serialize(threadId, workerId, (dst, m), messagePairSerializer) { implicit byteBuffer =>
+                          messagesSerializer.serialize(threadId, workerId, message, messageSerDeSharable.messagePairSerializer) { implicit byteBuffer =>
                             log.info(s"${id.get} sending message to $workerId of size ${byteBuffer.position()} of type ${m.getClass}")
                             messageSender.send(id.get, workerId, byteBuffer)
                           }
@@ -561,27 +611,6 @@ abstract class Worker[I,V,E]
       }
   }
 
-  private[this] def messagePairDeserializer(kryo : Kryo, input : Input) : (I, Any) = {
-    (kryo.readObject(input, clazzI),
-      messageDeserializer(kryo, input))
-  }
-
-  private[this] def messagePairSerializer(kryo : Kryo, output : Output, o : (I, Any) ) = {
-    kryo.writeObject(output, o._1)
-    messageSerializer(kryo, output, o._2)
-  }
-
-  private[this] def messageSerializer(kryo : Kryo, output : Output, m : Any) = {
-    kryo.writeObject(output, m)
-  }
-
-  private[this] def messageDeserializer(kryo : Kryo, input : Input) : Any = {
-    kryo.readObject(input, currentOutgoingMessageClass)
-  }
-
-  private[this] def incomingMessageDeserializer(kryo : Kryo, input : Input) : Any = {
-    kryo.readObject(input, currentIncomingMessageClass)
-  }
 
   private[this] def currentReceive : PartialFunction[Any, Unit] = _currentReceive
   private[this] def currentReceive_=(that : PartialFunction[Any, Unit]) = _currentReceive = that
@@ -623,8 +652,9 @@ abstract class Worker[I,V,E]
             elasticGrowthDeserializer,
             elasticGrowthDeserializer
           )
-
-          messageStore.importCurrentMessagesData(threadId, is, messagesDeserializer, messagePairDeserializer, clazzI, currentOutgoingMessageClass)
+          messageSerDes { implicit messageSerDe =>
+            messageStore.importCurrentMessagesData(threadId, is, messagesDeserializer, messageSerDe.messagePairDeserializer, clazzI, currentOutgoingMessageClass)
+          }
       }
     } catch {
       case t : Throwable => t.printStackTrace()
@@ -658,7 +688,7 @@ abstract class Worker[I,V,E]
     // TODO change this, it's not so nice to tweak the ingoing and outgoing classes
     messageStore.setReusableIterableFactory({
       val reusableIterable = new ReusableIterable[Any] {
-        override protected[this] def deserializeObject(): Any = messageDeserializer(_kryo, _input)
+        override protected[this] def deserializeObject(): Any = messageSerDeSharable.messageDeserializer(_kryo, _input)
       }
       // TODO 4096 max message size should be retrieved somewhere else,
       // prior to this it was retrieved from KryoSerialization
@@ -856,28 +886,5 @@ abstract class Worker[I,V,E]
 
   private[this] def vertexSerializer(kryo: Kryo, output : Output, v : I) : Unit = {
     kryo.writeObject(output, v)
-  }
-
-  private[this] def edgeDeserializer(kryo : Kryo, input : Input) : (I, I, E) = {
-    if (clazzE == classOf[NullClass]) {
-      (kryo.readObject(input, clazzI),
-        kryo.readObject(input, clazzI),
-        NullClass.SINGLETON.asInstanceOf[E])
-    } else {
-      (kryo.readObject(input, clazzI),
-        kryo.readObject(input, clazzI),
-        kryo.readObject(input, clazzE))
-    }
-  }
-
-  private[this] def edgeSerializer(kryo : Kryo, output : Output, o : (I, I, E)) : Unit = {
-    if (clazzE == classOf[NullClass]) {
-      kryo.writeObject(output, o._1)
-      kryo.writeObject(output, o._2)
-    } else {
-      kryo.writeObject(output, o._1)
-      kryo.writeObject(output, o._2)
-      kryo.writeObject(output, o._3)
-    }
   }
 }
