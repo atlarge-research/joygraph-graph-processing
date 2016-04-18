@@ -11,7 +11,7 @@ object PageRank {
   val DANGLINGNODESUM_AGG_NAME = "danglingNodeSum"
 }
 
-class PageRank extends HomogeneousVertexProgram[Long, Double, NullClass, Double] with Aggregatable {
+class PageRank extends HomogeneousVertexProgram[Long, Double, Unit, Double] with Aggregatable {
 
   private[this] var dampingFactor : Double = _
   private[this] var numberOfIterations : Int = _
@@ -43,7 +43,7 @@ class PageRank extends HomogeneousVertexProgram[Long, Double, NullClass, Double]
     numberOfIterations = conf.getInt(PageRank.NUMBER_OF_ITERATIONS_CONF_KEY)
   }
 
-  override def run(v: Vertex[Long, Double, NullClass], messages: Iterable[Double], superStep: Int)(implicit send: (Double, Long) => Unit, sendAll: (Double) => Unit): Boolean = {
+  override def run(v: Vertex[Long, Double, Unit], messages: Iterable[Double], superStep: Int)(implicit send: (Double, Long) => Unit, sendAll: (Double) => Unit): Boolean = {
     if (superStep == 0) {
       v.value = 1.0 / totalNumVertices
     } else {

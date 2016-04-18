@@ -2,14 +2,12 @@ package io.joygraph.definitions
 
 import java.nio.charset.StandardCharsets
 
-import io.joygraph.core.program.{NullClass, ProgramDefinition}
-import io.joygraph.programs.{CDLP, DCDLP, DWCC}
+import io.joygraph.core.program.ProgramDefinition
+import io.joygraph.core.util.ParseUtil
+import io.joygraph.programs.DCDLP
 
 class DCDLPEdgeListDefinition extends ProgramDefinition[String, Long, Long, Boolean] (
-  (l) => {
-    val s = l.split("\\s")
-    (s(0).toLong, s(1).toLong, DCDLP.UNIDIRECTIONAL)
-  },
+  (l,v) => ParseUtil.edgeListLineLongLongBooleanWithDefault(l,v,DCDLP.UNIDIRECTIONAL),
   (l) => l.toLong,
   (v, outputStream) =>
     outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8)),

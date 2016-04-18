@@ -1,24 +1,24 @@
 package io.joygraph.programs
 
 import com.esotericsoftware.kryo.io.{Input, Output}
-import com.esotericsoftware.kryo.{DefaultSerializer, Kryo, KryoSerializable}
+import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import com.typesafe.config.Config
-import io.joygraph.core.program.{NewVertexProgram, NullClass, SuperStepFunction, Vertex}
+import io.joygraph.core.program.{NewVertexProgram, SuperStepFunction, Vertex}
 import io.joygraph.core.util.LazySize
 
 import scala.collection.mutable
 
-class ULCC extends NewVertexProgram[Long, Double, NullClass] {
+class ULCC extends NewVertexProgram[Long, Double, Unit] {
   override def load(conf: Config): Unit = {}
 
   // TODO neighbours creates a lot of garbage, maybe replace with something else
   private[this] val neighbours = mutable.HashSet.empty[Long]
   private[this] val inquiry = Inquiry(null.asInstanceOf[Long], null.asInstanceOf[Array[Long]])
 
-  override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, NullClass, _, _]] = {
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, Unit, _, _]] = {
     case 0 =>
       new SuperStepFunction(this, classOf[Long], classOf[Inquiry]) {
-        override def func: (Vertex[Long, Double, NullClass], Iterable[Long]) => Boolean = (v, m) => {
+        override def func: (Vertex[Long, Double, Unit], Iterable[Long]) => Boolean = (v, m) => {
           neighbours.clear()
           v.edges.foreach(x => neighbours += x.dst)
           if (neighbours.size > 1) {
@@ -33,7 +33,7 @@ class ULCC extends NewVertexProgram[Long, Double, NullClass] {
       }
     case 1 =>
       new SuperStepFunction(this, classOf[Inquiry], classOf[Int]) {
-        override def func: (Vertex[Long, Double, NullClass], Iterable[Inquiry]) => Boolean = (v, m) => {
+        override def func: (Vertex[Long, Double, Unit], Iterable[Inquiry]) => Boolean = (v, m) => {
           neighbours.clear()
           v.edges.foreach(x => neighbours += x.dst)
           m.foreach {
@@ -50,8 +50,8 @@ class ULCC extends NewVertexProgram[Long, Double, NullClass] {
         }
       }
     case 2 =>
-      new SuperStepFunction(this, classOf[Int], classOf[NullClass]) {
-        override def func: (Vertex[Long, Double, NullClass], Iterable[Int]) => Boolean = (v, m) => {
+      new SuperStepFunction(this, classOf[Int], classOf[Unit]) {
+        override def func: (Vertex[Long, Double, Unit], Iterable[Int]) => Boolean = (v, m) => {
           if (LazySize.sizeSmallerThan(m, 2)) {
             v.value = 0.0
           } else {
@@ -65,23 +65,23 @@ class ULCC extends NewVertexProgram[Long, Double, NullClass] {
   }
 }
 
-class DLCC extends NewVertexProgram[Long, Double, NullClass] {
+class DLCC extends NewVertexProgram[Long, Double, Unit] {
   override def load(conf: Config): Unit = {}
 
   // TODO neighbours creates a lot of garbage, maybe replace with something else
   private[this] val neighbours = mutable.HashSet.empty[Long]
   private[this] val inquiry = Inquiry(null.asInstanceOf[Long], null.asInstanceOf[Array[Long]])
-  override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, NullClass, _, _]] = {
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, Unit, _, _]] = {
     case 0 =>
-      new SuperStepFunction(this, classOf[NullClass], classOf[Long]) {
-        override def func: (Vertex[Long, Double, NullClass], Iterable[NullClass]) => Boolean = (v, m) => {
+      new SuperStepFunction(this, classOf[Unit], classOf[Long]) {
+        override def func: (Vertex[Long, Double, Unit], Iterable[Unit]) => Boolean = (v, m) => {
           sendAll(v, v.id)
           false
         }
       }
     case 1 =>
       new SuperStepFunction(this, classOf[Long], classOf[Inquiry]) {
-        override def func: (Vertex[Long, Double, NullClass], Iterable[Long]) => Boolean = (v, m) => {
+        override def func: (Vertex[Long, Double, Unit], Iterable[Long]) => Boolean = (v, m) => {
           neighbours.clear()
           neighbours ++= m
           v.edges.foreach(x => neighbours += x.dst)
@@ -97,7 +97,7 @@ class DLCC extends NewVertexProgram[Long, Double, NullClass] {
       }
     case 2 =>
       new SuperStepFunction(this, classOf[Inquiry], classOf[Int]) {
-        override def func: (Vertex[Long, Double, NullClass], Iterable[Inquiry]) => Boolean = (v, m) => {
+        override def func: (Vertex[Long, Double, Unit], Iterable[Inquiry]) => Boolean = (v, m) => {
           neighbours.clear()
           v.edges.foreach(x => neighbours += x.dst)
           m.foreach {
@@ -114,8 +114,8 @@ class DLCC extends NewVertexProgram[Long, Double, NullClass] {
         }
       }
     case 3 =>
-      new SuperStepFunction(this, classOf[Int], classOf[NullClass]) {
-        override def func: (Vertex[Long, Double, NullClass], Iterable[Int]) => Boolean = (v, m) => {
+      new SuperStepFunction(this, classOf[Int], classOf[Unit]) {
+        override def func: (Vertex[Long, Double, Unit], Iterable[Int]) => Boolean = (v, m) => {
           if (LazySize.sizeSmallerThan(m, 2)) {
             v.value = 0.0
           } else {

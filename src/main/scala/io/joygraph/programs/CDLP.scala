@@ -11,7 +11,7 @@ object CDLP {
   val MAX_INTERATIONS_CONF_KEY = "maxIterations"
 }
 
-class UCDLP extends NewVertexProgram[Long, Long, NullClass] {
+class UCDLP extends NewVertexProgram[Long, Long, Unit] {
 
   private[this] var maxIterations : Int = _
 
@@ -21,16 +21,16 @@ class UCDLP extends NewVertexProgram[Long, Long, NullClass] {
 
   private[this] val labelOccurences = new mutable.OpenHashMap[Long, Long]().withDefaultValue(0L)
 
-  override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, NullClass, _, _]] = {
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, Unit, _, _]] = {
     case 0 => new SuperStepFunction(this, classOf[Long], classOf[Long]) {
-      override def func: (Vertex[Long, Long, NullClass], Iterable[Long]) => Boolean = (v, m) => {
+      override def func: (Vertex[Long, Long, Unit], Iterable[Long]) => Boolean = (v, m) => {
         v.value = v.id
         propagateLabel(this, v)
         false
       }
     }
     case superStep : Int => new SuperStepFunction(this, classOf[Long], classOf[Long]) {
-      override def func: (Vertex[Long, Long, NullClass], Iterable[Long]) => Boolean = (v, m) => {
+      override def func: (Vertex[Long, Long, Unit], Iterable[Long]) => Boolean = (v, m) => {
         superStep match {
           case _ =>
             determineLabel(v, m)
@@ -46,7 +46,7 @@ class UCDLP extends NewVertexProgram[Long, Long, NullClass] {
 
       private[this] val initialisationSteps = 1
 
-      private[this] def determineLabel(v : Vertex[Long, Long, NullClass], incomingLabels : Iterable[Long]) = {
+      private[this] def determineLabel(v : Vertex[Long, Long, Unit], incomingLabels : Iterable[Long]) = {
         if (incomingLabels.nonEmpty) {
           labelOccurences.clear()
           // Compute for each incoming label the aggregate and maximum scores
@@ -75,7 +75,7 @@ class UCDLP extends NewVertexProgram[Long, Long, NullClass] {
     }
   }
 
-  private[this] def propagateLabel(f : SuperStepFunction[Long, Long, NullClass, _ <: Any, Long], v : Vertex[Long, Long, NullClass]) = {
+  private[this] def propagateLabel(f : SuperStepFunction[Long, Long, Unit, _ <: Any, Long], v : Vertex[Long, Long, Unit]) = {
     f.sendAll(v, v.value)
   }
 }

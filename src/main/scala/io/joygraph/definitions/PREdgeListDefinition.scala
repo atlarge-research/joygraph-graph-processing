@@ -2,14 +2,12 @@ package io.joygraph.definitions
 
 import java.nio.charset.StandardCharsets
 
-import io.joygraph.core.program.{NullClass, ProgramDefinition}
-import io.joygraph.programs.{PageRank, DWCC}
+import io.joygraph.core.program.ProgramDefinition
+import io.joygraph.core.util.ParseUtil
+import io.joygraph.programs.PageRank
 
-class PREdgeListDefinition extends ProgramDefinition[String, Long, Double, NullClass] (
-  (l) => {
-    val s = l.split("\\s")
-    (s(0).toLong, s(1).toLong, NullClass.SINGLETON)
-  },
+class PREdgeListDefinition extends ProgramDefinition[String, Long, Double, Unit] (
+  ParseUtil.edgeListLineLongLong,
   (l) => l.toLong,
   (v, outputStream) =>
     outputStream.write(s"${v.id} ${v.value}\n".getBytes(StandardCharsets.UTF_8)),

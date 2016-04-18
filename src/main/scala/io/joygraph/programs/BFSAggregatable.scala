@@ -3,7 +3,7 @@ package io.joygraph.programs
 import io.joygraph.core.program._
 
 class BFSAggregatable extends BFS with Aggregatable {
-  override def run(v: Vertex[Long, Long, NullClass], messages : Iterable[Long], superStep : Int)(implicit send: (Long, Long) => Unit, sendAll: (Long) => Unit): Boolean = {
+  override def run(v: Vertex[Long, Long, Unit], messages : Iterable[Long], superStep : Int)(implicit send: (Long, Long) => Unit, sendAll: (Long) => Unit): Boolean = {
     aggregate("maxMySteps", superStep)
     super.run(v,messages, superStep)
   }
