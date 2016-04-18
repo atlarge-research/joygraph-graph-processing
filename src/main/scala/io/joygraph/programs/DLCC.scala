@@ -26,7 +26,6 @@ class ULCC extends NewVertexProgram[Long, Double, NullClass] {
             inquiry.src = v.id
             inquiry.edges = nArray
             neighbours.foreach(dst => send(inquiry, dst))
-            neighbours.foreach(dst => send(Inquiry(v.id, nArray), dst))
           }
           v.value = neighbours.size
           false
