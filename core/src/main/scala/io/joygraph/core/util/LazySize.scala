@@ -9,10 +9,10 @@ object LazySize{
   def sizeGreaterThan(target : Iterable[_], other : Int): Boolean = {
     var counter = 0
     for (x <- target) {
+      counter += 1
       if (counter > other) {
         return true
       }
-      counter += 1
     }
     false
   }

@@ -6,7 +6,7 @@ import java.util.concurrent.atomic.AtomicLong
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
 import com.esotericsoftware.kryo.pool.{KryoFactory, KryoPool}
-import io.joygraph.core.actor.VertexComputation
+import io.joygraph.core.actor.PregelVertexComputation
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.partitioning.VertexPartitioner
@@ -137,6 +137,13 @@ protected[this] var partitioner : VertexPartitioner
       _halted.remove(vId)
     }
 
+  def explicitlyScopedEdges[T](vId: I)(f : Iterable[Edge[I, E]] => T) : T = {
+    val e = edges(vId)
+    val res = f(e)
+    releaseEdgesIterable(e)
+    res
+  }
+
   def edges(vId: I): Iterable[Edge[I, E]] = {
     _vEdges.get(vId) match {
       case Some(os) =>
@@ -204,7 +211,7 @@ protected[this] var partitioner : VertexPartitioner
     _vValues.remove(vId)
   }
 
-  override def computeVertices(computation: VertexComputation[I, V, E]): Boolean = {
+  override def computeVertices(computation: PregelVertexComputation[I, V, E]): Boolean = {
     val verticesStore = this
     val simpleVertexInstancePool = new SimplePool[Vertex[I,V,E]](new VertexImpl[I,V,E] {
       override def addEdge(dst: I, e: E): Unit = {

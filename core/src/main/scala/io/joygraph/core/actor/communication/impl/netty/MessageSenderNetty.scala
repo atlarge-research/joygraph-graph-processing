@@ -85,6 +85,14 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting) exten
     Unpooled.wrappedBuffer(i)
   }
 
+  def sendNoAck(source: Int, destination: Int, payload: ByteBuffer): Future[ByteBuffer] = {
+    val byteBuffer = transform(source, payload)
+    val promise = Promise[ByteBuffer]
+    channel(destination).pipeline().writeAndFlush(byteBuffer).addListener(new MessageWrittenAndFlushedListener(promise, payload))
+    promise.future
+  }
+
+
   override def send(source: Int, destination: Int, payload: ByteBuffer): Future[ByteBuffer] = {
     val byteBuffer = transform(source, payload)
     val promise = Promise[ByteBuffer]

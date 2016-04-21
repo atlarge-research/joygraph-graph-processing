@@ -3,7 +3,7 @@ package io.joygraph.core.actor.vertices.impl
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentLinkedQueue
 
-import io.joygraph.core.actor.VertexComputation
+import io.joygraph.core.actor.PregelVertexComputation
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.partitioning.VertexPartitioner
@@ -41,6 +41,8 @@ protected[this] val clazzV : Class[V]) extends VerticesStore[I,V,E] {
     _vEdges.getOrElseUpdate(vertex, new ConcurrentLinkedQueue[Edge[I,E]])
   }
 
+  def explicitlyScopedEdges[T](vId: I)(f : Iterable[Edge[I, E]] => T) : T = f(edges(vId))
+
   def edges(vId : I) : Iterable[Edge[I,E]] = _vEdges(vId)
 
   // TODO mutable edges are not functional
@@ -76,7 +78,7 @@ protected[this] val clazzV : Class[V]) extends VerticesStore[I,V,E] {
     _vValues.remove(vId)
   }
 
-  override def computeVertices(computation: VertexComputation[I, V, E]): Boolean = {
+  override def computeVertices(computation: PregelVertexComputation[I, V, E]): Boolean = {
     val verticesStore = this
     val simpleVertexInstancePool = new SimplePool[Vertex[I,V,E]](new VertexImpl[I,V,E] {
       override def addEdge(dst: I, e: E): Unit = {

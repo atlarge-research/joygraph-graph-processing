@@ -2,8 +2,8 @@ package io.joygraph.core.actor.vertices
 
 import java.nio.ByteBuffer
 
-import io.joygraph.core.actor.VertexComputation
 import io.joygraph.core.actor.messaging.MessageStore
+import io.joygraph.core.actor.{PregelVertexComputation, QueryAnswerVertexComputation}
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program.Edge
 import io.joygraph.core.util.TypeUtil
@@ -24,11 +24,11 @@ trait VerticesStore[I,V,E] extends Types {
 
   def importVerticesStoreData
   (index : Int,
-   is : ObjectByteBufferInputStream,
-   haltedDeserializer : AsyncDeserializer,
-   idDeserializer : AsyncDeserializer,
-   valueDeserializer : AsyncDeserializer,
-   edgeDeserializer : AsyncDeserializer
+  is : ObjectByteBufferInputStream,
+  haltedDeserializer : AsyncDeserializer,
+  idDeserializer : AsyncDeserializer,
+  valueDeserializer : AsyncDeserializer,
+  edgeDeserializer : AsyncDeserializer
   ) = {
     is.msgType match {
       case 0 => // halted
@@ -53,14 +53,14 @@ trait VerticesStore[I,V,E] extends Types {
         edgeDeserializer.deserialize(is, index, (kryo, input) => {
           if (!voidOrUnitClass) {
             (kryo.readObject(input, clazzI),
-              kryo.readObject(input, clazzI),
-              kryo.readObject(input, clazzE)
-              )
+            kryo.readObject(input, clazzI),
+            kryo.readObject(input, clazzE)
+            )
           } else {
             (kryo.readObject(input, clazzI),
-              kryo.readObject(input, clazzI),
-              null.asInstanceOf[E]
-              )
+            kryo.readObject(input, clazzI),
+            null.asInstanceOf[E]
+            )
           }
         }){ implicit edgePairs =>
           edgePairs.foreach(x => addEdge(x._1, x._2, x._3))
@@ -95,7 +95,7 @@ trait VerticesStore[I,V,E] extends Types {
           kryo.writeObject(output, o._2)
         })(outputHandler)
       case None =>
-        // noop
+      // noop
     }
   }
 
@@ -122,6 +122,7 @@ trait VerticesStore[I,V,E] extends Types {
   def addEdge(src :I, dst : I, value : E)
   def edges(vId : I) : Iterable[Edge[I,E]]
   def mutableEdges(vId : I) : Iterable[Edge[I,E]]
+  def explicitlyScopedEdges[T](vId: I)(f : Iterable[Edge[I, E]] => T) : T
   def releaseEdgesIterable(edgesIterable : Iterable[Edge[I,E]])
   def parVertices : ParIterable[I]
   def vertices : Iterable[I]
@@ -131,7 +132,8 @@ trait VerticesStore[I,V,E] extends Types {
   def setHalted(vId : I, halted : Boolean)
   def localNumVertices : Int
   def localNumEdges : Int
-  def computeVertices(computation: VertexComputation[I,V,E]) : Boolean
+  def computeVertices(computation : PregelVertexComputation[I,V,E]) : Boolean
+  def createQueries(qapComputation : QueryAnswerVertexComputation[I, V, E, _, _,_]) : Unit = ???
 
   def distributeVertices
   (newWorkersMap : Map[WorkerId, Boolean],

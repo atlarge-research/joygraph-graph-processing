@@ -4,13 +4,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.vertices.VerticesStore
-import io.joygraph.core.program.{Edge, SuperStepFunction, Vertex}
+import io.joygraph.core.program.{Edge, PregelSuperStepFunction, Vertex}
 import io.joygraph.core.util.SimplePool
 
-class VertexComputation[I,V,E]
+class PregelVertexComputation[I,V,E]
 (currentIncomingMessageClass : Class[_],
  messageStore : MessageStore,
- superStepFunctionPool : SimplePool[SuperStepFunction[I,V,E,_,_]]) {
+ superStepFunctionPool : SimplePool[PregelSuperStepFunction[I,V,E,_,_]]) {
 
   private[this] val hasAllHalted = new AtomicBoolean(true)
 

@@ -13,6 +13,7 @@ import io.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, Me
 import io.joygraph.core.actor.messaging.impl.TrieMapMessageStore
 import io.joygraph.core.actor.messaging.impl.serialized.{OpenHashMapSerializedMessageStore, TrieMapSerializedMessageStore}
 import io.joygraph.core.actor.messaging.{Message, MessageStore}
+import io.joygraph.core.actor.service.RequestResponseService
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.actor.vertices.impl.TrieMapVerticesStore
 import io.joygraph.core.actor.vertices.impl.serialized.{OpenHashMapSerializedVerticesStore, TrieMapSerializedVerticesStore}
@@ -24,11 +25,11 @@ import io.joygraph.core.message.superstep._
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program._
 import io.joygraph.core.reader.LineProvider
-import io.joygraph.core.util._
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.Types
 import io.joygraph.core.util.serde._
+import io.joygraph.core.util.{SimplePool, _}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -149,10 +150,18 @@ abstract class Worker[I,V,E]
   private[this] var messagesSerializer : AsyncSerializer = null
   private[this] var messagesCombinableSerializer : CombinableAsyncSerializer[I] = null
   private[this] var messagesDeserializer : AsyncDeserializer = null
+
+  private[this] var qapComputation : QueryAnswerVertexComputation[I,V,E,_,_,_]= null
+  private[this] var querySerializer : AsyncSerializer = null
+  private[this] var answerSerializer : AsyncSerializer = null
+  private[this] var queryDeserializer : AsyncDeserializer = null
+  private[this] var answerDeserializer : AsyncDeserializer = null
+
   private[this] var allHalted = true
-  private[this] var currentSuperStepFunction : SuperStepFunction[I,V,E,_,_] = _
+  private[this] var currentSuperStepFunction : SuperStepFunction[I, V, E] = _
   private[this] var receivedCallback : () => Unit = _
-  private[this] var messageHandler : (ThreadId, ObjectByteBufferInputStream) => Unit = _
+  private[this] var messageHandler : (ThreadId, ObjectByteBufferInputStream) => Boolean = _
+  private[this] var requestResponseService : RequestResponseService[I, V, E] = _
 
   def initialize() = {
     partitioner.init(config)
@@ -177,7 +186,7 @@ abstract class Worker[I,V,E]
     is.msgType match {
       case 0 => // edge
         edgeSerDes { implicit edgeSerDe =>
-          dataLoadingDeserializer.deserialize(is, index, edgeSerDe.edgeDeserializer){ implicit edges =>
+          dataLoadingDeserializer.deserialize(is, index, edgeSerDe.edgeDeserializer) { implicit edges =>
             edges.foreach(x => verticesStore.addEdge(x.src, x.dst, x.value))
           }
         }
@@ -188,9 +197,8 @@ abstract class Worker[I,V,E]
     }
   }
 
-  private[this] def handleNettyMessage(byteBuffer : ByteBuffer) : Unit = {
+  private[this] def handleNettyMessage(byteBuffer : ByteBuffer): Unit = {
     val workerId = byteBuffer.getInt()
-//    println(s"${id.get} receiving message from $workerId")
     val is = new ObjectByteBufferInputStream(byteBuffer)
     is.msgType match {
       case -1 =>
@@ -198,19 +206,23 @@ abstract class Worker[I,V,E]
         receivedCallback()
       case _ =>
         val threadId = ThreadId.getMod(jobSettings.nettyWorkers)
-        messageHandler(threadId, is)
-        messageSender.sendAck(id.get, workerId)
+        if (messageHandler(threadId, is)) {
+          messageSender.sendAck(id.get, workerId)
+        }
     }
   }
 
-  private[this] def handleDataLoadingNetty(threadId : ThreadId, is : ObjectByteBufferInputStream): Unit = {
+  private[this] def handleDataLoadingNetty(threadId : ThreadId, is : ObjectByteBufferInputStream): Boolean = {
     _handleDataLoading(threadId, is)
+    true
   }
 
-  private[this] def handleSuperStepNetty(threadId : ThreadId, is : ObjectByteBufferInputStream) = {
+  private[this] def handleSuperStepNetty(threadId : ThreadId, is : ObjectByteBufferInputStream): Boolean = {
     try {
       _handleSuperStep(threadId, is)
-    } catch { case t : Throwable => t.printStackTrace()
+    } catch {
+      case t : Throwable => exceptionReporter(t)
+        throw t
     }
   }
 
@@ -222,19 +234,35 @@ abstract class Worker[I,V,E]
   })
   private[this] val messageSerDeSharable = new MessageSerDe[I](clazzI)
 
-  private[this] def _handleSuperStep(index : Int, is: ObjectByteBufferInputStream) = {
+  private[this] def _handleSuperStep(index : Int, is : ObjectByteBufferInputStream): Boolean = {
     is.msgType match {
       case 0 => // edge
         messageSerDes { implicit messageSerDe =>
-          messagesDeserializer.deserialize(is, index, messageSerDe.messagePairDeserializer){ implicit dstMPairs =>
+          messagesDeserializer.deserialize(is, index, messageSerDe.messagePairDeserializer) { implicit dstMPairs =>
             dstMPairs.foreach(messageStore._handleMessage(index, _, clazzI, currentOutgoingMessageClass))
           }
         }
-
+        true
+      case 1 => // request
+        currentSuperStepFunction match {
+          case ssF: RequestResponse[I, V, E, _, _] =>
+            requestResponseService.handleRequest(ssF, is)
+          case ssF : QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_] =>
+            qapComputation.vertexAnswer(verticesStore, queryDeserializer, is)
+        }
+        false
+      case 2 => // response
+        currentSuperStepFunction match {
+          case ssF: RequestResponse[I, V, E, _, _] =>
+            requestResponseService.handleResponse(ssF, is)
+          case ssF : QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_] =>
+            qapComputation.receiveAnswer(verticesStore, answerDeserializer, is)
+        }
+        false
     }
   }
 
-  private[this] def addEdge(threadId : ThreadId, srcWorkerId : WorkerId, vertexEdge : VertexEdge[I,E]): Unit = {
+  private[this] def addEdge(threadId: ThreadId, srcWorkerId: WorkerId, vertexEdge: VertexEdge[I, E]): Unit = {
     ifMessageToSelf(srcWorkerId) {
       verticesStore.addEdge(vertexEdge.src, vertexEdge.dst, vertexEdge.value)
     } {
@@ -399,8 +427,14 @@ abstract class Worker[I,V,E]
     }
   }
 
-  private[this] def currentIncomingMessageClass : Class[_] = currentSuperStepFunction.clazzIn
-  private[this] def currentOutgoingMessageClass : Class[_] = currentSuperStepFunction.clazzOut
+  private[this] def currentIncomingMessageClass : Class[_] = currentSuperStepFunction match {
+    case pregelSuperStepFunction : PregelSuperStepFunction[I,V,E,_,_] => pregelSuperStepFunction.clazzIn
+    case qap : QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_] => qap.classM
+  }
+
+  private[this] def currentOutgoingMessageClass : Class[_] = currentSuperStepFunction match {
+    case pregelSuperStepFunction : PregelSuperStepFunction[I,V,E,_,_] => pregelSuperStepFunction.clazzOut
+  }
 
   private[this] def ifMessageToSelf(workerId : Int)(any : => Unit)(otherwise : => Unit) : Unit = {
     if (workerId == id.get) {
@@ -409,26 +443,9 @@ abstract class Worker[I,V,E]
       otherwise
     }
   }
+
   private[this] def prepareSuperStep(superStep : Int) : Unit = {
     currentSuperStepFunction = vertexProgramInstance.currentSuperStepFunction(superStep)
-
-    log.info(s"current INOUT $currentIncomingMessageClass $currentOutgoingMessageClass")
-
-    messageSerDes.foreach(_.setIncomingClass(currentIncomingMessageClass))
-    messageSerDeSharable.setIncomingClass(currentIncomingMessageClass)
-    messageSerDes.foreach(_.setOutgoingClass(currentOutgoingMessageClass))
-    messageSerDeSharable.setOutgoingClass(currentOutgoingMessageClass)
-
-    // set current deserializer
-    messageStore.setReusableIterableFactory({
-      val reusableIterable = new ReusableIterable[Any] {
-        override protected[this] def deserializeObject(): Any = messageSerDeSharable.incomingMessageDeserializer(_kryo, _input)
-      }
-      // TODO 4096 max message size should be retrieved somewhere else,
-      // prior to this it was retrieved from KryoSerialization
-      reusableIterable.input(new ByteBufferInput(4096))
-      reusableIterable
-    })
 
     vertexProgramInstance match {
       case aggregatable : Aggregatable => {
@@ -443,6 +460,44 @@ abstract class Worker[I,V,E]
     }
     // preSuperStep can still access saved aggregated values
     vertexProgramInstance.preSuperStep()
+
+    messageSerDes.foreach(_.setIncomingClass(currentIncomingMessageClass))
+    messageSerDeSharable.setIncomingClass(currentIncomingMessageClass)
+
+    currentSuperStepFunction match {
+      case pregelSuperStepFunction : PregelSuperStepFunction[I,V,E,_,_] =>
+        messageSerDes.foreach(_.setOutgoingClass(currentOutgoingMessageClass))
+        messageSerDeSharable.setOutgoingClass(currentOutgoingMessageClass)
+        // set current deserializer
+        messageStore.setReusableIterableFactory({
+          val reusableIterable = new ReusableIterable[Any] {
+            override protected[this] def deserializeObject(): Any = messageSerDeSharable.incomingMessageDeserializer(_kryo, _input)
+          }
+          // TODO 4096 max message size should be retrieved somewhere else,
+          // prior to this it was retrieved from KryoSerialization
+          reusableIterable.input(new ByteBufferInput(4096))
+          reusableIterable
+        })
+      case queryAnswerProcessSuperStepFunction : QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_] =>
+        val superStepFunctionPool = new SimplePool[QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_]](qapSuperStepFunctionFactory(superStep))
+        // create queries
+        qapComputation = new QueryAnswerVertexComputation(
+          superStepFunctionPool,
+          clazzI,
+          queryAnswerProcessSuperStepFunction.clazzS,
+          queryAnswerProcessSuperStepFunction.clazzG,
+          currentIncomingMessageClass,
+          messageStore,
+          workers,
+          messageSender,
+          querySerializer,
+          answerSerializer,
+          partitioner,
+          id.get,
+          computationFjPool.getParallelism,
+          computationExecutionContext
+        )
+    }
   }
 
   private[this] def barrier(superStep : Int): Unit = {
@@ -459,6 +514,123 @@ abstract class Worker[I,V,E]
       }
       case _ =>
     }
+  }
+
+  private[this] def qapSuperStepFunctionFactory(superStep : Int) : QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_] = {
+    // TODO this flow should be described.
+    val clonedVertexInstance = vertexProgramInstance.newInstance(config)
+    clonedVertexInstance match {
+      case aggregatable : Aggregatable =>
+        aggregatable.copyReferencesFrom(vertexProgramInstance.asInstanceOf[Aggregatable])
+      case _ =>
+      // noop
+    }
+    clonedVertexInstance.preSuperStep()
+    // TODO this flow should be described, aggregated values are available
+
+    val ssF = clonedVertexInstance.currentSuperStepFunction(superStep).asInstanceOf[QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_]]
+    ssF
+  }
+
+  private[this] def pregelSuperStepFunctionFactory(superStep : Int): PregelSuperStepFunction[I, V, E, _, _] = {
+    // TODO this flow should be described.
+    val clonedVertexInstance = vertexProgramInstance.newInstance(config)
+    clonedVertexInstance match {
+      case aggregatable : Aggregatable =>
+        aggregatable.copyReferencesFrom(vertexProgramInstance.asInstanceOf[Aggregatable])
+      case _ =>
+      // noop
+    }
+    clonedVertexInstance.preSuperStep()
+    // TODO this flow should be described, aggregated values are available
+
+    val ssF = clonedVertexInstance.currentSuperStepFunction(superStep).asInstanceOf[PregelSuperStepFunction[I,V,E,_,_]]
+    ssF match {
+      case requestResponse : RequestResponse[I,V,E,_,_] =>
+        requestResponse.setRequestFunc(
+          (req, dst) =>
+            requestResponseService.sendRequest(ssF, req, dst)
+        )
+      case _ =>
+      // noop
+    }
+    ssF match {
+      case combinable : Combinable[Any @unchecked] =>
+        implicit val c = combinable
+        val message = Message[I](null.asInstanceOf[I], null)
+        ssF.messageSenders(
+          (m, dst) => {
+            val workerId = partitioner.destination(dst)
+            val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+            ifMessageToSelf(workerId) {
+              // could combine but.. it's not over the network
+              message.dst = dst
+              message.msg = m
+              messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
+            } {
+              messageSerDes { implicit messageSerDe =>
+                messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerDe.messageSerializer, messageSerDe.messageDeserializer) { implicit byteBuffer =>
+                  messageSender.send(id.get, workerId, byteBuffer)
+                }
+              }
+            }
+          },
+          (v, m) => {
+            v.edges.foreach {
+              case Edge(dst, _) =>
+                val workerId = partitioner.destination(dst)
+                val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+                ifMessageToSelf(workerId) {
+                  // could combine but.. it's not over the network
+                  message.dst = dst
+                  message.msg = m
+                  messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
+                } {
+                  messageSerDes { implicit messageSerDe =>
+                    messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerDe.messageSerializer, messageSerDe.messageDeserializer) { implicit byteBuffer =>
+                      messageSender.send(id.get, workerId, byteBuffer)
+                    }
+                  }
+                }
+            }
+          })
+      case _ =>
+        val message = Message[I](null.asInstanceOf[I], null)
+        ssF.messageSenders(
+          (m, dst) => {
+            val workerId = partitioner.destination(dst)
+            val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+            message.dst = dst
+            message.msg = m
+
+            ifMessageToSelf(workerId) {
+              messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
+            } {
+              messagesSerializer.serialize(threadId, workerId, message, messageSerDeSharable.messagePairSerializer) { implicit byteBuffer =>
+                log.info(s"${id.get} sending message to $workerId of size ${byteBuffer.position()} of type ${m.getClass}")
+                messageSender.send(id.get, workerId, byteBuffer)
+              }
+            }
+          },
+          (v, m) => {
+            v.edges.foreach {
+              case Edge(dst, _) =>
+                val workerId = partitioner.destination(dst)
+                val threadId = ThreadId.getMod(computationFjPool.getParallelism)
+                message.dst = dst
+                message.msg = m
+                ifMessageToSelf(workerId) {
+                  messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
+                } {
+                  messagesSerializer.serialize(threadId, workerId, message, messageSerDeSharable.messagePairSerializer) { implicit byteBuffer =>
+                    log.info(s"${id.get} sending message to $workerId of size ${byteBuffer.position()} of type ${m.getClass}")
+                    messageSender.send(id.get, workerId, byteBuffer)
+                  }
+                }
+            }
+          })
+    }
+    ssF
   }
 
   private[this] val RUN_SUPERSTEP : PartialFunction[Any, Unit] = {
@@ -483,113 +655,31 @@ abstract class Worker[I,V,E]
       Future {
         log.info(s"Running superstep $superStep")
 
-        val superStepFunctionPool : SimplePool[SuperStepFunction[I,V,E,_,_]] = new SimplePool[SuperStepFunction[I, V, E, _, _]](
-          {
-            // TODO this flow should be described.
-            val clonedVertexInstance = vertexProgramInstance.newInstance(config)
-            clonedVertexInstance match {
-              case aggregatable : Aggregatable =>
-                aggregatable.copyReferencesFrom(vertexProgramInstance.asInstanceOf[Aggregatable])
+        allHalted = currentSuperStepFunction match {
+          case pregelSuperstepFunction : PregelSuperStepFunction[I,V,E,_,_] =>
+            val superStepFunctionPool = new SimplePool[PregelSuperStepFunction[I,V,E,_,_]](pregelSuperStepFunctionFactory(superStep))
+            val vertexComputation: PregelVertexComputation[I, V, E] = new PregelVertexComputation(currentIncomingMessageClass, messageStore, superStepFunctionPool)
+            val computationHalted = verticesStore.computeVertices(vertexComputation)
+
+            currentSuperStepFunction match {
+              case combinable : Combinable[_] =>
+                messagesCombinableSerializer.sendNonEmptyByteBuffers{ case (byteBuffer : ByteBuffer, targetWorkerId : Int) =>
+                  messageSender.send(id.get, targetWorkerId, byteBuffer)
+                }
               case _ =>
-                // noop
+                messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, targetWorkerId : Int) =>
+                  log.info(s"${id.get} sending final message to $targetWorkerId of size ${byteBuffer.position()} of type ${currentOutgoingMessageClass}")
+                  messageSender.send(id.get, targetWorkerId, byteBuffer)
+                }
             }
-            clonedVertexInstance.preSuperStep()
-            // TODO this flow should be described, aggregated values are available
+            computationHalted
+          case queryAnswerProcessSuperStepFunction : QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_] =>
+            // create queries
+            verticesStore.createQueries(qapComputation)
+            qapComputation.flushQueries()
 
-            val ssF = clonedVertexInstance.currentSuperStepFunction(superStep)
-            ssF match {
-              case combinable : Combinable[Any @unchecked] =>
-                implicit val c = combinable
-                val message = Message[I](null.asInstanceOf[I], null)
-                ssF.messageSenders(
-                  (m, dst) => {
-                    val workerId = partitioner.destination(dst)
-                    val threadId = ThreadId.getMod(computationFjPool.getParallelism)
-                    ifMessageToSelf(workerId) {
-                      // could combine but.. it's not over the network
-                      message.dst = dst
-                      message.msg = m
-                      messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
-                    } {
-                      messageSerDes { implicit messageSerDe =>
-                        messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerDe.messageSerializer, messageSerDe.messageDeserializer) { implicit byteBuffer =>
-                          messageSender.send(id.get, workerId, byteBuffer)
-                        }
-                      }
-                    }
-                  },
-                  (v, m) => {
-                    v.edges.foreach {
-                      case Edge(dst, _) =>
-                        val workerId = partitioner.destination(dst)
-                        val threadId = ThreadId.getMod(computationFjPool.getParallelism)
-                        ifMessageToSelf(workerId) {
-                          // could combine but.. it's not over the network
-                          message.dst = dst
-                          message.msg = m
-                          messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
-                        } {
-                          messageSerDes { implicit messageSerDe =>
-                            messagesCombinableSerializer.serialize(threadId, workerId, dst, m, messageSerDe.messageSerializer, messageSerDe.messageDeserializer) { implicit byteBuffer =>
-                              messageSender.send(id.get, workerId, byteBuffer)
-                            }
-                          }
-                        }
-                    }
-                  })
-              case _ =>
-                val message = Message[I](null.asInstanceOf[I], null)
-                ssF.messageSenders(
-                  (m, dst) => {
-                    val workerId = partitioner.destination(dst)
-                    val threadId = ThreadId.getMod(computationFjPool.getParallelism)
-                    message.dst = dst
-                    message.msg = m
-
-                    ifMessageToSelf(workerId) {
-                      messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
-                    } {
-                      messagesSerializer.serialize(threadId, workerId, message, messageSerDeSharable.messagePairSerializer) { implicit byteBuffer =>
-                        log.info(s"${id.get} sending message to $workerId of size ${byteBuffer.position()} of type ${m.getClass}")
-                        messageSender.send(id.get, workerId, byteBuffer)
-                      }
-                    }
-                  },
-                  (v, m) => {
-                    v.edges.foreach {
-                      case Edge(dst, _) =>
-                        val workerId = partitioner.destination(dst)
-                        val threadId = ThreadId.getMod(computationFjPool.getParallelism)
-                        message.dst = dst
-                        message.msg = m
-                        ifMessageToSelf(workerId) {
-                          messageStore._handleMessage(threadId, message, clazzI, currentOutgoingMessageClass)
-                        } {
-                          messagesSerializer.serialize(threadId, workerId, message, messageSerDeSharable.messagePairSerializer) { implicit byteBuffer =>
-                            log.info(s"${id.get} sending message to $workerId of size ${byteBuffer.position()} of type ${m.getClass}")
-                            messageSender.send(id.get, workerId, byteBuffer)
-                          }
-                        }
-                    }
-                  })
-            }
-            ssF
-          }
-        )
-
-        val vertexComputation: VertexComputation[I, V, E] = new VertexComputation(currentIncomingMessageClass, messageStore, superStepFunctionPool)
-        allHalted = verticesStore.computeVertices(vertexComputation)
-
-        currentSuperStepFunction match {
-          case combinable : Combinable[_] =>
-            messagesCombinableSerializer.sendNonEmptyByteBuffers{ case (byteBuffer : ByteBuffer, targetWorkerId : Int) =>
-              messageSender.send(id.get, targetWorkerId, byteBuffer)
-            }
-          case _ =>
-            messagesSerializer.sendNonEmptyByteBuffers { case (byteBuffer : ByteBuffer, targetWorkerId : Int) =>
-              log.info(s"${id.get} sending final message to $targetWorkerId of size ${byteBuffer.position()} of type ${currentOutgoingMessageClass}")
-              messageSender.send(id.get, targetWorkerId, byteBuffer)
-            }
+            // await computation fulfillment
+            qapComputation.await();
         }
 
         // trigger oncomplete
@@ -609,8 +699,11 @@ abstract class Worker[I,V,E]
         log.info("Do next step! ")
         sender() ! DoNextStep(true)
       }
+    case QapFlushAnswers(workerId) =>
+      qapComputation.flushAnswers(workerId)
+    case QapQueryProcessed(workerId, numProcessed) =>
+      qapComputation.processedQueriesNotification(workerId, numProcessed)
   }
-
 
   private[this] def currentReceive : PartialFunction[Any, Unit] = _currentReceive
   private[this] def currentReceive_=(that : PartialFunction[Any, Unit]) = _currentReceive = that
@@ -641,7 +734,7 @@ abstract class Worker[I,V,E]
   }
 
 
-  private[this] def handleElasticGrowNetty(threadId : ThreadId, is : ObjectByteBufferInputStream) : Unit = {
+  private[this] def handleElasticGrowNetty(threadId : ThreadId, is : ObjectByteBufferInputStream) : Boolean = {
     try {
       is.msgType match {
         case _ =>
@@ -657,8 +750,9 @@ abstract class Worker[I,V,E]
           }
       }
     } catch {
-      case t : Throwable => t.printStackTrace()
+      case t : Throwable => exceptionReporter(t)
     }
+    true
   }
 
   /**
@@ -810,8 +904,15 @@ abstract class Worker[I,V,E]
       messagesCombinableSerializer = new CombinableAsyncSerializer[I](0, () => new Kryo(), idSerializer = vertexSerializer)
       messagesDeserializer = new AsyncDeserializer(new Kryo())
 
+      querySerializer = new AsyncSerializer(1, () => new Kryo())
+      answerSerializer = new AsyncSerializer(2, () => new Kryo())
+      queryDeserializer = new AsyncDeserializer(new Kryo())
+      answerDeserializer = new AsyncDeserializer(new Kryo())
+
       messageSender = new MessageSenderNetty(this)
       messageSender.setOnExceptionHandler(nettySenderException)
+
+      requestResponseService = new RequestResponseService[I,V,E](clazzI, verticesStore, messageSender, workerId, partitioner, computationExecutionContext)
 
       messageReceiver = new MessageReceiverNetty(jobSettings.nettyWorkers)
       messageReceiver.setReceiverExceptionReporter(nettyReceiverException)

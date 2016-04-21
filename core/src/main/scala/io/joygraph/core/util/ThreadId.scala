@@ -14,4 +14,9 @@ object ThreadId {
   def getId = threadId.get()
 
   def getMod(numThreads : Int) = threadId.get() % numThreads
+
+  def apply[T](numThreads : Int)(f: Int => T) = {
+    val threadId = getMod(numThreads : Int)
+    f(threadId)
+  }
 }

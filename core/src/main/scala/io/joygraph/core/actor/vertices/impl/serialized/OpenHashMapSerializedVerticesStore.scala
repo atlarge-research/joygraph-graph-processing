@@ -4,10 +4,10 @@ import java.nio.ByteBuffer
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
-import io.joygraph.core.actor.VertexComputation
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.actor.vertices.impl.serialized.OpenHashMapSerializedVerticesStore.Partition
+import io.joygraph.core.actor.{PregelVertexComputation, QueryAnswerVertexComputation}
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.program.{Edge, Vertex, VertexImpl}
 import io.joygraph.core.util._
@@ -40,6 +40,20 @@ object OpenHashMapSerializedVerticesStore {
     private[this] val kryo = new Kryo()
     private[this] val kryoOutput = new KryoOutput(maxMessageSize, maxMessageSize)
     private[this] var numEdges = 0
+
+    private[this] val reusableIterablePool = new SimplePool({
+      new ReusableIterable[Edge[I,E]] {
+        private[this] val reusableEdge : Edge[I,E] = Edge[I,E](null.asInstanceOf[I], null.asInstanceOf[E])
+        override protected[this] def deserializeObject(): Edge[I, E] = {
+          reusableEdge.dst = _kryo.readObject(_input, clazzI)
+          if (!voidOrUnitClass) {
+            reusableEdge.e = _kryo.readObject(_input, clazzE)
+          }
+          reusableEdge
+        }
+      }.input(new ByteBufferInput(maxMessageSize))
+        .kryo(new Kryo)
+    })
 
     private[this] val reusableIterable = new ReusableIterable[Edge[I,E]] {
       private[this] val reusableEdge : Edge[I,E] = Edge[I,E](null.asInstanceOf[I], null.asInstanceOf[E])
@@ -92,6 +106,28 @@ object OpenHashMapSerializedVerticesStore {
       }
 
     private[this] def edgeStream(vId : I) = _edges.getOrElseUpdate(vId, new DirectByteBufferGrowingOutputStream(0))
+
+    def explicitlyScopedEdges[T](vId: I)(f : Iterable[Edge[I, E]] => T) : T = {
+      val edges = _edges.get(vId) match  {
+        case Some(os) =>
+          if (os.isEmpty) {
+            NO_EDGES
+          } else {
+            reusableIterablePool.borrow()
+              .bufferProvider(() => os.getBuf)
+          }
+        case None => NO_EDGES
+      }
+
+      val res = f(edges)
+      edges match {
+        case NO_EDGES =>
+          // noop
+        case reusable : ReusableIterable[Edge[I,E] @unchecked] =>
+          reusableIterablePool.release(reusable)
+      }
+      res
+    }
 
     override def edges(vId: I): Iterable[Edge[I, E]] = _edges.get(vId) match {
       case Some(os) =>
@@ -157,7 +193,7 @@ object OpenHashMapSerializedVerticesStore {
 
     override def parVertices: ParIterable[I] = throw new UnsupportedOperationException
 
-    override def computeVertices(computation: VertexComputation[I, V, E]): Boolean = {
+    override def computeVertices(computation: PregelVertexComputation[I, V, E]): Boolean = {
       val verticesStore = this
       val simpleVertexInstancePool = new SimplePool[Vertex[I,V,E]](new VertexImpl[I,V,E] {
         override def addEdge(dst: I, e: E): Unit = {
@@ -166,6 +202,16 @@ object OpenHashMapSerializedVerticesStore {
       })
       vertices.foreach(computation.computeVertex(_, verticesStore, simpleVertexInstancePool))
       computation.hasHalted
+    }
+
+    override def createQueries(qapComputation : QueryAnswerVertexComputation[I,V,E,_,_,_]): Unit = {
+      val verticesStore = this
+      val simpleVertexInstancePool = new SimplePool[Vertex[I,V,E]](new VertexImpl[I,V,E] {
+        override def addEdge(dst: I, e: E): Unit = {
+          verticesStore.addEdge(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
+        }
+      })
+      vertices.foreach(qapComputation.vertexQuery(_, verticesStore, simpleVertexInstancePool))
     }
 
     override def distributeVertices
@@ -251,6 +297,8 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
     }
   }
 
+  override def explicitlyScopedEdges[T](vId: I)(f : Iterable[Edge[I, E]] => T) : T = partition(vId).explicitlyScopedEdges(vId)(f)
+
   override def edges(vId: I): Iterable[Edge[I, E]] = partition(vId).edges(vId)
 
   override def releaseEdgesIterable(edgesIterable: Iterable[Edge[I, E]]): Unit = throw new UnsupportedOperationException
@@ -284,7 +332,7 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
 
   override def parVertices: ParIterable[I] = throw new UnsupportedOperationException
 
-  override def computeVertices(computation: VertexComputation[I, V, E]): Boolean = {
+  override def computeVertices(computation: PregelVertexComputation[I, V, E]): Boolean = {
      workers.zipWithIndex.map {
       case (worker, index) =>
         val promise = Promise[Unit]
@@ -298,6 +346,20 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
     }.foreach(Await.ready(_, Duration.Inf))
     // TODO abort on exception
     computation.hasHalted
+  }
+
+  override def createQueries(qapComputation: QueryAnswerVertexComputation[I,V,E,_,_,_]): Unit = {
+    workers.zipWithIndex.map {
+      case (worker, index) =>
+        val promise = Promise[Unit]
+        worker.execute(new Runnable {
+          override def run(): Unit = {
+            partitions(index).createQueries(qapComputation)
+            promise.success()
+          }
+        })
+        promise.future
+    }.foreach(Await.ready(_, Duration.Inf))
   }
 
   override def distributeVertices
@@ -334,5 +396,6 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
         promise.future
     }.foreach(Await.ready(_, Duration.Inf))
   }
+
 }
 

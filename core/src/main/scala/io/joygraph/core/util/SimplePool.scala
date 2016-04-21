@@ -24,10 +24,11 @@ class SimplePool[T] (factory : => T){
     pool.foreach(f)
   }
 
-  def apply(f : T => Unit) = {
+  def apply[R](f : T => R) = {
     val instance = borrow()
-    f(instance)
+    val result = f(instance)
     release(instance)
+    result
   }
 
 }
