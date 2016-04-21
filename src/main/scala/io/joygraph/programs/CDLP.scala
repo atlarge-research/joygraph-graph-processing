@@ -21,15 +21,15 @@ class UCDLP extends NewVertexProgram[Long, Long, Unit] {
 
   private[this] val labelOccurences = new mutable.OpenHashMap[Long, Long]().withDefaultValue(0L)
 
-  override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, Unit, _, _]] = {
-    case 0 => new SuperStepFunction(this, classOf[Long], classOf[Long]) {
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, Unit]] = {
+    case 0 => new PregelSuperStepFunction(this, classOf[Long], classOf[Long]) {
       override def func: (Vertex[Long, Long, Unit], Iterable[Long]) => Boolean = (v, m) => {
         v.value = v.id
         propagateLabel(this, v)
         false
       }
     }
-    case superStep : Int => new SuperStepFunction(this, classOf[Long], classOf[Long]) {
+    case superStep : Int => new PregelSuperStepFunction(this, classOf[Long], classOf[Long]) {
       override def func: (Vertex[Long, Long, Unit], Iterable[Long]) => Boolean = (v, m) => {
         superStep match {
           case _ =>
@@ -75,7 +75,7 @@ class UCDLP extends NewVertexProgram[Long, Long, Unit] {
     }
   }
 
-  private[this] def propagateLabel(f : SuperStepFunction[Long, Long, Unit, _ <: Any, Long], v : Vertex[Long, Long, Unit]) = {
+  private[this] def propagateLabel(f : PregelSuperStepFunction[Long, Long, Unit, _ <: Any, Long], v : Vertex[Long, Long, Unit]) = {
     f.sendAll(v, v.value)
   }
 }
@@ -97,14 +97,14 @@ class DCDLP extends NewVertexProgram[Long, Long, Boolean] {
   private[this] val messageSet = new mutable.HashSet[Long]()
   private[this] val labelOccurences = new mutable.OpenHashMap[Long, Long]().withDefaultValue(0L)
 
-  override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, Boolean, _, _]] = {
-    case 0 => new SuperStepFunction(this, classOf[Long], classOf[Long]) {
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, Boolean]] = {
+    case 0 => new PregelSuperStepFunction(this, classOf[Long], classOf[Long]) {
       override def func: (Vertex[Long, Long, Boolean], Iterable[Long]) => Boolean = (v, m) => {
         sendAll(v, v.id)
         false
       }
     }
-    case 1 => new SuperStepFunction(this, classOf[Long], classOf[LabelMessage]) {
+    case 1 => new PregelSuperStepFunction(this, classOf[Long], classOf[LabelMessage]) {
       override def func: (Vertex[Long, Long, Boolean], Iterable[Long]) => Boolean = (v, m) => {
         messageSet.clear()
         messageSet ++= m
@@ -124,7 +124,7 @@ class DCDLP extends NewVertexProgram[Long, Long, Boolean] {
         false
       }
     }
-    case superStep : Int => new SuperStepFunction(this, classOf[LabelMessage], classOf[LabelMessage]) {
+    case superStep : Int => new PregelSuperStepFunction(this, classOf[LabelMessage], classOf[LabelMessage]) {
       override def func: (Vertex[Long, Long, Boolean], Iterable[LabelMessage]) => Boolean = (v, m) => {
         superStep match {
           case _ =>
@@ -170,7 +170,7 @@ class DCDLP extends NewVertexProgram[Long, Long, Boolean] {
     }
   }
 
-  private[this] def propagateLabel(f : SuperStepFunction[Long, Long, Boolean, _ <: Any, LabelMessage], v : Vertex[Long, Long, Boolean], edges : Iterable[Edge[Long, Boolean]]) = {
+  private[this] def propagateLabel(f : PregelSuperStepFunction[Long, Long, Boolean, _ <: Any, LabelMessage], v : Vertex[Long, Long, Boolean], edges : Iterable[Edge[Long, Boolean]]) = {
     val m = v.value
     edges.foreach{
       case Edge(dst, value) =>

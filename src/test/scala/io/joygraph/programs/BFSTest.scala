@@ -12,15 +12,15 @@ import io.joygraph.impl.hadoop.actor.HadoopMaster
 import org.scalatest.FunSuite
 
 class BFSTest extends FunSuite {
-//    val file = "/home/sietse/amazon0302.e"
-//    val vfile = "/home/sietse/amazon0302.v"
-//    val source_id = "99843"
+    val file = "/home/sietse/amazon0302.e"
+    val vfile = "/home/sietse/amazon0302.v"
+    val source_id = "99843"
 //  val file = "/home/sietse/cit-Patents-edge.txt"
 //  val source_id = "4949326"
-  val file = "/home/sietse/dota-league.e"
-  val source_id = "287770"
+//  val file = "/home/sietse/dota-league.e"
+//  val source_id = "287770"
 //  val file ="/home/sietse/wiki-Talk.e"
-  val vfile ="/home/sietse/wiki-Talk.v"
+//  val vfile ="/home/sietse/wiki-Talk.v"
 //  val source_id = "2"
 //  val file = "/home/sietse/datagen-100-fb-cc0_05.e"
 //val source_id = "594259"
@@ -78,8 +78,8 @@ class BFSTest extends FunSuite {
 //            .workerFactory((config, programDefinition, partitioner) => Worker.workerWithTrieMapMessageStoreWithSerializedVerticesStore(config, programDefinition, partitioner))
       .vertexPartitioner(new VertexHashPartitioner())
       .dataPath(file)
-      .numWorkers(1)
-      .workerCores(2)
+      .numWorkers(2)
+//      .workerCores(2)
       .directed()
       .outputPath("/home/sietse/outputPathLCC")
       .build()
@@ -152,6 +152,40 @@ class BFSTest extends FunSuite {
       .numWorkers(1)
       .undirected()
       .outputPath("/home/sietse/outputPath5")
+      .build()
+    instance.run()
+  }
+
+  test("DLCC POC test") {
+    val programDefinition = new DLCCPOCEdgeListDefinition
+    val instance = JoyGraphLocalInstanceBuilder(programDefinition)
+      .masterFactory((jobConfig, cluster) => {
+        val master = new Master(jobConfig, cluster) with HadoopMaster
+        Master.initialize(master)})
+      //      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
+      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializeOpenHashMapStore(config, programDefinition, partitioner))
+      .vertexPartitioner(new VertexHashPartitioner())
+      .dataPath(file)
+      .numWorkers(2)
+      .undirected()
+      .outputPath("/home/sietse/DLCCPOC")
+      .build()
+    instance.run()
+  }
+
+  test("ULCC POC test") {
+    val programDefinition = new ULCCPOCEdgeListDefinition
+    val instance = JoyGraphLocalInstanceBuilder(programDefinition)
+      .masterFactory((jobConfig, cluster) => {
+        val master = new Master(jobConfig, cluster) with HadoopMaster
+        Master.initialize(master)})
+      //      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializedTrieMapMessageStore(config, programDefinition, partitioner))
+      .workerFactory((config, programDefinition, partitioner) => Worker.workerWithSerializeOpenHashMapStore(config, programDefinition, partitioner))
+      .vertexPartitioner(new VertexHashPartitioner())
+      .dataPath(file)
+      .numWorkers(2)
+      .undirected()
+      .outputPath("/home/sietse/ULCCPOC")
       .build()
     instance.run()
   }

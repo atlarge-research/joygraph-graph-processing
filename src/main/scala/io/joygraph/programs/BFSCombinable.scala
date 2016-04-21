@@ -9,9 +9,9 @@ class BFSCombinable extends NewVertexProgram[Long, Long, Unit] {
     sourceId = conf.getLong(BFS.SOURCE_ID_CONF_KEY)
   }
 
-  override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, Unit,_, _]] = {
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, Long, Unit]] = {
     case superStep @ 0 =>
-      new SuperStepFunction(this, classOf[Long], classOf[Long]) {
+      new PregelSuperStepFunction(this, classOf[Long], classOf[Long]) {
         override def func: (Vertex[Long, Long, Unit], Iterable[Long]) => Boolean =
           (v, m) => {
             if (v.id == sourceId) {
@@ -23,7 +23,7 @@ class BFSCombinable extends NewVertexProgram[Long, Long, Unit] {
           }
       }
     case superStep @ _ =>
-      new SuperStepFunction(this, classOf[Long], classOf[Long]) with Combinable[Long] {
+      new PregelSuperStepFunction(this, classOf[Long], classOf[Long]) with Combinable[Long] {
         override def func: (Vertex[Long, Long, Unit], Iterable[Long]) => Boolean =
           (v, m) => {
             if (v.value == BFS.UNVISITED) {

@@ -1,7 +1,7 @@
 package io.joygraph.programs
 
 import com.typesafe.config.Config
-import io.joygraph.core.program.{Edge, NewVertexProgram, SuperStepFunction, Vertex}
+import io.joygraph.core.program._
 object SSSP {
   val SOURCE_ID_CONF_KEY = "source_id"
 }
@@ -11,8 +11,8 @@ class SSSP extends NewVertexProgram[Long, Double, Double]{
 
   override def load(conf: Config): Unit = sourceId = conf.getLong(SSSP.SOURCE_ID_CONF_KEY)
 
-  override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, Double, _, _]] = {
-    case superStep @ _ => new SuperStepFunction(this, classOf[Double], classOf[Double]) {
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, Double]] = {
+    case superStep @ _ => new PregelSuperStepFunction(this, classOf[Double], classOf[Double]) {
       override def func: (Vertex[Long, Double, Double], Iterable[Double]) => Boolean = (v, m) => {
         superStep match {
           case 0 =>
