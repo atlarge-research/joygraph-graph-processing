@@ -1,6 +1,8 @@
 package io.joygraph.core.actor.communication.impl.netty
 
 import java.nio.ByteBuffer
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.atomic.AtomicInteger
 
 import io.joygraph.core.actor.communication.MessageSender
 import io.joygraph.core.util.MessageCounting
@@ -14,10 +16,13 @@ import io.netty.channel.socket.nio.NioSocketChannel
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{Future, Promise}
 
-class MessageSenderNetty(protected[this] val msgCounting: MessageCounting) extends MessageSender[Int, ByteBuffer, ByteBuf] {
+class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numThreads : Int = 0) extends MessageSender[Int, ByteBuffer, ByteBuf] {
 
   private[this] type HostPort = (String, Int)
-  private[this] val workerGroup = new NioEventLoopGroup()
+  private[this] val workerGroupThreadId = new AtomicInteger(0)
+  private[this] val workerGroup = new NioEventLoopGroup(numThreads, new ThreadFactory {
+    override def newThread(r: Runnable): Thread = new Thread(r, "sender-worker-group-" + workerGroupThreadId.incrementAndGet())
+  })
   private[this] val _channels : TrieMap[Int, Channel] = TrieMap.empty
   private[this] val b = new Bootstrap()
   private[this] val messageSenderChannelInitializer = new MessageSenderChannelInitializer

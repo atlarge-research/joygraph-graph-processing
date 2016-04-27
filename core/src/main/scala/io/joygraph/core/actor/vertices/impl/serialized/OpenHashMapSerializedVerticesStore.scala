@@ -30,7 +30,9 @@ object OpenHashMapSerializedVerticesStore {
    override protected[this] val clazzE: Class[E],
    override protected[this] val clazzV: Class[V],
    val partitionIndex : Int,
-   val totalPartitions : Int) extends VerticesStore[I,V,E] with KryoSerialization  {
+   val totalPartitions : Int,
+   maxEdgeSize : Int
+  ) extends VerticesStore[I,V,E] {
 
     private[this] val _halted : scala.collection.mutable.Map[I, Boolean] = mutable.OpenHashMap.empty
     private[this] val _edges : scala.collection.mutable.Map[I, DirectByteBufferGrowingOutputStream] = mutable.OpenHashMap.empty
@@ -38,7 +40,7 @@ object OpenHashMapSerializedVerticesStore {
     private[this] val NO_EDGES = Iterable.empty[Edge[I,E]]
     // TODO inject kryo
     private[this] val kryo = new Kryo()
-    private[this] val kryoOutput = new KryoOutput(maxMessageSize, maxMessageSize)
+    private[this] val kryoOutput = new KryoOutput(maxEdgeSize, maxEdgeSize)
     private[this] var numEdges = 0
 
     private[this] val reusableIterablePool = new SimplePool({
@@ -51,7 +53,7 @@ object OpenHashMapSerializedVerticesStore {
           }
           reusableEdge
         }
-      }.input(new ByteBufferInput(maxMessageSize))
+      }.input(new ByteBufferInput(maxEdgeSize))
         .kryo(new Kryo)
     })
 
@@ -64,7 +66,7 @@ object OpenHashMapSerializedVerticesStore {
         }
         reusableEdge
       }
-    }.input(new ByteBufferInput(maxMessageSize))
+    }.input(new ByteBufferInput(maxEdgeSize))
       .kryo(kryo)
 
 
@@ -81,7 +83,7 @@ object OpenHashMapSerializedVerticesStore {
         override def readOnly: Iterable[Edge[I, E]] = throw new UnsupportedOperationException
       }
       mIterable
-        .input(new ByteBufferInput(maxMessageSize))
+        .input(new ByteBufferInput(maxEdgeSize))
         .kryo(kryo)
       mIterable
     }
@@ -258,6 +260,7 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
  protected[this] val clazzE : Class[E],
  protected[this] val clazzV : Class[V],
  numPartitions : Int,
+ maxEdgeSize : Int,
  errorReporter : (Throwable) => Unit
 ) extends VerticesStore[I,V,E] {
 
@@ -265,7 +268,7 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
   private[this] val partitions = new Array[Partition[I,V,E]](numPartitions)
   for(i <- 0 until numPartitions) {
     workers(i) = new PartitionWorker("vertex-partition-" + i, errorReporter)
-    partitions(i) = new Partition[I, V, E](clazzI, clazzE, clazzV, i, numPartitions)
+    partitions(i) = new Partition[I, V, E](clazzI, clazzE, clazzV, i, numPartitions, maxEdgeSize)
   }
 
   private[this] def partition(vId : I) : Partition[I,V,E] = {

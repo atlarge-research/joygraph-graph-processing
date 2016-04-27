@@ -98,7 +98,11 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       // give each member an id
       val fActorRef: Future[AddressPair] = (context.actorSelection(akkaPath) ? WorkerId(workerId)).mapTo[AddressPair]
       val currentWorkerId = workerId
-      val assignedFuture: Future[Unit] = fActorRef.map(x => workerIdAddressMapBuilder(currentWorkerId) = x)
+      val assignedFuture: Future[Unit] = fActorRef.map {
+        case AddressPair(actorRef, NettyAddress(host, port)) =>
+          // TODO abstract hostname transformation
+          workerIdAddressMapBuilder(currentWorkerId) = AddressPair(actorRef, NettyAddress( if(host.startsWith("node")) host+".ib.cluster" else host, port))
+      }
       workerId += 1
       assignedFuture
     }) {
@@ -106,7 +110,6 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       log.info("Distributing ActorRefs")
       val actorSelections: Iterable[ActorRef] = allWorkers().map(_.actorRef)
 
-      // TODO the worker sometimes sends a null reference as the actorRef field in AddressPair, this will result in a nullpointer exception
       FutureUtil.callbackOnAllComplete(sendMasterAddress(actorSelections)) {
         FutureUtil.callbackOnAllComplete(sendMapping(actorSelections)) {
           sendPaths(workerIdAddressMap, jobSettings.dataPath)

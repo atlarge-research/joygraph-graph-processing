@@ -4,10 +4,11 @@ import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.pool.{KryoFactory, KryoPool}
 import io.joygraph.core.actor.messaging.{Message, MessageStore}
 import io.joygraph.core.partitioning.VertexPartitioner
+import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.{KryoSerialization, SimplePool}
 
-class TrieMapSerializedMessageStore(protected[this] var partitioner : VertexPartitioner) extends MessageStore with KryoSerialization {
+class TrieMapSerializedMessageStore(protected[this] var partitioner : VertexPartitioner, maxMessageSize : Int) extends MessageStore with KryoSerialization {
 
   private[this] val messaging = new TrieMapSerializedMessaging
   private[this] var _pool : SimplePool[ReusableIterable[Any]] = _
@@ -70,4 +71,6 @@ class TrieMapSerializedMessageStore(protected[this] var partitioner : VertexPart
   def emptyNextMessages : Boolean = {
     messaging.emptyNextMessages
   }
+
+  override protected[this] def kryoOutputFactory: KryoOutput = new KryoOutput(maxMessageSize, maxMessageSize)
 }

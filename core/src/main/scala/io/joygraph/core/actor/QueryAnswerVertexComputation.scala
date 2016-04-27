@@ -20,6 +20,9 @@ import scala.collection.mutable
 import scala.concurrent.ExecutionContext
 import scala.reflect.ClassTag
 
+
+// computation intensity can be tweaked by adding more/less netty workers (to compute answers and do computations)
+// with this the network buffers can be enlarged per dst worker.
 class QueryAnswerVertexComputation[I,V,E,S,G,M]
 (superStepFunctionPool : SimplePool[QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_]],
  clazzI : Class[I],

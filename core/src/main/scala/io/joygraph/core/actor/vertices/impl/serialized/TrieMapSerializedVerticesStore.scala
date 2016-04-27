@@ -25,7 +25,8 @@ class TrieMapSerializedVerticesStore[I,V,E]
 (protected[this] val clazzI : Class[I],
 protected[this] val clazzE : Class[E],
 protected[this] val clazzV : Class[V],
-protected[this] var partitioner : VertexPartitioner
+protected[this] var partitioner : VertexPartitioner,
+ maxEdgeSize: Int
 ) extends VerticesStore[I,V,E] with KryoSerialization {
 
   private[this] val _halted = TrieMap.empty[I, Boolean]
@@ -43,7 +44,7 @@ protected[this] var partitioner : VertexPartitioner
         }
         reusableEdge
       }
-    }.input(new ByteBufferInput(maxMessageSize))
+    }.input(new ByteBufferInput(maxEdgeSize))
   })
 
   private[this] val reusableMutableIterablePool = new SimplePool[MutableReusableIterable[I, Edge[I,E]]]( {
@@ -77,7 +78,7 @@ protected[this] var partitioner : VertexPartitioner
         readOnlyIterable
       }
     }
-    mRIterable.input(new ByteBufferInput(maxMessageSize))
+    mRIterable.input(new ByteBufferInput(maxEdgeSize))
     mRIterable
   })
 
@@ -259,6 +260,8 @@ protected[this] var partitioner : VertexPartitioner
     }
     verticesToBeRemoved.par.foreach(_._2.foreach(removeAllFromVertex))
   }
+
+  override protected[this] def kryoOutputFactory: KryoOutput = new KryoOutput(maxEdgeSize,maxEdgeSize)
 }
 
 abstract class MutableReusableIterable[I, +T] extends ReusableIterable[T] {

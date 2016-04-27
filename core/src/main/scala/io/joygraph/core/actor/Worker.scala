@@ -62,9 +62,9 @@ object Worker{
         super.initialize()
 
         verticesStore = new OpenHashMapSerializedVerticesStore[I,V,E](
-          clazzI, clazzE, clazzV, jobSettings.workerCores, exceptionReporter
+          clazzI, clazzE, clazzV, jobSettings.workerCores, jobSettings.maxEdgeSize, exceptionReporter
         )
-        messageStore = new OpenHashMapSerializedMessageStore(jobSettings.workerCores, exceptionReporter)
+        messageStore = new OpenHashMapSerializedMessageStore(jobSettings.workerCores, jobSettings.maxFrameLength, exceptionReporter)
       }
     }
     worker.initialize()
@@ -80,9 +80,9 @@ object Worker{
       override def initialize(): Unit = {
         super.initialize()
         verticesStore = new TrieMapSerializedVerticesStore[I,V,E](
-          clazzI, clazzE, clazzV, partitioner
+          clazzI, clazzE, clazzV, partitioner, jobSettings.maxEdgeSize
         )
-        messageStore = new TrieMapSerializedMessageStore(partitioner)
+        messageStore = new TrieMapSerializedMessageStore(partitioner, jobSettings.maxFrameLength)
       }
     }
     worker.initialize()
@@ -298,8 +298,8 @@ abstract class Worker[I,V,E]
     case PrepareLoadData() =>
       log.info(s"$id: prepare load data!~ $state")
       // TODO create KryoFactory
-      this.edgeBufferNew = new AsyncSerializer(0, () => new Kryo())
-      this.verticesBufferNew = new AsyncSerializer(1, () => new Kryo())
+      this.edgeBufferNew = new AsyncSerializer(0, () => new Kryo(), jobSettings.maxFrameLength)
+      this.verticesBufferNew = new AsyncSerializer(1, () => new Kryo(), jobSettings.maxFrameLength)
       this.dataLoadingDeserializer = new AsyncDeserializer(new Kryo())
       sender() ! true
     case LoadDataWithVertices(verticesPath, verticesPathPosition, verticesPathLength, path, start, length) => Future {
@@ -475,7 +475,7 @@ abstract class Worker[I,V,E]
           }
           // TODO 4096 max message size should be retrieved somewhere else,
           // prior to this it was retrieved from KryoSerialization
-          reusableIterable.input(new ByteBufferInput(4096))
+          reusableIterable.input(new ByteBufferInput(jobSettings.maxFrameLength))
           reusableIterable
         })
       case queryAnswerProcessSuperStepFunction : QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_] =>
@@ -768,11 +768,11 @@ abstract class Worker[I,V,E]
         index -> !prevWorkers.contains(index)
     }
 
-    val haltedAsyncSerializer = new AsyncSerializer(0, () => new Kryo)
-    val idAsyncSerializer = new AsyncSerializer(1, () => new Kryo)
-    val valueAsyncSerializer = new AsyncSerializer(2, () => new Kryo)
-    val edgesAsyncSerializer = new AsyncSerializer(3, () => new Kryo)
-    val messagesAsyncSerializer = new AsyncSerializer(4, () => new Kryo)
+    val haltedAsyncSerializer = new AsyncSerializer(0, () => new Kryo, jobSettings.maxFrameLength)
+    val idAsyncSerializer = new AsyncSerializer(1, () => new Kryo, jobSettings.maxFrameLength)
+    val valueAsyncSerializer = new AsyncSerializer(2, () => new Kryo, jobSettings.maxFrameLength)
+    val edgesAsyncSerializer = new AsyncSerializer(3, () => new Kryo, jobSettings.maxFrameLength)
+    val messagesAsyncSerializer = new AsyncSerializer(4, () => new Kryo, jobSettings.maxFrameLength)
 
     val outputHandler = (byteBuffer : ByteBuffer, workerId : Int) => {
       log.info(s"${id.get} sending elastic buffer ${byteBuffer.position()} to ${workerId}")
@@ -900,12 +900,12 @@ abstract class Worker[I,V,E]
       this.id = Option(workerId)
 
       // TODO kryoFactory instead of new Kryo
-      messagesSerializer = new AsyncSerializer(0, () => new Kryo())
-      messagesCombinableSerializer = new CombinableAsyncSerializer[I](0, () => new Kryo(), idSerializer = vertexSerializer)
+      messagesSerializer = new AsyncSerializer(0, () => new Kryo(), jobSettings.maxFrameLength)
+      messagesCombinableSerializer = new CombinableAsyncSerializer[I](0, () => new Kryo(), jobSettings.maxFrameLength, vertexSerializer)
       messagesDeserializer = new AsyncDeserializer(new Kryo())
 
-      querySerializer = new AsyncSerializer(1, () => new Kryo())
-      answerSerializer = new AsyncSerializer(2, () => new Kryo())
+      querySerializer = new AsyncSerializer(1, () => new Kryo(), jobSettings.maxFrameLength)
+      answerSerializer = new AsyncSerializer(2, () => new Kryo(), jobSettings.maxFrameLength)
       queryDeserializer = new AsyncDeserializer(new Kryo())
       answerDeserializer = new AsyncDeserializer(new Kryo())
 
@@ -914,7 +914,7 @@ abstract class Worker[I,V,E]
 
       requestResponseService = new RequestResponseService[I,V,E](clazzI, verticesStore, messageSender, workerId, partitioner, computationExecutionContext)
 
-      messageReceiver = new MessageReceiverNetty(jobSettings.nettyWorkers)
+      messageReceiver = new MessageReceiverNetty(jobSettings.nettyWorkers, jobSettings.maxFrameLength)
       messageReceiver.setReceiverExceptionReporter(nettyReceiverException)
       messageReceiver.setOnReceivedMessage(handleNettyMessage)
 

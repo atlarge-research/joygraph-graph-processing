@@ -14,7 +14,7 @@ import scala.concurrent.{ExecutionContext, Future}
 class CombinableAsyncSerializer[I]
 (protected[this] val msgType : Byte,
  protected[this] val kryoFactory : () => Kryo,
- protected[this] val bufferExceededThreshold : Int = 1 * 1024 * 1024,
+ protected[this] val bufferExceededThreshold : Int,
  idSerializer : (Kryo, KryoOutput, I) => Any) extends AsyncBufferedSerializer
 {
 
@@ -23,7 +23,7 @@ class CombinableAsyncSerializer[I]
   private[this] val _byteBufferInputs : TrieMap[Int, ByteBufferInput] = TrieMap.empty
 
   private[this] def byteBufferInputs(index : Int) : ByteBufferInput = {
-    _byteBufferInputs.getOrElseUpdate(index, new ByteBufferInput(4096))
+    _byteBufferInputs.getOrElseUpdate(index, new ByteBufferInput(bufferExceededThreshold))
   }
 
   private[this] def combinerBuffers(index : Int) : CombinerBuffer[I] = {
@@ -31,7 +31,7 @@ class CombinableAsyncSerializer[I]
   }
 
   private[this] def kryoOutputs(index : Int) : KryoOutput = {
-    _kryoOutputs.getOrElseUpdate(index, new KryoOutput(4096, 4096))
+    _kryoOutputs.getOrElseUpdate(index, new KryoOutput(bufferExceededThreshold, bufferExceededThreshold))
   }
 
   def serialize[M](index : ThreadId, workerId : WorkerId, i: I, m : M, messageSerializer : (Kryo, KryoOutput, M) => Any, messageDeserializer : (Kryo, ByteBufferInput) => M)(outputHandler : ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext, combinable : Combinable[M]) : Unit = {
@@ -52,21 +52,14 @@ class CombinableAsyncSerializer[I]
         // empty combinerBuffer
         combinerBuffer.clear()
 
-        buffer.writeCounter()
-
-        outputHandler(buffer.handOff()).foreach { _ =>
-          // reset the osSwap, it's been used and needs to be set to pos 0
-          buffer.resetOOS()
-          // buffers in bufferswap are now clean!
-          returnBuffers(workerId, buffer)
-        } // sweet I got it back
+        flushBuffer(workerId, buffer, outputHandler)
 
         assert(combinerBuffer.add(i,m, combinable.combine, messageSerializer, messageDeserializer))
       }
     }
   }
 
-  def sendNonEmptyByteBuffers(outputHandler : ((ByteBuffer, Int)) => Future[ByteBuffer])(implicit executionContext: ExecutionContext) : Unit =
+  override def sendNonEmptyByteBuffers(outputHandler : ((ByteBuffer, Int)) => Future[ByteBuffer])(implicit executionContext: ExecutionContext) : Unit =
     _combinerBuffers.filter(_._2.size() > 0).foreach {
     case (index, combinerBuffer) =>
       val buffer = buffers(index)
@@ -78,10 +71,6 @@ class CombinableAsyncSerializer[I]
       }
       combinerBuffer.clear()
 
-      buffer.writeCounter()
-      outputHandler((buffer.handOff(), index)).foreach(_ => {
-        buffer.resetOOS()
-        returnBuffers(index, buffer)
-      })
+      flushBufferWithWorkerId(index, buffer, outputHandler)
   }
 }

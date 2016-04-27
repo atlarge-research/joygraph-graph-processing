@@ -2,6 +2,8 @@ package io.joygraph.core.actor.communication.impl.netty
 
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.atomic.AtomicInteger
 
 import io.joygraph.core.util.net.PortFinder
 import io.netty.bootstrap.ServerBootstrap
@@ -12,12 +14,17 @@ import io.netty.channel.{Channel, ChannelFuture, ChannelFutureListener, ChannelO
 
 import scala.concurrent.{Future, Promise}
 
-class MessageReceiverNetty(workerGroupThreads : Int) {
-
-  val bossGroup = new NioEventLoopGroup(1)
-  val workerGroup = new NioEventLoopGroup(workerGroupThreads) // worker threads
+class MessageReceiverNetty(workerGroupThreads : Int, maxFrameLength : Int) {
+  private[this] val bossGroupThreadId = new AtomicInteger(0)
+  private[this] val workerGroupThreadId = new AtomicInteger(0)
+  val bossGroup = new NioEventLoopGroup(math.max(1, workerGroupThreads >> 1), new ThreadFactory {
+    override def newThread(r: Runnable): Thread = new Thread(r, "receiver-boss-group-" + bossGroupThreadId.incrementAndGet())
+  })
+  val workerGroup = new NioEventLoopGroup(workerGroupThreads, new ThreadFactory {
+    override def newThread(r: Runnable): Thread = new Thread(r, "receiver-worker-group-" + workerGroupThreadId.incrementAndGet())
+  }) // worker threads
   var currentChannel : Option[Channel] = None
-  val messageChannelInitializer = new MessageChannelInitializer
+  val messageChannelInitializer = new MessageChannelInitializer(maxFrameLength)
 
   val b = new ServerBootstrap()
   b.group(bossGroup, workerGroup)

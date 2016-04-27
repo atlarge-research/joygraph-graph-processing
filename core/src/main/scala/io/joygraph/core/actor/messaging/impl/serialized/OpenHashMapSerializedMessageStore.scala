@@ -3,10 +3,10 @@ package io.joygraph.core.actor.messaging.impl.serialized
 import com.esotericsoftware.kryo.Kryo
 import io.joygraph.core.actor.messaging.impl.serialized.OpenHashMapSerializedMessageStore.Partition
 import io.joygraph.core.actor.messaging.{Message, MessageStore}
+import io.joygraph.core.util.DirectByteBufferGrowingOutputStream
 import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.PartitionWorker
-import io.joygraph.core.util.{DirectByteBufferGrowingOutputStream, KryoSerialization}
 
 import scala.collection.mutable
 import scala.concurrent.duration.Duration
@@ -15,7 +15,8 @@ import scala.concurrent.{Await, Promise}
 object OpenHashMapSerializedMessageStore {
   private[OpenHashMapSerializedMessageStore] class Partition
   (val partitionIndex : Int,
-   val totalPartitions : Int) extends MessageStore with KryoSerialization {
+   val totalPartitions : Int,
+   maxMessageSize : Int) extends MessageStore {
     private[this] var nextMessages = mutable.OpenHashMap.empty[Any, DirectByteBufferGrowingOutputStream]
     private[this] var currentMessages = mutable.OpenHashMap.empty[Any, DirectByteBufferGrowingOutputStream]
     private[this] val EMPTY_MESSAGES : Iterable[Any] = Iterable.empty[Any]
@@ -25,7 +26,7 @@ object OpenHashMapSerializedMessageStore {
     private[this] val kryoRead = new Kryo()
     private[this] val kryoWrite = new Kryo()
     // buffersize should be the same as the AsyncSerializer
-    private[this] val kryoOutput = new KryoOutput(1 * 1024 * 1024, 1 * 1024 * 1024)
+    private[this] val kryoOutput = new KryoOutput(maxMessageSize, maxMessageSize)
 
     override def setReusableIterableFactory(factory: => ReusableIterable[Any]): Unit = {
       _reusableIterable = factory
@@ -78,13 +79,14 @@ object OpenHashMapSerializedMessageStore {
 
 class OpenHashMapSerializedMessageStore
 (numPartitions : Int,
+ maxMessageSize : Int,
  errorReporter : (Throwable) => Unit) extends MessageStore {
 
   private[this] val workers = new Array[PartitionWorker](numPartitions)
   private[this] val partitions = new Array[Partition](numPartitions)
   for(i <- 0 until numPartitions) {
     workers(i) = new PartitionWorker("message-partition-" + i, errorReporter)
-    partitions(i) = new Partition(i, numPartitions)
+    partitions(i) = new Partition(i, numPartitions, maxMessageSize)
   }
 
   private[this] def partition(vId : Any) : Partition = {
