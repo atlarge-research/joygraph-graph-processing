@@ -76,7 +76,7 @@ trait VerticesStore[I,V,E] extends Types {
     * @param vId
     */
   def exportHaltedState
-  (vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext) = {
+  (vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer]) = {
     val vHalted = halted(vId)
     if (vHalted) {
       // value of halted is implicit
@@ -86,7 +86,7 @@ trait VerticesStore[I,V,E] extends Types {
     }
   }
 
-  def exportValue(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
+  def exportValue(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])  = {
     val vValue : V = vertexValue(vId)
     Option(vValue) match {
       case Some(vValue) =>
@@ -99,13 +99,13 @@ trait VerticesStore[I,V,E] extends Types {
     }
   }
 
-  def exportId(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
+  def exportId(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])  = {
     asyncSerializer.serialize[I](index, workerId, vId, (kryo, output, o) => {
       kryo.writeObject(output, vId)
     })(outputHandler)
   }
 
-  def exportEdges(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext)  = {
+  def exportEdges(vId : I, index : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])  = {
     edges(vId).foreach{ edge =>
       asyncSerializer.serialize[Edge[I,E]](index, workerId, edge, (kryo, output, o) => {
         kryo.writeObject(output, vId)
@@ -160,7 +160,7 @@ trait VerticesStore[I,V,E] extends Types {
    messageStore : MessageStore, // TODO move this to Messagestore
    messagesAsyncSerializer : AsyncSerializer,
    currentOutgoingMessageClass : Class[_]
-  )(implicit exeContext : ExecutionContext) {
+  ) {
     exportHaltedState(vId, threadId, workerId, haltedAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
     exportId(vId, threadId, workerId, idAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
     exportValue(vId, threadId, workerId, valueAsyncSerializer, (buffer) => outputHandler(buffer, workerId))

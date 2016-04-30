@@ -1,8 +1,8 @@
 package io.joygraph.core.util.serde
 
 import java.nio.ByteBuffer
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.{ConcurrentHashMap, LinkedBlockingQueue}
+import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
+import java.util.concurrent.{ConcurrentHashMap, Executors, LinkedBlockingQueue, ThreadFactory}
 
 import com.esotericsoftware.kryo.Kryo
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferOutputStream
@@ -23,6 +23,12 @@ trait AsyncBufferedSerializer {
   protected[this] val _lastResortBuffer: java.util.concurrent.ConcurrentHashMap[WorkerId, LinkedBlockingQueue[ObjectByteBufferOutputStream]] = new ConcurrentHashMap[WorkerId, LinkedBlockingQueue[ObjectByteBufferOutputStream]]()
   private[this] val _kryos: TrieMap[ThreadId, Kryo] = TrieMap.empty
   private[this] val bufferCreationLock = new Object
+  // dedicated executionContext for returning buffers.
+  private[this] implicit val executionContext : ExecutionContext =
+    ExecutionContext.fromExecutor(Executors.newCachedThreadPool(new ThreadFactory {
+      private[this] val threadId = new AtomicInteger(0)
+    override def newThread(r: Runnable): Thread = new Thread(r, "async-execution-" + threadId.incrementAndGet())
+  }))
 
   val timeSpent = new AtomicLong(0)
 
@@ -109,7 +115,7 @@ trait AsyncBufferedSerializer {
   protected[this] def flushLastResortBuffer
   (workerId : WorkerId,
    os : ObjectByteBufferOutputStream,
-   outputHandler: ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit  = {
+   outputHandler: ByteBuffer => Future[ByteBuffer]): Unit  = {
     os.writeCounter()
 
     addMessagesSent(workerId, os.counter())
@@ -123,11 +129,13 @@ trait AsyncBufferedSerializer {
   protected[this] def flushBuffer
   (workerId : WorkerId,
    os : ObjectByteBufferOutputStream,
-   outputHandler: ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit  = {
+   outputHandler: ByteBuffer => Future[ByteBuffer]): Unit  = {
     os.writeCounter()
 
     addMessagesSent(workerId, os.counter())
+
     outputHandler(os.handOff()).foreach { _ =>
+
       // reset the osSwap, it's been used and needs to be set to pos 0
       os.resetOOS()
       returnBuffers(workerId, os)
@@ -137,11 +145,12 @@ trait AsyncBufferedSerializer {
   protected[this] def flushBufferWithWorkerId
   (workerId : WorkerId,
    os : ObjectByteBufferOutputStream,
-   outputHandler: ((ByteBuffer, WorkerId)) => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit = {
+   outputHandler: ((ByteBuffer, WorkerId)) => Future[ByteBuffer]): Unit = {
     os.writeCounter()
 
     addMessagesSent(workerId, os.counter())
     outputHandler(os.handOff(), workerId).foreach { _ =>
+
       // reset the osSwap, it's been used and needs to be set to pos 0
       os.resetOOS()
       returnBuffers(workerId, os)
@@ -153,7 +162,7 @@ trait AsyncBufferedSerializer {
     * Otherwise we cannot guarantee that all buffers are flushed
     */
   def flushNonEmptyByteBuffer
-  (workerId : WorkerId)(outputHandler : ((ByteBuffer, WorkerId)) => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit = {
+  (workerId : WorkerId)(outputHandler : ((ByteBuffer, WorkerId)) => Future[ByteBuffer]) : Unit = {
     val emptyBuffers = new Array[ObjectByteBufferOutputStream](numBuffersPerWorkerId)
     var emptyBufferIndex = 0
 
@@ -176,7 +185,7 @@ trait AsyncBufferedSerializer {
     }
   }
 
-  def sendNonEmptyByteBuffers(outputHandler: ((ByteBuffer, WorkerId)) => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit ={
+  def sendNonEmptyByteBuffers(outputHandler: ((ByteBuffer, WorkerId)) => Future[ByteBuffer]): Unit ={
     _buffers.keySet().foreach(flushNonEmptyByteBuffer(_)(outputHandler))
   }
 

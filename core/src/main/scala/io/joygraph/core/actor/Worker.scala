@@ -487,6 +487,7 @@ abstract class Worker[I,V,E]
           queryAnswerProcessSuperStepFunction.clazzS,
           queryAnswerProcessSuperStepFunction.clazzG,
           currentIncomingMessageClass,
+          verticesStore,
           messageStore,
           workers,
           messageSender,
@@ -494,8 +495,7 @@ abstract class Worker[I,V,E]
           answerSerializer,
           partitioner,
           id.get,
-          computationFjPool.getParallelism,
-          computationExecutionContext
+          computationFjPool.getParallelism
         )
     }
   }

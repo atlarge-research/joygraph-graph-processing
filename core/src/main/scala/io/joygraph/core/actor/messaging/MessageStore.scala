@@ -9,7 +9,7 @@ import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.Types
 import io.joygraph.core.util.serde.{AsyncDeserializer, AsyncSerializer}
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.Future
 
 trait MessageStore extends Types {
 
@@ -30,7 +30,7 @@ trait MessageStore extends Types {
     }
   }
 
-  def exportAndRemoveMessages[I,M](vId : I, clazzM : Class[M], threadId : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer])(implicit exeContext : ExecutionContext) = {
+  def exportAndRemoveMessages[I,M](vId : I, clazzM : Class[M], threadId : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer]) = {
     val vMessages = nextMessages(vId, clazzM)
     if (vMessages.nonEmpty) {
       vMessages.foreach{ m =>

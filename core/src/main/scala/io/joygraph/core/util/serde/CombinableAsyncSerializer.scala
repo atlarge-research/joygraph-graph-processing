@@ -59,7 +59,7 @@ class CombinableAsyncSerializer[I]
     }
   }
 
-  override def sendNonEmptyByteBuffers(outputHandler : ((ByteBuffer, Int)) => Future[ByteBuffer])(implicit executionContext: ExecutionContext) : Unit =
+  override def sendNonEmptyByteBuffers(outputHandler : ((ByteBuffer, Int)) => Future[ByteBuffer]) : Unit =
     _combinerBuffers.filter(_._2.size() > 0).foreach {
     case (index, combinerBuffer) =>
       val buffer = buffers(index)

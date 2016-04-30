@@ -17,7 +17,6 @@ import io.joygraph.core.util.{SimplePool, ThreadId}
 
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
-import scala.concurrent.ExecutionContext
 import scala.reflect.ClassTag
 
 
@@ -29,6 +28,7 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
  clazzS : Class[S],
  clazzG : Class[G],
  clazzM : Class[M],
+ workerVerticesStore : VerticesStore[I,V,E],
  messageStore : MessageStore,
  workers : Map[Int, AddressPair],
  messageSender: MessageSenderNetty,
@@ -36,8 +36,7 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
  answerSerializer : AsyncSerializer,
  vertexPartitioner: VertexPartitioner,
  selfWorkerId : Int,
- parallelism : Int,
-implicit private[this] val executionContext : ExecutionContext
+ parallelism : Int
 ){
 
   private[this] val _superStepFunctionPool = superStepFunctionPool.asInstanceOf[SimplePool[QueryAnswerProcessSuperStepFunction[I,V,E,S,G,M]]]
@@ -74,6 +73,14 @@ implicit private[this] val executionContext : ExecutionContext
 
   private[this] var _allMessagesSentCounter : scala.collection.Map[Int, Long] = _
   private[this] val _allMessagesReceivedCounter = TrieMap.empty[Int, AtomicLong]
+
+  private[this] def ifMessageToSelf(workerId : Int)(any : => Unit)(otherwise : => Unit) : Unit = {
+    if (workerId == selfWorkerId) {
+      any
+    } else {
+      otherwise
+    }
+  }
 
   def flushQueries() = {
     // TODO flushing won't work with just 1 workercore
@@ -153,13 +160,18 @@ implicit private[this] val executionContext : ExecutionContext
               answersLatch.put(vId, new CountDownLatch(numQueries))
 
               queries.foreach {
-                case (dst, query) =>
+                case query @ (dst, message) =>
                   val dstWorkerId = vertexPartitioner.destination(dst)
-                  reusableQuery.src = vId
-                  reusableQuery.dst = dst
-                  reusableQuery.message = query
-                  querySerializer.serialize(threadId, dstWorkerId, reusableQuery, serializeQuery) { byteBuffer =>
-                    messageSender.sendNoAck(selfWorkerId, dstWorkerId, byteBuffer)
+
+                  ifMessageToSelf(dstWorkerId) {
+                    vertexAnswerLocal(threadId, vId, query, verticesStore, simpleVertexInstancePool)
+                  } {
+                    reusableQuery.src = vId
+                    reusableQuery.dst = dst
+                    reusableQuery.message = message
+                    querySerializer.serialize(threadId, dstWorkerId, reusableQuery, serializeQuery) { byteBuffer =>
+                      messageSender.sendNoAck(selfWorkerId, dstWorkerId, byteBuffer)
+                    }
                   }
               }
             } else {
@@ -176,6 +188,61 @@ implicit private[this] val executionContext : ExecutionContext
     messageStore.releaseMessages(messages, clazzM)
   }
 
+  def vertexAnswerLocal(threadId : Int, srcId : I, query : (I, S), partitionedVerticesStore: VerticesStore[I,V,E], simpleVertexInstancePool : SimplePool[Vertex[I,V,E]]) : Unit = {
+    val (vId, message) = query
+    val value: V = workerVerticesStore.vertexValue(vId)
+
+    val answer = workerVerticesStore.explicitlyScopedEdges(vId) { edgesIterable =>
+      // get vertex impl
+      simpleVertexInstancePool { v =>
+        v.load(vId, value, edgesIterable)
+        _superStepFunctionPool { ssF =>
+          ssF.answer(v, message)
+        }
+      }
+    }
+
+    val answers = vertexAnswers.get(srcId)
+    val index = messagesToBeReceived.get(srcId).decrementAndGet()
+    answers(index) = answer // write should be volatile
+    val answerLatch = answersLatch.get(srcId)
+    answerLatch.countDown()
+    if (index == 0) { // there is only ONE index 0 due to atomicInteger
+      answersLatch.get(srcId).await()
+
+      // now we can pass the answers to the vertexComputation
+      vertexComputation(srcId, partitionedVerticesStore, simpleVertexInstancePool, answers)
+
+      // clean up messagesReceived etc
+      messagesToBeReceived.remove(srcId)
+      answersLatch.remove(srcId)
+      vertexAnswers.remove(srcId)
+
+      if (vertexAnswers.size() == 0) { // we are done computing
+        waitObject.countDown()
+      }
+    }
+  }
+
+  private[this] def computeVertexAnswer(threadId : Int, dstWorkerId : Int, query :  QueryMessage[I,S], verticesStore: VerticesStore[I,V,E], simpleVertexInstancePool : SimplePool[Vertex[I,V,E]] ) = {
+    val vId = query.dst
+    val value: V = verticesStore.vertexValue(vId)
+
+    verticesStore.explicitlyScopedEdges(vId) { edgesIterable =>
+      // get vertex impl
+      simpleVertexInstancePool { v =>
+        v.load(vId, value, edgesIterable)
+        _superStepFunctionPool { ssF =>
+          val answer = ssF.answer(v, query.message)
+          val queryAnswer = new AnswerMessage[I, G](query.src, answer)
+          answerSerializer.serialize(threadId, dstWorkerId, queryAnswer, serializeAnswer) { byteBuffer =>
+            messageSender.sendNoAck(selfWorkerId, dstWorkerId, byteBuffer)
+          }
+        }
+      }
+    }
+  }
+
   def vertexAnswer(verticesStore: VerticesStore[I,V,E], queryDeserializer : AsyncDeserializer, is : ObjectByteBufferInputStream) : Unit = {
     val reusableQuery : QueryMessage[I,S] = QueryMessage(null.asInstanceOf[I], null.asInstanceOf[I], null.asInstanceOf[S])
 
@@ -188,23 +255,9 @@ implicit private[this] val executionContext : ExecutionContext
       queryDeserializer.deserialize(is, threadId, (kryo, input) => deserializeQuery(kryo, input, reusableQuery)) {
         _.foreach {
           query =>
-            val vId = query.dst
-            val value: V = verticesStore.vertexValue(vId)
-            verticesStore.explicitlyScopedEdges(vId) { edgesIterable =>
-              // get vertex impl
-              simpleVertexInstancePool { v =>
-                v.load(vId, value, edgesIterable)
-                _superStepFunctionPool { ssF =>
-                  val answer = ssF.answer(v, query.message)
-                  val dstWorkerId = vertexPartitioner.destination(query.src)
-                  val queryAnswer = new AnswerMessage[I, G](query.src, answer)
-                  answerSerializer.serialize(threadId, dstWorkerId, queryAnswer, serializeAnswer) { byteBuffer =>
-                    messageSender.sendNoAck(selfWorkerId, dstWorkerId, byteBuffer)
-                  }
-                  queriesProcessed.getOrElseUpdate(dstWorkerId, new LongCounter()).increment()
-                }
-              }
-            }
+            val dstWorkerId = vertexPartitioner.destination(query.src)
+            computeVertexAnswer(threadId, dstWorkerId, query, verticesStore, simpleVertexInstancePool)
+            queriesProcessed.getOrElseUpdate(dstWorkerId, new LongCounter()).increment()
         }
       }
     }

@@ -8,7 +8,7 @@ import io.joygraph.core.util.buffers.KryoOutput.KryoOutputOverflowException
 import io.joygraph.core.util.serde.AsyncSerializer.AsyncSerializerException
 
 import scala.annotation.tailrec
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.Future
 import scala.util.{Failure, Try}
 
 object AsyncSerializer {
@@ -26,7 +26,7 @@ class AsyncSerializer
   private[this] val maxRetries = 10
 
   @tailrec
-  private[this] def serialize[T](kryo : Kryo, workerId: WorkerId, o: T, serializer: (Kryo, Output, T) => Unit, tryCount : Int = 1)(outputHandler: ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit = {
+  private[this] def serialize[T](kryo : Kryo, workerId: WorkerId, o: T, serializer: (Kryo, Output, T) => Unit, tryCount : Int = 1)(outputHandler: ByteBuffer => Future[ByteBuffer]): Unit = {
     // message is too large even for a new buffer <-- abort
     if (tryCount >= maxRetries) {
       throw new AsyncSerializerException("Max tries exceeded, could not serialize object" + o)
@@ -70,7 +70,7 @@ class AsyncSerializer
     }
   }
 
-  def serialize[T](index : ThreadId, workerId: WorkerId, o: T, serializer: (Kryo, Output, T) => Unit)(outputHandler: ByteBuffer => Future[ByteBuffer])(implicit executionContext: ExecutionContext): Unit = {
+  def serialize[T](index : ThreadId, workerId: WorkerId, o: T, serializer: (Kryo, Output, T) => Unit)(outputHandler: ByteBuffer => Future[ByteBuffer]): Unit = {
     val kryo = kryos(index) // zero contention
     kryo.synchronized {
       val start = System.currentTimeMillis()
