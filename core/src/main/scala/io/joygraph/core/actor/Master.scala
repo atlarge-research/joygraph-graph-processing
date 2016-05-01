@@ -3,9 +3,10 @@ package io.joygraph.core.actor
 import java.util.concurrent._
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 
-import akka.actor.{Actor, ActorLogging, ActorRef}
+import akka.actor.{Actor, ActorLogging, ActorRef, Address}
 import akka.cluster.Cluster
 import akka.cluster.ClusterEvent.MemberUp
+import akka.cluster.metrics.{ClusterMetricsChanged, ClusterMetricsExtension}
 import akka.pattern.ask
 import akka.util.Timeout
 import com.typesafe.config.Config
@@ -44,6 +45,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   val jobSettings : JobSettings = JobSettings(conf)
   var workerIdAddressMap : Map[Int, AddressPair] = Map.empty
+  var akkaAddressToWorkerIdMap : Map[Address, Int] = Map.empty
   var doneDoOutput : AtomicInteger = _
   var elasticityPromise : ElasticityPromise = _
   val initializationLock = new Semaphore(1)
@@ -107,6 +109,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       assignedFuture
     }) {
       workerIdAddressMap = workerIdAddressMapBuilder.toMap
+      akkaAddressToWorkerIdMap = workerIdAddressMap.mapValues(_.actorRef.path.address).map(_.swap)
       log.info("Distributing ActorRefs")
       val actorSelections: Iterable[ActorRef] = allWorkers().map(_.actorRef)
 
@@ -129,6 +132,11 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   protected[this] def split(workerId : Int, totalNumNodes : Int, path : String) : (Long, Long)
   protected[this] def mkdirs(path : String) : Boolean
+
+  @scala.throws[Exception](classOf[Exception])
+  override def preStart(): Unit = {
+    ClusterMetricsExtension.get(context.system).subscribe(self)
+  }
 
   def sendPaths(workerIdToAddress : Map[Int, AddressPair], dataPath : String) = {
     log.info(s"Sending paths to ${workerIdToAddress.size} workers")
@@ -195,6 +203,20 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   }
 
   override def receive = {
+    case ClusterMetricsChanged(nodeMetrics) =>
+      nodeMetrics.foreach {
+        x =>
+          if (cluster.selfAddress == x.address) {
+            println("#M#" + x)
+          } else {
+            akkaAddressToWorkerIdMap.get(x.address) match {
+              case Some(workerId) =>
+                println("#" + workerId + "#" + x)
+              case None =>
+                println("#?#" + x)
+            }
+          }
+      }
     case InitiateTermination() =>
       terminate()
     case ElasticGrowComplete() => {
@@ -281,6 +303,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
               doingElasticity = true
               doElasticity().foreach(newWorkersMapping => {
                 workerIdAddressMap = newWorkersMapping
+                akkaAddressToWorkerIdMap = workerIdAddressMap.mapValues(_.actorRef.path.address).map(_.swap)
                 currentSuperStep += 1
                 doingElasticity = false
                 barrierSuccessReceived.set(allWorkers().size)

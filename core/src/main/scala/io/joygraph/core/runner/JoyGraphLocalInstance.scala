@@ -6,6 +6,7 @@ import java.util.concurrent.{CountDownLatch, TimeUnit}
 import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
 import com.typesafe.config.{Config, ConfigFactory}
+import io.joygraph.core.actor.metrics.GeneralMetricsCollector
 import io.joygraph.core.actor.{BaseActor, Master, Worker, WorkerProvider}
 import io.joygraph.core.message.elasticity.WorkersResponse
 import io.joygraph.core.partitioning.VertexPartitioner
@@ -299,7 +300,12 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
           ]
         auto-down = on
       }
-  }"""
+  }
+  akka.extensions = [ "akka.cluster.metrics.ClusterMetricsExtension" ]
+  akka.cluster.metrics.enabled = off
+  akka.cluster.metrics.collector.provider = ${classOf[GeneralMetricsCollector].getName}
+  akka.cluster.metrics.collector.fallback = false
+      """
   }
 
   private[this] def createJobConfig() : Config = {

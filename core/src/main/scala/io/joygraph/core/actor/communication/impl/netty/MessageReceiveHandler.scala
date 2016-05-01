@@ -2,6 +2,7 @@ package io.joygraph.core.actor.communication.impl.netty
 
 import java.nio.ByteBuffer
 
+import io.joygraph.core.actor.metrics.NetworkMetrics
 import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelHandler.Sharable
 import io.netty.channel.{ChannelHandlerContext, SimpleChannelInboundHandler}
@@ -22,6 +23,7 @@ class MessageReceiveHandler extends SimpleChannelInboundHandler[ByteBuf] with Ne
   override def channelRead0(ctx: ChannelHandlerContext, msg: ByteBuf): Unit = {
     // since DirectByteBuffer is using a merged CUMULATOR, nioBuffer() returns a single Pooled(Unsafe)DirectByteBuffer
     // TODO maybe return Future[Any]
+    NetworkMetrics.bytesReceived(msg.nioBuffer().limit())
     _onMessageReceived(msg.nioBuffer()) // NOTE: has to be blocking otherwise it'll be released prematurely by SimpleChannelInboundHandler
   }
 }

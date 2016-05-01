@@ -8,6 +8,7 @@ import java.util.concurrent.{Executors, ThreadFactory, TimeUnit}
 import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
 import com.typesafe.config.{Config, ConfigFactory}
+import io.joygraph.core.actor.metrics.GeneralMetricsCollector
 import io.joygraph.core.actor.{BaseActor, Master, Worker}
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.partitioning.impl.VertexHashPartitioner
@@ -86,6 +87,10 @@ object YarnAMBaseActor {
          |    parallelism-max = 4
          |  }
          |}
+         |akka.extensions = [ "akka.cluster.metrics.ClusterMetricsExtension" ]
+         |akka.cluster.metrics.enabled = off
+         |akka.cluster.metrics.collector.provider = ${classOf[GeneralMetricsCollector].getName}
+         |akka.cluster.metrics.collector.fallback = false
        """.stripMargin)
 
     // this is the configuration that the workers will get.

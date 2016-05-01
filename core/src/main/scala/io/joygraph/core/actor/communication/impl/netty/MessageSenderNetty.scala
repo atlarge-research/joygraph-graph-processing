@@ -5,6 +5,7 @@ import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger
 
 import io.joygraph.core.actor.communication.MessageSender
+import io.joygraph.core.actor.metrics.NetworkMetrics
 import io.joygraph.core.util.MessageCounting
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferOutputStream
 import io.netty.bootstrap.Bootstrap
@@ -114,6 +115,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
   private class MessageWrittenAndFlushedListener(promise : Promise[ByteBuffer], payload : ByteBuffer) extends ChannelFutureListener {
     override def operationComplete(future: ChannelFuture): Unit = {
       if (future.isSuccess) {
+        NetworkMetrics.bytesSent(payload.limit())
         promise.success(payload)
       } else {
         errorReporter(future.cause())

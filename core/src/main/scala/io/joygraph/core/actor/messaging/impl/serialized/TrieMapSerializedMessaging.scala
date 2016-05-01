@@ -15,6 +15,7 @@ class TrieMapSerializedMessaging extends SerializedMessaging {
 
   override def onBarrier(): Unit = {
     // TODO new TrieMaps are constructed which creates a lot of garbage
+    currentMessages.foreach(_._2.destroy()) // must be destroyed
     currentMessages = nextMessages
     nextMessages = TrieMap.empty[Any, DirectByteBufferGrowingOutputStream]
   }

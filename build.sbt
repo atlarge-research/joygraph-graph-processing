@@ -2,11 +2,13 @@ import sbt.Keys._
 import sbt._
 
 val HADOOP_VERSION = "2.7.2"
+val AKKA_VERSION = "2.4.4"
+val SCALA_VERSION = "2.12.0-M4"
 
 lazy val commonSettings = Seq(
   organization := "io.joygraph",
   version := "0.1-SNAPSHOT",
-  scalaVersion := "2.12.0-M3",
+  scalaVersion := SCALA_VERSION,
   publishTo := Some(Resolver.file("file",  new File(Path.userHome.absolutePath+"/.m2/repository")))
   //  checksums := Seq("")
 )
@@ -31,10 +33,11 @@ lazy val core = (project in file("core"))
   .settings(name := "core")
   .settings(
     libraryDependencies ++= Seq(
-      "org.scala-lang" % "scala-reflect" % "2.12.0-M3",
-      "com.typesafe.akka" %% "akka-actor" % "2.4.1",
-      "com.typesafe.akka" %% "akka-remote" % "2.4.1",
-      "com.typesafe.akka" %% "akka-cluster" % "2.4.1",
+      "org.scala-lang" % "scala-reflect" % SCALA_VERSION,
+      "com.typesafe.akka" %% "akka-actor" % AKKA_VERSION,
+      "com.typesafe.akka" %% "akka-remote" % AKKA_VERSION,
+      "com.typesafe.akka" %% "akka-cluster" % AKKA_VERSION,
+      "com.typesafe.akka" %% "akka-cluster-metrics" % AKKA_VERSION,
       "com.typesafe" % "config" % "1.3.0",
       "com.esotericsoftware" % "kryo-shaded" % "3.0.3",
       "io.netty" % "netty-all" % "4.0.34.Final"
@@ -60,5 +63,5 @@ lazy val hadoopTestDependencies = Seq(
 )
 
 lazy val testDependencies = Seq(
-  "org.scalatest" %% "scalatest" % "3.0.0-M12" % "test"
+  "org.scalatest" %% "scalatest" % "3.0.0-M16-SNAP4" % "test"
 )
