@@ -22,7 +22,7 @@ class ULCCPOCEdgeListDefinition extends ProgramDefinition[String, Long, Double, 
   classOf[ULCCPOC]
 )
 
-class DLCCPOC2EdgeListDefinition extends ProgramDefinition[String, Long, Double, Unit] (
+class DLCCPOC2EdgeListDefinition extends ProgramDefinition[String, Long, ValuePOC2, Unit] (
   ParseUtil.edgeListLineLongLong,
   (l) => l.toLong,
   (v, outputStream) =>
@@ -30,7 +30,7 @@ class DLCCPOC2EdgeListDefinition extends ProgramDefinition[String, Long, Double,
   classOf[DLCCPOC2]
 )
 
-class ULCCPOC2EdgeListDefinition extends ProgramDefinition[String, Long, Double, Unit] (
+class ULCCPOC2EdgeListDefinition extends ProgramDefinition[String, Long, ValuePOC2, Unit] (
   ParseUtil.edgeListLineLongLong,
   (l) => l.toLong,
   (v, outputStream) =>

@@ -67,7 +67,7 @@ class DLCCPOC extends NewVertexProgram[Long, Double, Unit] {
   }
 }
 
-class DLCCPOC2 extends NewVertexProgram[Long, Double, Unit] {
+class DLCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
   private[this] val neighbours = mutable.HashSet.empty[Long]
   private[this] val inquiry = new InquiryPOC2(null.asInstanceOf[Long], null.asInstanceOf[Array[Long]])
   private[this] val nullRef = null.asInstanceOf[Unit]
@@ -77,17 +77,21 @@ class DLCCPOC2 extends NewVertexProgram[Long, Double, Unit] {
     // noop
   }
 
-  override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, Unit]] = {
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, ValuePOC2, Unit]] = {
     case 0 =>
       new PregelSuperStepFunction(this, classOf[Unit], classOf[Long]) {
-        override def func: (Vertex[Long, Double, Unit], Iterable[Unit]) => Boolean = (v, m) => {
+        override def func: (Vertex[Long, ValuePOC2, Unit], Iterable[Unit]) => Boolean = (v, m) => {
+          // create neighbours hashset
+          val neighbours =  mutable.HashSet.empty[Long]
+          v.edges.foreach(x => neighbours += x.dst)
+          v.value = ValuePOC2(0.0, neighbours.toSet)
           sendAll(v, v.id)
           false
         }
       }
     case 1 =>
       new QueryAnswerProcessSuperStepFunction(this, classOf[InquiryPOC2], classOf[Int], classOf[Long]) {
-        override def query(v: Vertex[Long, Double, Unit], messages : Iterable[Long]): Iterable[(Long, InquiryPOC2)] = {
+        override def query(v: Vertex[Long, ValuePOC2, Unit], messages : Iterable[Long]): Iterable[(Long, InquiryPOC2)] = {
           neighbours.clear()
           v.edges.foreach(x => neighbours += x.dst)
           neighbours ++= messages
@@ -95,7 +99,7 @@ class DLCCPOC2 extends NewVertexProgram[Long, Double, Unit] {
             inquiry.src = v.id
             inquiry.edges = neighbours.toArray
 
-            v.value = neighbours.size
+            v.value.lcc = neighbours.size
 
             new Iterable[(Long, InquiryPOC2)] {
               override def iterator: Iterator[(Long, InquiryPOC2)] = new Iterator[(Long, InquiryPOC2)] {
@@ -111,26 +115,23 @@ class DLCCPOC2 extends NewVertexProgram[Long, Double, Unit] {
           }
         }
 
-        override def answer(v : Vertex[Long, Double, Unit], query: InquiryPOC2): Int = {
+        override def answer(v : Vertex[Long, ValuePOC2, Unit], query: InquiryPOC2): Int = {
           if (v.edges.isEmpty) {
             0
           } else {
-            val neighbours =  mutable.HashSet.empty[Long]
-            v.edges.foreach(x => neighbours += x.dst)
-
-            val matches = query.edges.count(neighbours.contains)
+            val matches = query.edges.count(v.value.neighboursSet.contains)
             matches
           }
         }
 
-        override def process(v: Vertex[Long, Double, Unit], data: Iterable[Int]): Boolean = {
+        override def process(v: Vertex[Long, ValuePOC2, Unit], data: Iterable[Int]): Boolean = {
           if (data.isEmpty) {
-            v.value = 0.0
+            v.value.lcc = 0.0
           } else {
             val matches = data.sum
-            val numNeighbours : Double = v.value
+            val numNeighbours : Double = v.value.lcc
             val lcc = matches / numNeighbours / (numNeighbours - 1)
-            v.value = lcc
+            v.value.lcc = lcc
           }
           true
         }
@@ -190,7 +191,7 @@ class ULCCPOC extends NewVertexProgram[Long, Double, Unit] {
   }
 }
 
-class ULCCPOC2 extends NewVertexProgram[Long, Double, Unit] {
+class ULCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
   private[this] val neighbours = mutable.HashSet.empty[Long]
   private[this] val inquiry = new InquiryPOC2(null.asInstanceOf[Long], null.asInstanceOf[Array[Long]])
   private[this] val emptyIterable = Iterable.empty[(Long, InquiryPOC2)]
@@ -199,10 +200,21 @@ class ULCCPOC2 extends NewVertexProgram[Long, Double, Unit] {
     // noop
   }
 
-  override def run(): PartialFunction[Int, SuperStepFunction[Long, Double, Unit]] = {
+  override def run(): PartialFunction[Int, SuperStepFunction[Long, ValuePOC2, Unit]] = {
     case 0 =>
+      new PregelSuperStepFunction(this, classOf[Unit], classOf[Long]) {
+        override def func: (Vertex[Long, ValuePOC2, Unit], Iterable[Unit]) => Boolean = (v, m) => {
+          // create neighbours hashset
+          val neighbours =  mutable.HashSet.empty[Long]
+          v.edges.foreach(x => neighbours += x.dst)
+          v.value = ValuePOC2(0.0, neighbours.toSet)
+          sendAll(v, v.id)
+          false
+        }
+      }
+    case 1 =>
       new QueryAnswerProcessSuperStepFunctionNoPregelMessage(this, classOf[InquiryPOC2], classOf[Int]) {
-        override def query(v: Vertex[Long, Double, Unit]): Iterable[(Long, InquiryPOC2)] = {
+        override def query(v: Vertex[Long, ValuePOC2, Unit]): Iterable[(Long, InquiryPOC2)] = {
           if (LazySize.sizeGreaterThan(v.edges, 1)) {
             neighbours.clear()
             v.edges.foreach(x => neighbours += x.dst)
@@ -210,7 +222,7 @@ class ULCCPOC2 extends NewVertexProgram[Long, Double, Unit] {
             inquiry.src = v.id
             inquiry.edges = neighbours.toArray
 
-            v.value = neighbours.size
+            v.value.lcc = neighbours.size
             new Iterable[(Long, InquiryPOC2)] {
               override def iterator: Iterator[(Long, InquiryPOC2)] = new Iterator[(Long, InquiryPOC2)] {
                 val nIt =  neighbours.iterator
@@ -226,31 +238,33 @@ class ULCCPOC2 extends NewVertexProgram[Long, Double, Unit] {
           }
         }
 
-        override def answer(v : Vertex[Long, Double, Unit], query: InquiryPOC2): Int = {
+        override def answer(v : Vertex[Long, ValuePOC2, Unit], query: InquiryPOC2): Int = {
           if (v.edges.isEmpty) {
             0
           } else {
-            val neighbours =  mutable.HashSet.empty[Long]
-            v.edges.foreach(x => neighbours += x.dst)
-            val matches = query.edges.count(neighbours.contains)
+            val matches = query.edges.count(v.value.neighboursSet.contains)
             matches
           }
         }
 
-        override def process(v: Vertex[Long, Double, Unit], data: Iterable[Int]): Boolean = {
+        override def process(v: Vertex[Long, ValuePOC2, Unit], data: Iterable[Int]): Boolean = {
           if (data.isEmpty) {
-            v.value = 0.0
+            v.value.lcc = 0.0
           } else {
             val matches = data.sum
-            val numNeighbours : Double = v.value
+            val numNeighbours : Double = v.value.lcc
             val lcc = matches / numNeighbours / (numNeighbours - 1)
-            v.value = lcc
+            v.value.lcc = lcc
           }
           true
         }
 
       }
   }
+}
+
+case class ValuePOC2(var lcc : Double, var neighboursSet : Set[Long]) {
+  override def toString: String = lcc.toString
 }
 
 class InquiryPOC2 extends KryoSerializable {
