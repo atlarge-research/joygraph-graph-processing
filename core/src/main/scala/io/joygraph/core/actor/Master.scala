@@ -174,6 +174,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       FutureUtil.callbackOnAllComplete(allWorkers().map(x => (x.actorRef ? PrepareSuperStep(numVertices, numEdges)).mapTo[Boolean])) {
         log.info("Sending runsuperstep")
         superStepSuccessReceived.set(allWorkers().size)
+        logMasterAction("RunSuperStep", currentSuperStep)
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
@@ -200,6 +201,19 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     }
 
     elasticityPromise.future
+  }
+
+  def logWorkerAction(workerAkkaAddress : Address, keyword : String, message : Any) = {
+    akkaAddressToWorkerIdMap.get(workerAkkaAddress) match {
+      case Some(workerId) =>
+        log.info("{} : {} : {}", keyword, workerId, message)
+      case None =>
+        log.info("{} : {} : {}", keyword, "Unknown", message)
+    }
+  }
+
+  def logMasterAction(keyword : String, message : Any): Unit = {
+    log.info("{} : {} : {}", keyword, "M", message)
   }
 
   override def receive = {
@@ -246,34 +260,39 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       }
 
     case LoadingComplete(workerId, numV, numEdge) =>
-      println(s"$workerId $numV $numEdge done")
+      log.info(s"$workerId $numV $numEdge done")
+      logWorkerAction(sender().path.address, "LoadingComplete", "PROCESS_COMPLETE")
       numVertices.addAndGet(numV)
       numEdges.addAndGet(numEdge)
       if (allLoadDataCompleteReceived.decrementAndGet() == 0) {
-        println(s"total : ${numVertices.get} ${numEdges.get}")
+        log.info(s"total : ${numVertices.get} ${numEdges.get}")
         // set to superstep
         sendSuperStepState(numVertices.get, numEdges.get)
       }
     case AllLoadingComplete() =>
       if (loadDataSuccessReceived.decrementAndGet() == 0) {
+        logWorkerAction(sender().path.address, "AllLoadingComplete", "LOCAL")
         allLoadDataCompleteReceived.set(allWorkers().size)
         allWorkers().foreach(_.actorRef ! AllLoadingComplete())
       }
     case BarrierComplete() => {
+      logWorkerAction(sender().path.address, "Barrier", currentSuperStep)
+
       if (barrierSuccessReceived.decrementAndGet() == 0) {
-        log.info("Barrier complete")
+        logMasterAction("BarrierComplete", currentSuperStep)
         //reset aggregator
         _aggregatorMapping.foreach{
           case (name, aggregator) =>
             _aggregatorMapping(name).masterPrepareStep()
         }
         superStepSuccessReceived.set(allWorkers().size)
+        logMasterAction("RunSuperStep", currentSuperStep)
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
     case SuperStepComplete(aggregators) =>
       log.info(s"Left : ${superStepSuccessReceived.get()}")
-
+      logWorkerAction(sender().path.address, "SuperStepComplete", currentSuperStep)
       aggregators match {
         case Some(aggregatorMapping) =>
           if (_aggregatorMapping.isEmpty) {
@@ -290,6 +309,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       }
 
       if (superStepSuccessReceived.decrementAndGet() == 0) {
+        logMasterAction("SuperStepComplete", currentSuperStep)
         FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? AllSuperStepComplete()).mapTo[DoNextStep])) {
           implicit results =>
             log.info("Do next step ?")
@@ -307,6 +327,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
                 currentSuperStep += 1
                 doingElasticity = false
                 barrierSuccessReceived.set(allWorkers().size)
+                logMasterAction("DoBarrier", currentSuperStep)
                 allWorkers().foreach(_.actorRef ! DoBarrier(currentSuperStep, _aggregatorMapping.toMap))
               })
 
@@ -318,6 +339,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       }
     case DoneOutput() =>
       log.info(s"Output left: ${doneDoOutput.get}")
+      logWorkerAction(sender().path.address, "DoneOutput", "LOCAL")
       if (doneDoOutput.decrementAndGet() == 0) {
         // print dem aggregators
         _aggregatorMapping.foreach{case (name, aggregator) => println(s"$name: ${aggregator.value}")}
