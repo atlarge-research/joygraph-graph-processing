@@ -12,7 +12,7 @@ class BaseActor(private[this] val jobConf : Config, masterFactory : (Config, Clu
 
   private[this] val cluster = Cluster(context.system)
   private[this] var workerRef : Option[ActorRef] = None
-  private[this] var masterRef : Option[ActorRef] = None
+  protected[this] var masterRef : Option[ActorRef] = None
   // TODO assume seedNodeAddresses == 1
   private[this] val seedNodeAddresses : util.List[String] = jobConf.getStringList("akka.cluster.seed-nodes")
 

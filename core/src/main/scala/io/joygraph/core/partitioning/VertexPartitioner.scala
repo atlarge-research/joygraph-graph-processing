@@ -2,7 +2,7 @@ package io.joygraph.core.partitioning
 
 import com.typesafe.config.Config
 
-trait VertexPartitioner {
+trait VertexPartitioner extends Serializable {
   protected[this] var _numWorkers : Int = _
 
   def numWorkers(numWorkers : Int) = _numWorkers = numWorkers

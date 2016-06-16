@@ -1,5 +1,5 @@
 package io.joygraph.core.message.elasticity
 
-case class ElasticGrowComplete() {
+case class ElasticityComplete() {
 
 }

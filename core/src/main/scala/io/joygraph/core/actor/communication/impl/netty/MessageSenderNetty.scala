@@ -72,6 +72,16 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
     promise.future
   }
 
+  def disconnectFromAll(destinations : Iterable[Int]) : Iterable[Future[Channel]] = {
+    destinations.map(disconnectFrom)
+  }
+
+  def disconnectFrom(destination : Int) : Future[Channel] = {
+    val promise = Promise[Channel]
+    channel(destination).disconnect().addListener(new ChannelDisconnectCompleteListener(destination, promise))
+    promise.future
+  }
+
   def shutDown() = workerGroup.shutdownGracefully().sync()
 
   def closeAllChannels(): Unit = {
@@ -117,6 +127,17 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
       if (future.isSuccess) {
         NetworkMetrics.bytesSent(payload.limit())
         promise.success(payload)
+      } else {
+        errorReporter(future.cause())
+      }
+    }
+  }
+
+  private class ChannelDisconnectCompleteListener(destination : Int, p : Promise[Channel]) extends ChannelFutureListener {
+    override def operationComplete(future: ChannelFuture): Unit = {
+      if (future.isSuccess) {
+        _channels.remove(destination)
+        p.success(future.channel())
       } else {
         errorReporter(future.cause())
       }

@@ -6,6 +6,7 @@ import java.util.concurrent.{CountDownLatch, TimeUnit}
 import akka.actor.{ActorSystem, Props}
 import akka.cluster.Cluster
 import com.typesafe.config.{Config, ConfigFactory}
+import io.joygraph.core.actor.elasticity.policies.ElasticPolicy
 import io.joygraph.core.actor.metrics.GeneralMetricsCollector
 import io.joygraph.core.actor.{BaseActor, Master, Worker, WorkerProvider}
 import io.joygraph.core.message.elasticity.WorkersResponse
@@ -37,6 +38,7 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
   protected[this] var _isElastic : Boolean = false
   protected[this] var _isDirected : Option[Boolean] = None
   protected[this] var _workerCores : Option[Int] = None
+  protected[this] var _policy : Option[ElasticPolicy] = None
 
   def workerCores(workerCores : Int) : BuilderType = {
     _workerCores = Option(workerCores)
@@ -50,6 +52,11 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
 
   def undirected() : BuilderType = {
     _isDirected = Some(true)
+    this
+  }
+
+  def policy(policy : ElasticPolicy) : BuilderType = {
+    _policy = Some(policy)
     this
   }
 
@@ -151,6 +158,13 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
       case None => graphTestInstance.workerCores(Runtime.getRuntime.availableProcessors() - 1)
     }
 
+    _policy match {
+      case Some(policy) =>
+        graphTestInstance.policy(policy)
+      case None =>
+        graphTestInstance.policy(ElasticPolicy.default())
+    }
+
     graphTestInstance.setElastic(_isElastic)
 
     graphTestInstance
@@ -178,6 +192,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
 
   // elasticity
   private[this] var _isElastic = false
+  private[this] var _policy : ElasticPolicy = _
   private[this] val finishedLock = new CountDownLatch(1)
   private[this] val finishedCounter = new AtomicInteger(0)
   private[this] def finish(): Unit = {
@@ -243,6 +258,10 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
     this
   }
 
+  def policy(policy: ElasticPolicy) : Type = {
+    _policy = policy
+    this
+  }
 
   def dataPath(path : String) : Type = {
     _dataPath = path
@@ -321,7 +340,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
     val jobCfg =
       s"""
       job {
-        program.definition.class = ${programDefinition.getClass.getName}
+        program.definition.class = "${programDefinition.getClass.getName}"
         master.memory = 1000
         master.cores = 1
         worker.memory = 2000
@@ -330,6 +349,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
         data.path = "file://${_dataPath}"
         output.path = "file://${_outputPath}"
         directed = ${_isDirected}
+        policy.class = "${_policy.getClass.getName}"
       }
       worker {
         suffix = "worker"

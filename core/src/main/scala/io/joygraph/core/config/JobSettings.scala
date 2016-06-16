@@ -1,10 +1,12 @@
 package io.joygraph.core.config
 
 import com.typesafe.config.Config
+import io.joygraph.core.actor.elasticity.policies.ElasticPolicy
 import io.joygraph.core.reader.LineProvider
 import io.joygraph.core.writer.LineWriter
 
 case class JobSettings(private val conf : Config) {
+  val policy : ElasticPolicy = if (conf.hasPath("job.policy.class")) Class.forName(conf.getString("job.policy.class")).newInstance().asInstanceOf[ElasticPolicy] else ElasticPolicy.default()
   val programDefinition : String = conf.getString("job.program.definition.class")
   val masterMemory : Int = conf.getInt("job.master.memory")
   val masterCores : Int = conf.getInt("job.master.cores")

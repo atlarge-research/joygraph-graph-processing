@@ -10,6 +10,8 @@ import akka.cluster.metrics.{ClusterMetricsChanged, ClusterMetricsExtension}
 import akka.pattern.ask
 import akka.util.Timeout
 import com.typesafe.config.Config
+import io.joygraph.core.actor.elasticity.policies.ElasticPolicy
+import io.joygraph.core.actor.elasticity.{ElasticityHandler, ElasticityPromise, WorkerProviderProxy}
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
@@ -20,8 +22,7 @@ import io.joygraph.core.util.{Errors, ExecutionContextUtil, FutureUtil}
 
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
-import scala.concurrent.{ExecutionContext, Future, Promise}
-import scala.util.Try
+import scala.concurrent.{ExecutionContext, Future}
 
 object Master {
   def initialize(master : Master) : Master = {
@@ -47,14 +48,13 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   var workerIdAddressMap : Map[Int, AddressPair] = Map.empty
   var akkaAddressToWorkerIdMap : Map[Address, Int] = Map.empty
   var doneDoOutput : AtomicInteger = _
-  var elasticityPromise : ElasticityPromise = _
   val initializationLock = new Semaphore(1)
   // TODO keep state in Master explicitly instead of implicitly
   var doingElasticity : Boolean = false
-
+  val elasticityHandler : ElasticityHandler = new ElasticityHandler(cluster, timeout, executionContext)
 
   // An actor providing actors
-  protected[this] var workerProvider : Option[ActorRef] = None
+  protected[this] var workerProviderProxyOption : Option[WorkerProviderProxy] = None
 
   private[this] var initialized: Boolean = false
   private[this] var _aggregatorMapping : scala.collection.mutable.Map[String, Aggregator[_]] = mutable.OpenHashMap.empty
@@ -67,10 +67,11 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   private[this] val barrierSuccessReceived = new AtomicInteger
   private[this] val loadDataSuccessReceived = new AtomicInteger()
   private[this] val superStepSuccessReceived = new AtomicInteger()
+  private[this] val policy : ElasticPolicy = jobSettings.policy
 
   def workerMembers() = cluster.state.members.filterNot(_.address == cluster.selfAddress)
 
-  def setWorkerProvider(workerProvider : ActorRef) = this.workerProvider = Option(workerProvider)
+  def setWorkerProvider(workerProvider : ActorRef) = this.workerProviderProxyOption = Option(new WorkerProviderProxy(workerProvider))
 
   def initialize() : Unit = {
     initializationLock.acquire()
@@ -190,13 +191,20 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   }
 
   def doElasticity(): Future[Map[Int,AddressPair]] = {
-    elasticityPromise = new ElasticityPromise(workerIdAddressMap, timeout, executionContext)
-    // request number
-    workerProvider match {
-      case Some(provider) =>
-        provider ! WorkersRequest(conf, 1)
+    val elasticityPromise = new ElasticityPromise
+
+    workerProviderProxyOption match {
+      case Some(workerProviderProxy) =>
+        // elasticityPromise must be fulfilled by decide method
+        policy.decide(currentSuperStep, workerIdAddressMap) match {
+          case Some(result) =>
+            elasticityHandler.startElasticityOperation(ElasticityHandler.ElasticityOperation(result, elasticityPromise, workerIdAddressMap), workerProviderProxy, conf)
+          case None =>
+            log.info("No grow or shrink")
+            elasticityPromise.success(workerIdAddressMap)
+        }
       case None =>
-        // if none then we complete promise without changing the worker map
+        log.info("There's no provider for elasticity")
         elasticityPromise.success(workerIdAddressMap)
     }
 
@@ -218,8 +226,10 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   override def receive = {
     case ClusterMetricsChanged(nodeMetrics) =>
+      policy.addMetrics(currentSuperStep, nodeMetrics, akkaAddressToWorkerIdMap)
       nodeMetrics.foreach {
         x =>
+
           if (cluster.selfAddress == x.address) {
             println("#M#" + x)
           } else {
@@ -233,22 +243,24 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       }
     case InitiateTermination() =>
       terminate()
-    case ElasticGrowComplete() => {
-      elasticityPromise.elasticGrowCompleted()
+    case RegisterWorkerProvider(workerProviderRef) =>
+      setWorkerProvider(workerProviderRef)
+    case ElasticityComplete() => {
+      elasticityHandler.elasticityCompleted()
     }
-    case WorkersResponse(numWorkers) =>
-      // todo set number of workers to expect
-      elasticityPromise.numWorkersExpected(numWorkers)
+    case wResponse @ WorkersResponse(numWorkers) =>
+      // these are the number of workers that will be launched
+      // we assume that the requested workers will be received
+      workerProviderProxyOption match {
+        case Some(workerProviderProxy) =>
+          log.info("Received response from workerProvider")
+          workerProviderProxy.response(wResponse)
+        case None =>
+          log.error("Getting a response when there's no provider is impossible")
+      }
     case NewWorker() =>
       val senderRef = sender()
-
-      // TODO make this a method
-      // assumes workerIdAddressMap is not empty!
-      val nextWorkerId = workerIdAddressMap.keys.max + 1
-      val fAddressPair = (senderRef ? WorkerId(nextWorkerId)).mapTo[AddressPair]
-      fAddressPair.foreach{
-        elasticityPromise.newWorker(nextWorkerId, _)
-      }
+      elasticityHandler.newWorker(senderRef)
     case MemberUp(member) =>
       if (!initialized) {
         initialize()
@@ -319,9 +331,8 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
             log.info(s"Hell $doNextStep")
             // set to superstep
             if (doNextStep) {
-              // TODO elasticity
               doingElasticity = true
-              doElasticity().foreach(newWorkersMapping => {
+              doElasticity().foreach( newWorkersMapping => {
                 workerIdAddressMap = newWorkersMapping
                 akkaAddressToWorkerIdMap = workerIdAddressMap.mapValues(_.actorRef.path.address).map(_.swap)
                 currentSuperStep += 1
@@ -357,79 +368,8 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   def terminate(): Unit = {
     log.info("Initiating cluster termination")
+    allWorkers().foreach(x => cluster.leave(x.actorRef.path.address))
     allWorkers().foreach(x => context.stop(x.actorRef))
     context.stop(self)
   }
-}
-
-// TODO rework this, kind of ugly :p
-class ElasticityPromise(currentWorkers : Map[Int, AddressPair], implicit val askTimeout : Timeout, implicit val executionContext : ExecutionContext) extends Promise[Map[Int, AddressPair]] {
-
-  private[this] val defaultPromise : Promise[Map[Int, AddressPair]] = Promise[Map[Int, AddressPair]]
-  private[this] var _numWorkersExpected : Option[Int] = None
-  private[this] var nextWorkers : TrieMap[Int, AddressPair] = TrieMap.empty
-  private[this] var newWorkers : TrieMap[Int, AddressPair] = TrieMap.empty
-  private[this] val elasticGrowComplete = new AtomicInteger(0)
-  private[this] val workerCounter : AtomicInteger = new AtomicInteger(0)
-  nextWorkers ++= currentWorkers
-
-  def numWorkersExpected(numWorkers : Int) = {
-    _numWorkersExpected = Some(numWorkers)
-    sendElasticGrowIfCompleted()
-  }
-
-  def newWorker(index : Int, addressPair: AddressPair) = synchronized {
-    workerCounter.incrementAndGet()
-    nextWorkers += index -> addressPair
-    newWorkers += index -> addressPair
-    sendElasticGrowIfCompleted()
-  }
-
-  def elasticGrowCompleted(): Unit = {
-    if (elasticGrowComplete.incrementAndGet() == currentWorkers.size) {
-
-      val nextWorkersMap = nextWorkers.toMap
-      // set state to superstep
-      FutureUtil.callbackOnAllComplete(nextWorkersMap.map(_._2.actorRef).map(_ ? State(GlobalState.SUPERSTEP))) {
-        this.success(nextWorkersMap)
-      }
-    }
-  }
-
-  private[this] def sendElasticGrowIfCompleted(): Unit = synchronized {
-    _numWorkersExpected match {
-      case Some(x) =>
-        if (x == workerCounter.get()) { // got all workers, now we can recreate
-          // distribute
-          // TODO distribute
-          val nextWorkersMap = nextWorkers.toMap
-          val currentWorkersMap = currentWorkers.toMap
-          val newWorkersMap = newWorkers.toMap
-
-          // distribute workers mapping
-          FutureUtil.callbackOnAllComplete(currentWorkers.map(_._2.actorRef).map(_ ? NewWorkerMap(newWorkersMap))) {
-            FutureUtil.callbackOnAllComplete(newWorkers.map(_._2.actorRef).map(_ ? NewWorkerMap(nextWorkersMap))) {
-              //set state for all
-              FutureUtil.callbackOnAllComplete(nextWorkers.map(_._2.actorRef).map(_ ? State(GlobalState.GROW_ELASTIC))) {
-                //only currentworkers distribute
-                currentWorkers.map(_._2.actorRef).foreach(_ ! ElasticGrow(currentWorkersMap, nextWorkersMap))
-              }
-            }
-          }
-
-
-        }
-        // noop
-      case None =>
-        // noop
-    }
-  }
-
-
-
-  override def future: Future[Map[Int, AddressPair]] = defaultPromise.future
-
-  override def tryComplete(result: Try[Map[Int, AddressPair]]): Boolean = defaultPromise.tryComplete(result)
-
-  override def isCompleted: Boolean = defaultPromise.isCompleted
 }

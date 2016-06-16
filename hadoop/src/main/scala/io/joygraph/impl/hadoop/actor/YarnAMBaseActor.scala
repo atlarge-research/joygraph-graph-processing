@@ -11,6 +11,7 @@ import com.typesafe.config.{Config, ConfigFactory}
 import io.joygraph.core.actor.metrics.GeneralMetricsCollector
 import io.joygraph.core.actor.{BaseActor, Master, Worker}
 import io.joygraph.core.config.JobSettings
+import io.joygraph.core.message.elasticity.{RegisterWorkerProvider, WorkersRequest}
 import io.joygraph.core.partitioning.impl.VertexHashPartitioner
 import io.joygraph.core.program.ProgramDefinition
 import io.joygraph.core.util.net.{NetUtils, PortFinder}
@@ -142,84 +143,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
   // TODO non-homogeneous priorities have a side-effect in YARN
   private[this] val priority = YARNUtils.defaultPriority
 
-  private[this] val allocatedContainers = new AtomicInteger(0)
-
-  private[this] val allocListener : AMRMClientAsync.CallbackHandler = new AMRMClientAsync.CallbackHandler {
-    override def onError(e: Throwable): Unit = log.error(e, "container allocation error")
-
-    override def getProgress: Float = 0f
-
-    override def onShutdownRequest(): Unit = log.info("Received shutdown request")
-
-    override def onNodesUpdated(updatedNodes: util.List[NodeReport]): Unit = {
-      // noop
-    }
-
-    override def onContainersCompleted(statuses: util.List[ContainerStatus]): Unit = {
-      statuses.foreach(status => log.info(s"${status.getContainerId} completed"))
-      // noop
-    }
-
-    override def onContainersAllocated(containers: util.List[Container]): Unit = synchronized {
-      log.info("Received {} containers", containers.size())
-      val currentlyAllocatedContainers = allocatedContainers.addAndGet(containers.size())
-      log.info("Currently allocated {} containers", currentlyAllocatedContainers)
-      val containersToUse = containers
-
-      if (currentlyAllocatedContainers < numWorkers) {
-        log.info("Did not receive enough containers : {}/{}", currentlyAllocatedContainers, numWorkers)
-        val numToRequest = numWorkers - currentlyAllocatedContainers
-        log.info("Requesting missing {} containers", numToRequest)
-        (1 to numToRequest).foreach(_ => addContainerRequest())
-      }
-
-      if (currentlyAllocatedContainers > numWorkers) {
-        val diff = currentlyAllocatedContainers - numWorkers
-        allocatedContainers.addAndGet(-diff)
-        log.info("Releasing {} excess containers", diff)
-        // release excess containers
-        var i = 0
-        while (i < diff) {
-          val containerToRelease = containers.last
-          containersToUse.remove(containerToRelease)
-          amRMClient.releaseAssignedContainer(containerToRelease.getId)
-          i += 1
-        }
-      }
-
-      log.info("Launching {} containers", containersToUse.size)
-      containersToUse.foreach { container =>
-        val localResources : util.Map[String, LocalResource] = new util.HashMap[String, LocalResource]
-        val commands : util.List[String] = new util.ArrayList[String]()
-        val env : util.Map[String, String] = new util.HashMap[String, String]()
-
-        val jarFileName = jarFileStatus.getPath.getName
-        val configFile = File.makeTemp("worker", ".conf")
-        configFile.writeAll(workerConf.root().render())
-        val confFileName = configFile.name
-
-        val (_, jarResource) = YARNUtils.localResource(jarFileName, jarFileStatus)
-        val (_, confResource) = YARNUtils.localResource(fs, confFileName, configFile.toAbsolute.toString(), System.currentTimeMillis() + "")
-
-        localResources += jarResource
-        localResources += confResource
-        env += YARNUtils.classPath()
-        commands += YARNUtils.workerCommand(jarFileName, confFileName, workerMemory)
-
-        val credentials: Credentials = UserGroupInformation.getCurrentUser.getCredentials
-        val dob = new DataOutputBuffer()
-        credentials.writeTokenStorageToStream(dob)
-        val fsTokens = ByteBuffer.wrap(dob.getData, 0, dob.getLength)
-
-        // we run the actorsystem
-        val ctx = ContainerLaunchContext.newInstance(
-          localResources, env, commands, null, fsTokens, null)
-
-        nmClientAsync.startContainerAsync(container, ctx)
-      }
-
-    }
-  }
+  private[this] val allocListener : AMRMCallBackHandler = new AMRMCallBackHandler
 
   private[this] val conf = new YarnConfiguration()
   //    conf.addResource() // TODO get configuration from classpath?
@@ -272,6 +196,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
     capability = YARNUtils.cappedResource(response.getMaximumResourceCapability, workerMemory, workerCores)
 
     log.info("Requesting {} containers", numWorkers)
+    allocListener.setContainersExpected(numWorkers)
     // request containers
     for (i <- 1 to numWorkers) {
       addContainerRequest()
@@ -286,5 +211,104 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
     amRMClient.unregisterApplicationMaster(appStatus, "Shut down successfully", null)
     amRMClient.stop()
     nmClientAsync.stop()
+  }
+
+  override def spawnMaster(): Unit = {
+    super.spawnMaster()
+    masterRef.get ! RegisterWorkerProvider(self)
+  }
+
+  override def receive: PartialFunction[Any, Unit] = (super.receive :: ({
+    case WorkersRequest(jobConf, numExtraWorkers) =>
+      log.info("Requesting {} additional containers", numExtraWorkers)
+      allocListener.setContainersExpected(numExtraWorkers)
+      // request containers
+      for (i <- 1 to numExtraWorkers) {
+        addContainerRequest()
+      }
+  } : PartialFunction[Any, Unit]) :: Nil).reduceLeft(_ orElse _)
+
+  class AMRMCallBackHandler extends AMRMClientAsync.CallbackHandler {
+    private[this] var allocatedContainers : AtomicInteger = _
+    private[this] var containersRequested : Int = _
+
+    def setContainersExpected(n : Int) = {
+      containersRequested = n
+      allocatedContainers = new AtomicInteger(0)
+    }
+
+    override def onError(e: Throwable): Unit = log.error(e, "container allocation error")
+
+    override def getProgress: Float = 0f
+
+    override def onShutdownRequest(): Unit = log.info("Received shutdown request")
+
+    override def onNodesUpdated(updatedNodes: util.List[NodeReport]): Unit = {
+      // noop
+    }
+
+    override def onContainersCompleted(statuses: util.List[ContainerStatus]): Unit = {
+      statuses.foreach(status => log.info(s"${status.getContainerId} completed"))
+      // noop
+    }
+
+    override def onContainersAllocated(containers: util.List[Container]): Unit = synchronized {
+      log.info("Received {} containers", containers.size())
+      val currentlyAllocatedContainers = allocatedContainers.addAndGet(containers.size())
+      log.info("Currently allocated {} containers", currentlyAllocatedContainers)
+      val containersToUse = containers
+
+      if (currentlyAllocatedContainers < containersRequested) {
+        log.info("Did not receive enough containers : {}/{}", currentlyAllocatedContainers, containersRequested)
+        val numToRequest = containersRequested - currentlyAllocatedContainers
+        log.info("Requesting missing {} containers", numToRequest)
+        (1 to numToRequest).foreach(_ => addContainerRequest())
+      }
+
+      if (currentlyAllocatedContainers > containersRequested) {
+        val diff = currentlyAllocatedContainers - containersRequested
+        allocatedContainers.addAndGet(-diff)
+        log.info("Releasing {} excess containers", diff)
+        // release excess containers
+        var i = 0
+        while (i < diff) {
+          val containerToRelease = containers.last
+          containersToUse.remove(containerToRelease)
+          amRMClient.releaseAssignedContainer(containerToRelease.getId)
+          i += 1
+        }
+      }
+
+      log.info("Launching {} containers", containersToUse.size)
+      containersToUse.foreach { container =>
+        val localResources : util.Map[String, LocalResource] = new util.HashMap[String, LocalResource]
+        val commands : util.List[String] = new util.ArrayList[String]()
+        val env : util.Map[String, String] = new util.HashMap[String, String]()
+
+        val jarFileName = jarFileStatus.getPath.getName
+        val configFile = File.makeTemp("worker", ".conf")
+        configFile.writeAll(workerConf.root().render())
+        val confFileName = configFile.name
+
+        val (_, jarResource) = YARNUtils.localResource(jarFileName, jarFileStatus)
+        val (_, confResource) = YARNUtils.localResource(fs, confFileName, configFile.toAbsolute.toString(), System.currentTimeMillis() + "")
+
+        localResources += jarResource
+        localResources += confResource
+        env += YARNUtils.classPath()
+        commands += YARNUtils.workerCommand(jarFileName, confFileName, workerMemory)
+
+        val credentials: Credentials = UserGroupInformation.getCurrentUser.getCredentials
+        val dob = new DataOutputBuffer()
+        credentials.writeTokenStorageToStream(dob)
+        val fsTokens = ByteBuffer.wrap(dob.getData, 0, dob.getLength)
+
+        // we run the actorsystem
+        val ctx = ContainerLaunchContext.newInstance(
+          localResources, env, commands, null, fsTokens, null)
+
+        nmClientAsync.startContainerAsync(container, ctx)
+      }
+    }
   }
 }

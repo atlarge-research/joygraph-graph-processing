@@ -49,7 +49,9 @@ object OpenHashMapSerializedMessageStore {
       // noop
     }
 
-    override protected[messaging] def removeMessages[I](dst: I): Unit = currentMessages.remove(dst)
+    override protected[messaging] def removeMessages[I](dst: I): Unit = synchronized {
+      currentMessages.remove(dst)
+    }
 
     override protected[messaging] def nextMessages[I, M](dst: I, clazzM: Class[M]): Iterable[M] = {
       nextMessages.get(dst) match {
@@ -113,7 +115,7 @@ class OpenHashMapSerializedMessageStore
   }
 
   override protected[messaging] def removeMessages[I](dst: I): Unit = {
-    throw new UnsupportedOperationException
+    partition(dst).removeMessages(dst)
   }
 
   override protected[messaging] def nextMessages[I, M](dst: I, clazzM: Class[M]): Iterable[M] = {

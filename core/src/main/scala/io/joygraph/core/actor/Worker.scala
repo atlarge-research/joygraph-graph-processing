@@ -727,23 +727,23 @@ abstract class Worker[I,V,E]
       }
   }
 
-  private[this] var elasticGrowthDeserializer : AsyncDeserializer = _
+  private[this] var elasticDeserializer : AsyncDeserializer = _
 
-  private[this] def prepareElasticGrowStep() = {
-    elasticGrowthDeserializer = new AsyncDeserializer(new Kryo())
+  private[this] def prepareElasticStep() = {
+    elasticDeserializer = new AsyncDeserializer(new Kryo())
   }
 
 
-  private[this] def handleElasticGrowNetty(threadId : ThreadId, is : ObjectByteBufferInputStream) : Boolean = {
+  private[this] def handleElasticNetty(threadId : ThreadId, is : ObjectByteBufferInputStream) : Boolean = {
     try {
       is.msgType match {
         case _ =>
           val threadId = ThreadId.getMod(jobSettings.nettyWorkers)
           verticesStore.importVerticesStoreData(threadId, is,
-            elasticGrowthDeserializer,
-            elasticGrowthDeserializer,
-            elasticGrowthDeserializer,
-            elasticGrowthDeserializer
+            elasticDeserializer,
+            elasticDeserializer,
+            elasticDeserializer,
+            elasticDeserializer
           )
           messageSerDes { implicit messageSerDe =>
             messageStore.importCurrentMessagesData(threadId, is, messagesDeserializer, messageSerDe.messagePairDeserializer, clazzI, currentOutgoingMessageClass)
@@ -758,15 +758,22 @@ abstract class Worker[I,V,E]
   /**
     * uses computeExecutionContext
     */
-  def distributeVerticesEdgesAndMessages(prevWorkers: Map[Int, AddressPair], nextWorkers: Map[Int, AddressPair]) = {
-    // update partitioner
-    partitioner.numWorkers(nextWorkers.size)
-
-    // new workers
-    val newWorkersMap = nextWorkers.map{
-      case (index, addressPair) =>
-        index -> !prevWorkers.contains(index)
-    }
+  def distributeVerticesEdgesAndMessages(prevWorkers: Map[Int, AddressPair], nextWorkers: Map[Int, AddressPair], partitioner : VertexPartitioner) = {
+    this.partitioner = partitioner
+    val newWorkersMap =
+      if (nextWorkers.size > prevWorkers.size) {
+        // added workers
+        nextWorkers.map {
+          case (index, addressPair) =>
+            index -> !prevWorkers.contains(index)
+        }
+      } else {
+        // we've removed workers
+        nextWorkers.map {
+          case (index, addressPair) =>
+            index -> true
+        }
+      }.withDefaultValue(false)
 
     val haltedAsyncSerializer = new AsyncSerializer(0, () => new Kryo, jobSettings.maxFrameLength)
     val idAsyncSerializer = new AsyncSerializer(1, () => new Kryo, jobSettings.maxFrameLength)
@@ -835,7 +842,7 @@ abstract class Worker[I,V,E]
         if (doneAllSentReceived) {
           resetSentReceived()
           log.info(s"$id elastic phase ended")
-          master() ! ElasticGrowComplete()
+          master() ! ElasticityComplete()
         }
       }
     } else {
@@ -843,17 +850,12 @@ abstract class Worker[I,V,E]
     }
   }
 
-  private[this] val GROW_OPERATION : PartialFunction[Any, Unit] = {
-    case ElasticGrow(prevWorkers, nextWorkers) =>
-      // TODO new worker initialization
-      // TODO this is done after worker initialized its listen server.
-      // we assume that prevWorkers is a subset of nextWorkers
-      assert(prevWorkers.size < nextWorkers.size)
+  private[this] val ELASTIC_OPERATION : PartialFunction[Any, Unit] = {
+    case ElasticDistribute(prevWorkers, nextWorkers, newPartitioner) =>
+      assert(nextWorkers.nonEmpty)
       Future {
         this.workers = nextWorkers
-        // TODO check messages sent/received
-        // TODO link import logic
-        distributeVerticesEdgesAndMessages(prevWorkers, nextWorkers)
+        distributeVerticesEdgesAndMessages(prevWorkers, nextWorkers, newPartitioner)
       }(computationExecutionContext)
         .recover{
           case t : Throwable => computationNonFatalReporter(t)
@@ -871,6 +873,15 @@ abstract class Worker[I,V,E]
     }
   }
 
+  private[this] def removeWorkers(senderRef : ActorRef, workers : Map[Int, AddressPair]) = {
+    this.workers = this.workers.filterNot(x => workers.contains(x._1))
+    FutureUtil.callbackOnAllComplete{
+      messageSender.disconnectFromAll(workers.keys)
+    } {
+      senderRef ! true
+    }
+  }
+
   private[this] def nettyReceiverException(t : Throwable) : Unit = {
     log.info("Error receiver handler\n" + Errors.messageAndStackTraceString(t))
     terminate()
@@ -880,7 +891,7 @@ abstract class Worker[I,V,E]
     log.info("Error sender handler\n" + Errors.messageAndStackTraceString(t))
     terminate()
   }
-
+  
   private[this] val BASE_OPERATION : PartialFunction[Any, Unit] = {
     case UnreachableMember(member) =>
       log.info(s"${member.address} ${master().path.address}")
@@ -931,6 +942,10 @@ abstract class Worker[I,V,E]
       val senderRef = sender()
       log.info(s"new workers: $newWorkers")
       addWorkers(senderRef, newWorkers)
+    case ElasticRemoval(workersToBeRemoved) =>
+      val senderRef = sender()
+      log.info(s"workers to be removed: $workersToBeRemoved")
+      removeWorkers(senderRef, workersToBeRemoved)
     case WorkerMap(workers) =>
       val senderRef = sender()
       log.info(s"workers: $workers")
@@ -950,11 +965,11 @@ abstract class Worker[I,V,E]
           currentReceive = (BASE_OPERATION :: RUN_SUPERSTEP :: Nil).reduceLeft(_ orElse _)
         case GlobalState.POST_SUPERSTEP =>
           currentReceive = (BASE_OPERATION :: POST_SUPERSTEP_OPERATION :: Nil).reduceLeft(_ orElse _)
-        case GlobalState.GROW_ELASTIC =>
-          prepareElasticGrowStep()
-          messageHandler = handleElasticGrowNetty
+        case GlobalState.ELASTIC_DISTRIBUTE =>
+          prepareElasticStep()
+          messageHandler = handleElasticNetty
           receivedCallback = () => elasticCompleteTrigger()
-          currentReceive = (BASE_OPERATION :: GROW_OPERATION :: Nil).reduceLeft(_ orElse _)
+          currentReceive = (BASE_OPERATION :: ELASTIC_OPERATION :: Nil).reduceLeft(_ orElse _)
         case GlobalState.NONE =>
       }
       context.become(currentReceive, true)
