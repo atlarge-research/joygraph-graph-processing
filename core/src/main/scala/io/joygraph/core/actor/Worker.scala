@@ -90,6 +90,7 @@ object Worker{
   }
 }
 
+// TODO remove partitioner as argument, let master propagate partitioner
 abstract class Worker[I,V,E]
 (private[this] val config : Config,
  programDefinition: ProgramDefinition[String, I,V,E],

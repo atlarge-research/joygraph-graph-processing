@@ -7,9 +7,11 @@ import akka.actor.ActorRef
 import akka.cluster.Cluster
 import akka.util.Timeout
 import com.typesafe.config.Config
+import io.joygraph.core.actor.Master
 import io.joygraph.core.actor.elasticity.ElasticityHandler.ElasticityOperation
 import io.joygraph.core.actor.elasticity.policies.ElasticPolicy
 import io.joygraph.core.actor.elasticity.policies.ElasticPolicy.{Grow, Shrink}
+import io.joygraph.core.actor.metrics.WorkerOperation
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.message.elasticity.{NewWorkerMap, _}
 import io.joygraph.core.message.{AddressPair, State, WorkerId}
@@ -22,7 +24,7 @@ object ElasticityHandler {
   final case class ElasticityOperation(result : ElasticPolicy.Result, promise : ElasticityPromise, currentWorkers : Map[Int, AddressPair])
 }
 
-class ElasticityHandler(cluster : Cluster,
+class ElasticityHandler(master : Master, cluster : Cluster,
                         implicit val askTimeout : Timeout,
                         implicit val executionContext : ExecutionContext) {
   private[this] var _currentOperation : ElasticityOperation = _
@@ -128,6 +130,9 @@ class ElasticityHandler(cluster : Cluster,
           //set state for all
           FutureUtil.callbackOnAllComplete(currentAndNewWorkersMap.map(_._2.actorRef).map(_ ? globalState)) {
             //only currentworkers distribute
+            currentWorkers.foreach{x => val worker = x._2.actorRef
+              master.logWorkerActionStart(worker.path.address, WorkerOperation.DISTRIBUTE_DATA)
+            }
             currentWorkers.map(_._2.actorRef).foreach(_ ! elasticityMessage)
           }
         }

@@ -49,10 +49,14 @@ lazy val core = (project in file("core"))
   .settings(
     scalacOptions += "-feature"
   )
-//
-//lazy val joygraph = (project in file("."))
-//    .settings(commonSettings: _*)
-//
+
+// disable publishing of root project using publish to mvn
+lazy val joygraph = (project in file("."))
+  .settings(commonSettings : _*)
+  .settings(
+    publish := {}
+  )
+  .aggregate(core, cluster, hadoop)
 
 lazy val hadoopTestDependencies = Seq(
   "org.apache.hadoop" % "hadoop-client" % HADOOP_VERSION % Test exclude("jline", "jline"),
