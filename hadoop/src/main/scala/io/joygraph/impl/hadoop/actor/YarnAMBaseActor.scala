@@ -52,7 +52,10 @@ object YarnAMBaseActor {
          |    provider = "akka.cluster.ClusterActorRefProvider"
          |  }
          |  remote {
-         |    watch-failure-detector.acceptable-heartbeat-pause = 30
+         |    watch-failure-detector.acceptable-heartbeat-pause = 120 s
+         |    transport-failure-detector {
+         |      acceptable-heartbeat-pause = 120 s
+         |    }
          |    netty.tcp {
          |      maximum-frame-size = 10M
          |      hostname = "$hostName"
@@ -141,7 +144,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
   private[this] val workerCores = jobSettings.workerCores
   private[this] var capability : Resource = _
   // TODO non-homogeneous priorities have a side-effect in YARN
-  private[this] val priority = YARNUtils.defaultPriority
+  private[this] val currentPriority = new AtomicInteger(1)
 
   private[this] val allocListener : AMRMCallBackHandler = new AMRMCallBackHandler
 
@@ -174,7 +177,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
 
   private[this] def addContainerRequest(): Unit = {
     log.info("Requesting container with {} memory and {} cores", capability.getMemory, capability.getVirtualCores)
-    amRMClient.addContainerRequest(new AMRMClient.ContainerRequest(capability, null, null, priority, true))
+    amRMClient.addContainerRequest(new AMRMClient.ContainerRequest(capability, null, null, YARNUtils.newPriority(currentPriority.incrementAndGet()), true))
   }
 
   override def preStart(): Unit = {
@@ -218,7 +221,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
     masterRef.get ! RegisterWorkerProvider(self)
   }
 
-  override def receive: PartialFunction[Any, Unit] = (super.receive :: ({
+  override def receive: PartialFunction[Any, Unit] = (({
     case WorkersRequest(jobConf, numExtraWorkers) =>
       log.info("Requesting {} additional containers", numExtraWorkers)
       allocListener.setContainersExpected(numExtraWorkers)
@@ -226,7 +229,7 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
       for (i <- 1 to numExtraWorkers) {
         addContainerRequest()
       }
-  } : PartialFunction[Any, Unit]) :: Nil).reduceLeft(_ orElse _)
+  } : PartialFunction[Any, Unit]) :: super.receive :: Nil).reduceLeft(_ orElse _)
 
   class AMRMCallBackHandler extends AMRMClientAsync.CallbackHandler {
     private[this] var allocatedContainers : AtomicInteger = _
@@ -248,7 +251,12 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
     }
 
     override def onContainersCompleted(statuses: util.List[ContainerStatus]): Unit = {
-      statuses.foreach(status => log.info(s"${status.getContainerId} completed"))
+      statuses.foreach {
+        status =>
+          log.info(s"${status.getContainerId} completed\n" +
+            s"diagnostics: ${status.getDiagnostics}\n" +
+            s"exit status: ${status.getExitStatus}")
+      }
       // noop
     }
 
@@ -296,7 +304,8 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
         localResources += jarResource
         localResources += confResource
         env += YARNUtils.classPath()
-        commands += YARNUtils.workerCommand(jarFileName, confFileName, workerMemory)
+        log.info(s"Launching worker with ${workerMemory * 8 / 10}")
+        commands += YARNUtils.workerCommand(jarFileName, confFileName, workerMemory * 8 / 10)
 
         val credentials: Credentials = UserGroupInformation.getCurrentUser.getCredentials
         val dob = new DataOutputBuffer()

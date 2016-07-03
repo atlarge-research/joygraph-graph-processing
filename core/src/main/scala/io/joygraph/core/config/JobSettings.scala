@@ -17,6 +17,7 @@ case class JobSettings(private val conf : Config) {
   val maxFrameLength : Int = if (conf.hasPath("network.maxframelength")) conf.getInt("network.maxframelength") else 1024 * 1024
   val maxEdgeSize : Int = if (conf.hasPath("maxedgesize")) conf.getInt("maxedgesize") else 4096 // must be <= maxFrameLength
   val initialNumberOfWorkers : Int = conf.getInt("job.workers.initial")
+  val maxWorkers : Int = if (conf.hasPath("job.workers.max")) conf.getInt("job.workers.max") else initialNumberOfWorkers
   val dataPath : String = conf.getString("job.data.path")
   val verticesPath : Option[String] = if (conf.hasPath("job.vertices.path")) Some(conf.getString("job.vertices.path")) else None
   val outputPath : String = conf.getString("job.output.path")

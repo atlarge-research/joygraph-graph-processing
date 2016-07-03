@@ -15,7 +15,7 @@ import io.joygraph.core.actor.metrics.WorkerOperation
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.message.elasticity.{NewWorkerMap, _}
 import io.joygraph.core.message.{AddressPair, State, WorkerId}
-import io.joygraph.core.util.FutureUtil
+import io.joygraph.core.util.{FutureUtil, IOUtil}
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.ExecutionContext
@@ -67,10 +67,11 @@ class ElasticityHandler(master : Master, cluster : Cluster,
     val fAddressPair = (newWorkerActorRef ? WorkerId(nextWorkerId)).mapTo[AddressPair]
 
     fAddressPair.foreach {
-      addressPair =>
+      case AddressPair(actorRef, nettyAddress) =>
+        // TODO abstract hostname transformation
         workerCounter.incrementAndGet()
-        nextWorkers += nextWorkerId -> addressPair
-        newWorkers += nextWorkerId -> addressPair
+        nextWorkers += nextWorkerId -> AddressPair(actorRef, IOUtil.infiniband(nettyAddress))
+        newWorkers += nextWorkerId -> AddressPair(actorRef, IOUtil.infiniband(nettyAddress))
         sendElasticityOperationIfCompleted()
     }
   }
@@ -129,11 +130,15 @@ class ElasticityHandler(master : Master, cluster : Cluster,
         FutureUtil.callbackOnAllComplete(newWorkers.map(_._2.actorRef).map(_ ? NewWorkerMap(currentAndNewWorkersMap))) {
           //set state for all
           FutureUtil.callbackOnAllComplete(currentAndNewWorkersMap.map(_._2.actorRef).map(_ ? globalState)) {
-            //only currentworkers distribute
-            currentWorkers.foreach{x => val worker = x._2.actorRef
-              master.logWorkerActionStart(worker.path.address, WorkerOperation.DISTRIBUTE_DATA)
+            // send partitioner for new workers
+            FutureUtil.callbackOnAllComplete(newWorkers.map(_._2.actorRef).map(_ ? NewPartitioner(partitioner))) {
+
+              //only currentworkers distribute
+              currentWorkers.foreach{x => val worker = x._2.actorRef
+                master.logWorkerActionStart(worker.path.address, WorkerOperation.DISTRIBUTE_DATA)
+              }
+              currentWorkers.map(_._2.actorRef).foreach(_ ! elasticityMessage)
             }
-            currentWorkers.map(_._2.actorRef).foreach(_ ! elasticityMessage)
           }
         }
       }

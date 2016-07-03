@@ -16,7 +16,6 @@ import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.PartitionWorker
 import io.joygraph.core.util.serde.AsyncSerializer
 
-import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.parallel.ParIterable
@@ -217,7 +216,7 @@ object OpenHashMapSerializedVerticesStore {
     }
 
     override def distributeVertices
-    (newWorkersMap: Map[WorkerId, Boolean],
+    (selfWorkerId: WorkerId,
      haltedAsyncSerializer: AsyncSerializer,
      idAsyncSerializer: AsyncSerializer,
      valueAsyncSerializer: AsyncSerializer,
@@ -227,14 +226,12 @@ object OpenHashMapSerializedVerticesStore {
      messageStore: MessageStore,
      messagesAsyncSerializer: AsyncSerializer,
      currentOutgoingMessageClass: Class[_])(implicit exeContext : ExecutionContext): Unit = {
-
-      val verticesToBeRemoved = TrieMap.empty[ThreadId, ArrayBuffer[I]]
       val threadId = ThreadId.getMod(totalPartitions)
-      vertices.foreach{ vId =>
+      val verticesToBeRemoved = ArrayBuffer.empty[I]
+      vertices.toSet.foreach { vId : I =>
         val workerId = partitioner.destination(vId)
-        if (newWorkersMap(workerId)) {
-          verticesToBeRemoved.getOrElseUpdate(threadId, ArrayBuffer.empty[I]) += vId
-
+        if (selfWorkerId != workerId) {
+          verticesToBeRemoved += vId
           distributeVertex(
             vId,
             workerId,
@@ -250,7 +247,7 @@ object OpenHashMapSerializedVerticesStore {
           )
         }
       }
-      verticesToBeRemoved.par.foreach(_._2.foreach(removeAllFromVertex))
+      verticesToBeRemoved.foreach(removeAllFromVertex)
     }
   }
 }
@@ -366,7 +363,7 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
   }
 
   override def distributeVertices
-  (newWorkersMap: Map[WorkerId, Boolean],
+  (selfWorkerId: WorkerId,
    haltedAsyncSerializer: AsyncSerializer,
    idAsyncSerializer: AsyncSerializer,
    valueAsyncSerializer: AsyncSerializer,
@@ -382,7 +379,7 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
         worker.execute(new Runnable {
           override def run(): Unit = {
             partitions(index).distributeVertices(
-              newWorkersMap,
+              selfWorkerId,
               haltedAsyncSerializer,
               idAsyncSerializer,
               valueAsyncSerializer,

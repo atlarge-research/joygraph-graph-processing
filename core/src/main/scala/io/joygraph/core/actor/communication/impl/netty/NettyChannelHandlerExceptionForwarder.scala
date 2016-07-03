@@ -1,15 +1,15 @@
 package io.joygraph.core.actor.communication.impl.netty
 
-import io.netty.channel.{ChannelHandler, ChannelHandlerContext}
+import io.netty.channel.{Channel, ChannelHandler, ChannelHandlerContext}
 
 trait NettyChannelHandlerExceptionForwarder extends ChannelHandler {
-  private[this] var _errorForwarder : (Throwable) => Unit = _
+  private[this] var _errorForwarder : (Channel, Throwable) => Unit = _
 
-  def setOnExceptionHandler(reporter : (Throwable) => Unit) = {
+  def setOnExceptionHandler(reporter : (Channel, Throwable) => Unit) = {
     _errorForwarder = reporter
   }
 
   override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit = {
-    _errorForwarder(cause)
+    _errorForwarder(ctx.channel(), cause)
   }
 }

@@ -50,7 +50,11 @@ object OpenHashMapSerializedMessageStore {
     }
 
     override protected[messaging] def removeMessages[I](dst: I): Unit = synchronized {
-      currentMessages.remove(dst)
+      currentMessages.remove(dst) match {
+        case Some(x) =>
+          x.destroy()
+        case None =>
+      }
     }
 
     override protected[messaging] def nextMessages[I, M](dst: I, clazzM: Class[M]): Iterable[M] = {

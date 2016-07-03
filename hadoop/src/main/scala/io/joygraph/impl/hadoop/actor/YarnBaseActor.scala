@@ -27,7 +27,10 @@ object YarnBaseActor {
          |    provider = "akka.cluster.ClusterActorRefProvider"
          |  }
          |  remote {
-         |    watch-failure-detector.acceptable-heartbeat-pause = 10
+         |    watch-failure-detector.acceptable-heartbeat-pause = 120 s
+         |    transport-failure-detector {
+         |      acceptable-heartbeat-pause = 120 s
+         |    }
          |    netty.tcp {
          |      maximum-frame-size = 10M
          |      hostname = "$hostName"

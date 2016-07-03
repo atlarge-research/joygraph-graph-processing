@@ -27,7 +27,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
   private[this] val _channels : TrieMap[Int, Channel] = TrieMap.empty
   private[this] val b = new Bootstrap()
   private[this] val messageSenderChannelInitializer = new MessageSenderChannelInitializer
-  private[this] var errorReporter : (Throwable) => Unit = _
+  private[this] var errorReporter : (Channel, Throwable) => Unit = _
   private[this] val RECEIVED_MESSAGE_ID : Byte = -1
   private[this] val RECEIVED_MESSAGE : ByteBuffer = {
     val os = new ObjectByteBufferOutputStream(RECEIVED_MESSAGE_ID, 4096)
@@ -37,7 +37,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
   private[this] val RECEIVED_MESSAGE_WRITTER_FLUSHED_LISTENER = new ChannelFutureListener {
     override def operationComplete(future: ChannelFuture): Unit = {
       if (!future.isSuccess) {
-        errorReporter(future.cause())
+        errorReporter(future.channel(), future.cause())
       }
     }
   }
@@ -56,7 +56,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
     .option[java.lang.Boolean](ChannelOption.TCP_NODELAY, true)
   b.handler(messageSenderChannelInitializer)
 
-  def setOnExceptionHandler(reporter : (Throwable) => Unit) = {
+  def setOnExceptionHandler(reporter : (Channel, Throwable) => Unit) = {
     errorReporter = reporter
     messageSenderChannelInitializer.setOnExceptionHandler(reporter)
   }
@@ -68,7 +68,14 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
   def connectTo(destination : Int, hostPort: HostPort): Future[Channel] = {
     val (host, port) = hostPort
     val promise = Promise[Channel]
-    b.connect(host, port).addListener(new ChannelCreateCompleteListener(destination, promise))
+    // don't reconnect to connected channel
+    _channels.get(destination) match {
+      case Some(x) =>
+        // noop
+        promise.success(x)
+      case None =>
+        b.connect(host, port).addListener(new ChannelCreateCompleteListener(destination, promise))
+    }
     promise.future
   }
 
@@ -128,7 +135,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
         NetworkMetrics.bytesSent(payload.limit())
         promise.success(payload)
       } else {
-        errorReporter(future.cause())
+        errorReporter(future.channel(), future.cause())
       }
     }
   }
@@ -139,7 +146,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
         _channels.remove(destination)
         p.success(future.channel())
       } else {
-        errorReporter(future.cause())
+        errorReporter(future.channel(), future.cause())
       }
     }
   }
@@ -150,7 +157,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
         _channels.put(destination, future.channel())
         p.success(future.channel())
       } else {
-        errorReporter(future.cause())
+        errorReporter(future.channel(), future.cause())
       }
     }
   }

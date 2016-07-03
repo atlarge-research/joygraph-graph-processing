@@ -136,7 +136,7 @@ trait VerticesStore[I,V,E] extends Types {
   def createQueries(qapComputation : QueryAnswerVertexComputation[I, V, E, _, _,_]) : Unit = ???
 
   def distributeVertices
-  (newWorkersMap : Map[WorkerId, Boolean],
+  (selfWorkerId : WorkerId,
    haltedAsyncSerializer : AsyncSerializer,
    idAsyncSerializer : AsyncSerializer,
    valueAsyncSerializer : AsyncSerializer,

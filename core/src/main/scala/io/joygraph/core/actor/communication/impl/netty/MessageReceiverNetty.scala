@@ -40,7 +40,7 @@ class MessageReceiverNetty(workerGroupThreads : Int, maxFrameLength : Int) {
     messageChannelInitializer.setOnReceivedMessage(onMessageReceived)
   }
 
-  def setReceiverExceptionReporter(reporter : (Throwable) => Unit) = {
+  def setReceiverExceptionReporter(reporter : (Channel, Throwable) => Unit) = {
     messageChannelInitializer.setOnExceptionHandler(reporter)
   }
 

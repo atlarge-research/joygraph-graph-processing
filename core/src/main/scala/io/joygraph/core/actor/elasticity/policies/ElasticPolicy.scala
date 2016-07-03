@@ -21,7 +21,7 @@ object ElasticPolicy {
   def default() : ElasticPolicy = new ElasticPolicy {
     override def init(policyParams: Config): Unit = {}
 
-    override def decide(currentStep: Int, currentWorkers: Map[Int, AddressPair], currentPartitioner: VertexPartitioner): Option[Result] = None
+    override def decide(currentStep: Int, currentWorkers: Map[Int, AddressPair], currentPartitioner: VertexPartitioner, maxNumWorkers: Int): Option[Result] = None
   }
 
   sealed abstract class Result
@@ -88,6 +88,7 @@ abstract class ElasticPolicy {
 
   /**
     * Retrieve raw metrics for combination of superstep, workerId, and state
+    *
     * @return
     */
   protected[this] def metricsOf(superStep : Int, workerId : Int, state : WorkerOperation.Value): Option[ArrayBuffer[NodeMetrics]] = {
@@ -105,12 +106,19 @@ abstract class ElasticPolicy {
     }
   }
 
-  /**
-    * Processing time in ms
-    */
-  protected def processingTime(superStep : SuperStep, workerId : WorkerId) : Long = {
+  protected def stepTime(superStep : SuperStep, workerId : WorkerId) : Long = {
     val timestamps = superStepWorkerMetrics(superStep, workerId).map(_.timestamp)
     timestamps.max - timestamps.min
+  }
+
+  protected def timeOfOperation(superStep : SuperStep, workerId : WorkerId, operation : WorkerOperation.Value): Option[Long] = {
+    val WorkerState(_, start, stopOpt) = _statesRecorder.statesFor(superStep, workerId)(operation)
+    stopOpt match {
+      case Some(stop) =>
+        Some(stop - start)
+      case None =>
+        None
+    }
   }
 
   private[this] def superStepMetrics(superStep : SuperStep) : WorkerMetrics = {
@@ -131,6 +139,6 @@ abstract class ElasticPolicy {
 
   def init(policyParams : Config) : Unit
 
-  def decide(currentStep : Int, currentWorkers : Map[Int, AddressPair], currentPartitioner : VertexPartitioner) : Option[ElasticPolicy.Result]
+  def decide(currentStep: Int, currentWorkers: Map[Int, AddressPair], currentPartitioner: VertexPartitioner, maxNumWorkers: Int) : Option[ElasticPolicy.Result]
 
 }

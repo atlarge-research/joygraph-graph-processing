@@ -30,6 +30,7 @@ import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.Types
 import io.joygraph.core.util.serde._
 import io.joygraph.core.util.{SimplePool, _}
+import io.netty.channel.Channel
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -634,6 +635,10 @@ abstract class Worker[I,V,E]
     ssF
   }
 
+  def superStepLocalComplete() = {
+    master() ! SuperStepLocalComplete()
+  }
+
   private[this] val RUN_SUPERSTEP : PartialFunction[Any, Unit] = {
     case PrepareSuperStep(numVertices, numEdges) =>
       initializeProgram(vertexProgramInstance, numVertices, numEdges)
@@ -685,7 +690,7 @@ abstract class Worker[I,V,E]
 
         // trigger oncomplete
         vertexProgramInstance.onSuperStepComplete()
-
+        superStepLocalComplete()
         sendingComplete()
         superStepCompleteTrigger()
       }(computationExecutionContext) // TODO move computationcontext to VerticesStores
@@ -761,20 +766,22 @@ abstract class Worker[I,V,E]
     */
   def distributeVerticesEdgesAndMessages(prevWorkers: Map[Int, AddressPair], nextWorkers: Map[Int, AddressPair], partitioner : VertexPartitioner) = {
     this.partitioner = partitioner
-    val newWorkersMap =
-      if (nextWorkers.size > prevWorkers.size) {
-        // added workers
-        nextWorkers.map {
-          case (index, addressPair) =>
-            index -> !prevWorkers.contains(index)
-        }
-      } else {
-        // we've removed workers
-        nextWorkers.map {
-          case (index, addressPair) =>
-            index -> true
-        }
-      }.withDefaultValue(false)
+//    // dump it bra
+//    File.makeTemp("dumpOrig").writeAll({
+//      val otherVertices = verticesStore.vertices.flatMap{ v =>
+//        val dst = partitioner.destination(v)
+//        if (dst != id.get) {
+//          Some(v)
+//        } else {
+//          None
+//        }
+//      }
+//      otherVertices.toIndexedSeq.sortBy(_.toString.toLong).map{
+//        x =>
+//          s"$x: ${verticesStore.halted(x)} ${verticesStore.vertexValue(x)} ${verticesStore.mutableEdges(x)}"
+//      }
+//    } : _*)
+    println(s"number of vertices to distribute ${verticesStore.vertices.count(partitioner.destination(_) != id.get)}}")
 
     val haltedAsyncSerializer = new AsyncSerializer(0, () => new Kryo, jobSettings.maxFrameLength)
     val idAsyncSerializer = new AsyncSerializer(1, () => new Kryo, jobSettings.maxFrameLength)
@@ -799,7 +806,7 @@ abstract class Worker[I,V,E]
     })
 
     verticesStore.distributeVertices(
-      newWorkersMap,
+      id.get,
       haltedAsyncSerializer,
       idAsyncSerializer,
       valueAsyncSerializer,
@@ -833,6 +840,9 @@ abstract class Worker[I,V,E]
         outputHandler(byteBuffer, workerId)
     }
 
+    log.info("Force running GC")
+    sys.runtime.gc()
+    log.info("GC complete")
     sendingComplete()
     elasticCompleteTrigger()
   }
@@ -852,6 +862,9 @@ abstract class Worker[I,V,E]
   }
 
   private[this] val ELASTIC_OPERATION : PartialFunction[Any, Unit] = {
+    case NewPartitioner(newPartitioner) =>
+      this.partitioner = newPartitioner
+      sender() ! true
     case ElasticDistribute(prevWorkers, nextWorkers, newPartitioner) =>
       assert(nextWorkers.nonEmpty)
       Future {
@@ -883,12 +896,22 @@ abstract class Worker[I,V,E]
     }
   }
 
-  private[this] def nettyReceiverException(t : Throwable) : Unit = {
+  private[this] def nettyReceiverException(ch : Channel, t : Throwable) : Unit = {
+    Option(ch) match {
+      case Some(_) =>
+        log.info("Error channel " + ch.remoteAddress() + " " + ch.localAddress())
+      case None =>
+    }
     log.info("Error receiver handler\n" + Errors.messageAndStackTraceString(t))
     terminate()
   }
 
-  private[this] def nettySenderException(t : Throwable) : Unit = {
+  private[this] def nettySenderException(ch : Channel, t : Throwable) : Unit = {
+    Option(ch) match {
+      case Some(_) =>
+        log.info("Error channel " + ch.remoteAddress() + " " + ch.localAddress())
+      case None =>
+    }
     log.info("Error sender handler\n" + Errors.messageAndStackTraceString(t))
     terminate()
   }
@@ -902,8 +925,9 @@ abstract class Worker[I,V,E]
     case MasterAddress(address) =>
       masterActorRef = address
       sender() ! true
-    case InitNewWorker(address, currentSuperStep) =>
+    case InitNewWorker(address, currentSuperStep, numVertices, numEdges) =>
       masterActorRef = address
+      initializeProgram(vertexProgramInstance, numVertices, numEdges)
       prepareSuperStep(currentSuperStep)
       sender() ! NewWorker()
     case WorkerId(workerId) =>
@@ -933,8 +957,9 @@ abstract class Worker[I,V,E]
       messageReceiver.connect().foreach { success =>
         if (success) {
           // TODO Cluster(context.system) is not the nicest way to do this
-          senderRef ! AddressPair(self, NettyAddress(Cluster(context.system).selfAddress.host.get, messageReceiver.port))
-          log.info(s"$workerId sent self: $self ?!?!")
+          val addressPair = AddressPair(self, NettyAddress(Cluster(context.system).selfAddress.host.get, messageReceiver.port))
+          senderRef ! addressPair
+          log.info(s"$workerId sent self: $addressPair ?!?!")
         } else {
           log.error("Could not listen on ANY port")
         }

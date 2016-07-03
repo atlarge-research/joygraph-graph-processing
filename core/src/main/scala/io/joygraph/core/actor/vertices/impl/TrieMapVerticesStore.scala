@@ -90,7 +90,7 @@ protected[this] val clazzV : Class[V]) extends VerticesStore[I,V,E] {
   }
 
   override def distributeVertices
-  (newWorkersMap: Map[WorkerId, Boolean],
+  (selfWorkerId: WorkerId,
    haltedAsyncSerializer: AsyncSerializer,
    idAsyncSerializer: AsyncSerializer,
    valueAsyncSerializer: AsyncSerializer,
@@ -104,7 +104,7 @@ protected[this] val clazzV : Class[V]) extends VerticesStore[I,V,E] {
     val verticesToBeRemoved = TrieMap.empty[ThreadId, ArrayBuffer[I]]
     parVertices.foreach{ vId =>
       val workerId = partitioner.destination(vId)
-      if (newWorkersMap(workerId)) {
+      if (selfWorkerId != workerId) {
         val threadId = ThreadId.getMod(8) // TODO
         ???
         verticesToBeRemoved.getOrElseUpdate(threadId, ArrayBuffer.empty[I]) += vId

@@ -2,15 +2,15 @@ package io.joygraph.core.actor.communication.impl.netty
 
 import java.nio.ByteBuffer
 
-import io.netty.channel.ChannelInitializer
 import io.netty.channel.socket.SocketChannel
+import io.netty.channel.{Channel, ChannelInitializer}
 import io.netty.handler.codec.{ByteToMessageDecoder, LengthFieldBasedFrameDecoder}
 
 class MessageChannelInitializer(maxFrameLength : Int) extends ChannelInitializer[SocketChannel] {
 
   private[this] val messageReceivedHandler = new MessageReceiveHandler
 
-  def setOnExceptionHandler(reporter : (Throwable) => Unit) = {
+  def setOnExceptionHandler(reporter : (Channel, Throwable) => Unit) = {
     messageReceivedHandler.setOnExceptionHandler(reporter)
   }
 

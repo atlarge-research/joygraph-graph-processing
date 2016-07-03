@@ -22,7 +22,7 @@ import io.joygraph.core.message.superstep._
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.partitioning.impl.VertexHashPartitioner
 import io.joygraph.core.program.Aggregator
-import io.joygraph.core.util.{Errors, ExecutionContextUtil, FutureUtil}
+import io.joygraph.core.util.{Errors, ExecutionContextUtil, FutureUtil, IOUtil}
 
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
@@ -110,9 +110,9 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       val fActorRef: Future[AddressPair] = (context.actorSelection(akkaPath) ? WorkerId(workerId)).mapTo[AddressPair]
       val currentWorkerId = workerId
       val assignedFuture: Future[Unit] = fActorRef.map {
-        case AddressPair(actorRef, NettyAddress(host, port)) =>
+        case AddressPair(actorRef, nettyAddress) =>
           // TODO abstract hostname transformation
-          workerIdAddressMapBuilder(currentWorkerId) = AddressPair(actorRef, NettyAddress( if(host.startsWith("node")) host+".ib.cluster" else host, port))
+          workerIdAddressMapBuilder(currentWorkerId) = AddressPair(actorRef, IOUtil.infiniband(nettyAddress))
       }
       workerId += 1
       assignedFuture
@@ -211,18 +211,36 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
     workerProviderProxyOption match {
       case Some(workerProviderProxy) =>
+        // TODO remove this when partitioner is propagated from master from the beginning
         val policyResult = Option(currentPartitioner) match {
-          case Some(x) => policy.decide(currentSuperStep, workerIdAddressMap, x)
-          case None => policy.decide(currentSuperStep, workerIdAddressMap, new VertexHashPartitioner(allWorkers().size)) // TODO remove this when partitioner is propagated from master from the beginning
+          case Some(x) => policy.decide(currentSuperStep, workerIdAddressMap, x, jobSettings.maxWorkers)
+          case None => policy.decide(currentSuperStep, workerIdAddressMap, new VertexHashPartitioner(allWorkers().size), jobSettings.maxWorkers)
         }
         // elasticityPromise must be fulfilled by decide method
         policyResult match {
           case Some(result) =>
-            currentPartitioner = result match {
-              case Shrink(_, partitioner) => partitioner
-              case Grow(_, partitioner) => partitioner
+            result match {
+              case shrink @ Shrink(_, partitioner) =>
+                val canShrink = allWorkers().size > 1
+                if (canShrink) {
+                  currentPartitioner = partitioner
+                  elasticityHandler.startElasticityOperation(ElasticityHandler.ElasticityOperation(shrink, elasticityPromise, workerIdAddressMap), workerProviderProxy, conf)
+                } else {
+                  log.info("min workers reached, cannot shrink")
+                  elasticityPromise.success(workerIdAddressMap)
+                }
+              case grow @ Grow(_, partitioner) => {
+                // grow only if it's possible
+                val canGrow = allWorkers().size < jobSettings.maxWorkers
+                if (canGrow) {
+                  currentPartitioner = partitioner
+                  elasticityHandler.startElasticityOperation(ElasticityHandler.ElasticityOperation(grow, elasticityPromise, workerIdAddressMap), workerProviderProxy, conf)
+                } else {
+                  log.info("max workers reached, cannot grow")
+                  elasticityPromise.success(workerIdAddressMap)
+                }
+              }
             }
-            elasticityHandler.startElasticityOperation(ElasticityHandler.ElasticityOperation(result, elasticityPromise, workerIdAddressMap), workerProviderProxy, conf)
           case None =>
             log.info("No grow or shrink")
             elasticityPromise.success(workerIdAddressMap)
@@ -267,19 +285,19 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   override def receive = {
     case ClusterMetricsChanged(nodeMetrics) =>
       policy.addMetrics(currentSuperStep, nodeMetrics, akkaAddressToWorkerIdMap)
-      nodeMetrics.foreach {
-        x =>
-          if (cluster.selfAddress == x.address) {
-            println("#M#" + x)
-          } else {
-            akkaAddressToWorkerIdMap.get(x.address) match {
-              case Some(workerId) =>
-                println("#" + workerId + "#" + x)
-              case None =>
-                println("#?#" + x)
-            }
-          }
-      }
+//      nodeMetrics.foreach {
+//        x =>
+//          if (cluster.selfAddress == x.address) {
+//            println("#M#" + x)
+//          } else {
+//            akkaAddressToWorkerIdMap.get(x.address) match {
+//              case Some(workerId) =>
+//                println("#" + workerId + "#" + x)
+//              case None =>
+//                println("#?#" + x)
+//            }
+//          }
+//      }
     case InitiateTermination() =>
       terminate()
     case RegisterWorkerProvider(workerProviderRef) =>
@@ -308,7 +326,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         // elasticity
         // send master address to new worker
         val akkaPath = member.address.toString + "/user/" + jobSettings.workerSuffix
-        context.actorSelection(akkaPath) ! InitNewWorker(self, currentSuperStep)
+        context.actorSelection(akkaPath) ! InitNewWorker(self, currentSuperStep, numVertices.get, numEdges.get)
       }
 
     case LoadingComplete(workerId, numV, numEdge) =>
@@ -349,12 +367,14 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
+    case SuperStepLocalComplete() => // A message only used to indicate local completion of a step.
+      val senderRef = sender()
+      logWorkerAction(senderRef.path.address, "SuperStepLocalComplete", currentSuperStep)
+      logWorkerActionStop(senderRef.path.address, WorkerOperation.RUN_SUPERSTEP)
     case SuperStepComplete(aggregators) =>
       log.info(s"Left : ${superStepSuccessReceived.get()}")
       val senderRef = sender()
       logWorkerAction(senderRef.path.address, "SuperStepComplete", currentSuperStep)
-      logWorkerActionStop(senderRef.path.address, WorkerOperation.RUN_SUPERSTEP)
-
       aggregators match {
         case Some(aggregatorMapping) =>
           if (_aggregatorMapping.isEmpty) {
@@ -383,6 +403,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
             if (doNextStep) {
               doingElasticity = true
               doElasticity().foreach( newWorkersMapping => {
+                log.info("Elasticity complete")
                 workerIdAddressMap = newWorkersMapping
                 akkaAddressToWorkerIdMap = workerIdAddressMap.mapValues(_.actorRef.path.address).map(_.swap)
                 currentSuperStep += 1

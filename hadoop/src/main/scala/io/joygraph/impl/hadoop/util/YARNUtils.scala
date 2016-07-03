@@ -20,6 +20,10 @@ object YARNUtils {
     Priority.newInstance(1)
   }
 
+  def newPriority(priority : Int) : Priority = {
+    Priority.newInstance(priority)
+  }
+
   /**
     * MaxCapability returned by ApplicationResponse is not guaranteed to be correct (2.7.2),
     * there may be discrepancies between different properties in YARN, namely

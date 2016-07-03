@@ -1,8 +1,17 @@
 package io.joygraph.core.util
 
+import io.joygraph.core.message.NettyAddress
+
 object IOUtil {
   private type Position = Long
   private type Length = Long
+
+  // TODO find a better way
+  // TODO abstract hostname transformation
+  def infiniband(nettyAddress : NettyAddress) : NettyAddress = {
+    val NettyAddress(host, port) = nettyAddress
+    NettyAddress(if(host.startsWith("node")) host+".ib.cluster" else host, port)
+  }
 
   def splits(length : Long, numSplits : Int, startPos : Long = 0): Array[(Position, Length)] = {
     val res = new Array[(Long, Long)](numSplits)
