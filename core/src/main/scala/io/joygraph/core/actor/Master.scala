@@ -3,7 +3,7 @@ package io.joygraph.core.actor
 import java.util.concurrent._
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Address}
+import akka.actor.{Actor, ActorLogging, ActorRef, ActorSelection, Address}
 import akka.cluster.Cluster
 import akka.cluster.ClusterEvent.MemberUp
 import akka.cluster.metrics.{ClusterMetricsChanged, ClusterMetricsExtension}
@@ -56,6 +56,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   // TODO keep state in Master explicitly instead of implicitly
   var doingElasticity : Boolean = false
   val elasticityHandler : ElasticityHandler = new ElasticityHandler(this, cluster, timeout, executionContext)
+  private[this] var totalProcessingTimeStart : Long = Long.MaxValue
 
   // An actor providing actors
   protected[this] var workerProviderProxyOption : Option[WorkerProviderProxy] = None
@@ -75,12 +76,20 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   private[this] val workerStateRecorder : WorkerStateRecorder = new WorkerStateRecorder
   policy.init(jobSettings.policySettings, workerStateRecorder)
 
+  private[this] var submissionClient : Option[ActorSelection] = None
   private[this] var currentPartitioner : VertexPartitioner = _
 
   def workerMembers() = cluster.state.members.filterNot(_.address == cluster.selfAddress)
 
   def setWorkerProvider(workerProvider : ActorRef) = this.workerProviderProxyOption = Option(new WorkerProviderProxy(workerProvider))
-
+  def setSubmissionClientAddress(submissionClientActorAddress: Option[String]) = {
+    submissionClient = submissionClientActorAddress match {
+      case Some(x) =>
+        Some(context.actorSelection(x))
+      case None =>
+        None
+    }
+  }
   def initialize() : Unit = {
     initializationLock.acquire()
     if (initialized) {
@@ -192,6 +201,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         superStepSuccessReceived.set(allWorkers().size)
         logMasterAction("RunSuperStep", currentSuperStep)
         allWorkers().foreach(worker => logWorkerActionStart(worker.actorRef.path.address, WorkerOperation.RUN_SUPERSTEP))
+        totalProcessingTimeStart = System.currentTimeMillis()
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
@@ -299,6 +309,12 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 //          }
 //      }
     case InitiateTermination() =>
+      akkaAddressToWorkerIdMap.get(sender().path.address) match {
+        case Some(workerId) =>
+          log.info("{} : Initiated termination", workerId)
+        case None =>
+          log.info("{} : Initiated termination", "Unknown")
+      }
       terminate()
     case RegisterWorkerProvider(workerProviderRef) =>
       setWorkerProvider(workerProviderRef)
@@ -367,9 +383,16 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
-    case SuperStepLocalComplete() => // A message only used to indicate local completion of a step.
+    case SuperStepLocalComplete(numActiveVertices) => // A message only used to indicate local completion of a step.
       val senderRef = sender()
       logWorkerAction(senderRef.path.address, "SuperStepLocalComplete", currentSuperStep)
+      akkaAddressToWorkerIdMap.get(senderRef.path.address) match {
+        case Some(workerId) =>
+          workerStateRecorder.setActiveVertices(currentSuperStep, workerId, numActiveVertices)
+        case None =>
+          log.error("Non worker sends numActiveVertices " + senderRef.path.address)
+      }
+
       logWorkerActionStop(senderRef.path.address, WorkerOperation.RUN_SUPERSTEP)
     case SuperStepComplete(aggregators) =>
       log.info(s"Left : ${superStepSuccessReceived.get()}")
@@ -415,6 +438,8 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
               })
 
             } else {
+              // send data to submission client if any
+              submissionClient.foreach(_ ! TotalProcessingTime(System.currentTimeMillis() - totalProcessingTimeStart))
               sendDoOutput()
               log.info(s"we're done at step ${currentSuperStep}")
             }
@@ -430,7 +455,6 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         terminate()
       }
   }
-
 
   @scala.throws[Exception](classOf[Exception])
   override def postStop(): Unit = {

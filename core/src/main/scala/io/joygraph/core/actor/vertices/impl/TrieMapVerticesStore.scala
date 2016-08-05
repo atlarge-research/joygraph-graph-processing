@@ -69,8 +69,9 @@ protected[this] val clazzV : Class[V]) extends VerticesStore[I,V,E] {
       _halted.remove(vId)
     }
 
-  def localNumVertices : Int = _vEdges.size
-  def localNumEdges : Int = _vEdges.values.map(_.size()).sum
+  def localNumVertices: Long = _vEdges.size
+  def localNumEdges: Long = _vEdges.values.map(_.size()).sum
+  def localNumActiveVertices : Long = _halted.size
 
   def removeAllFromVertex(vId : I): Unit = {
     _halted.remove(vId)

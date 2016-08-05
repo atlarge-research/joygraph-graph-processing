@@ -175,9 +175,11 @@ object OpenHashMapSerializedVerticesStore {
 //      os.trim()
     }
 
-    override def localNumEdges: WorkerId = numEdges
+    override def localNumEdges: Long = numEdges
 
-    override def localNumVertices: WorkerId = _edges.keys.size
+    override def localNumVertices: Long = _edges.keys.size
+
+    override def localNumActiveVertices : Long = _halted.size
 
     override def mutableEdges(vId: I): Iterable[Edge[I, E]] = _edges.get(vId) match {
       case Some(os) =>
@@ -310,9 +312,11 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
     }
   }
 
-  override def localNumEdges: WorkerId = partitions.map(_.localNumEdges).sum
+  override def localNumEdges: Long = partitions.map(_.localNumEdges).sum
 
-  override def localNumVertices: WorkerId = partitions.map(_.localNumVertices).sum
+  override def localNumVertices: Long = partitions.map(_.localNumVertices).sum
+
+  override def localNumActiveVertices : Long = partitions.map(_.localNumActiveVertices).sum
 
   override def addVertex(vertex: I): Unit = {
     val part = partition(vertex)

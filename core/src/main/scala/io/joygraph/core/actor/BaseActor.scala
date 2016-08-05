@@ -8,7 +8,11 @@ import akka.cluster.ClusterEvent._
 import com.typesafe.config._
 import io.joygraph.core.config.JobSettings
 
-class BaseActor(private[this] val jobConf : Config, masterFactory : (Config, Cluster) => _ <: Master, workerFactory : () => Worker[_,_,_]) extends Actor with ActorLogging {
+class BaseActor
+(private[this] val jobConf : Config,
+ masterFactory : (Config, Cluster) => _ <: Master,
+ workerFactory : () => Worker[_,_,_],
+ submissionClientActorAddress : Option[String] = None) extends Actor with ActorLogging {
 
   private[this] val cluster = Cluster(context.system)
   private[this] var workerRef : Option[ActorRef] = None
@@ -59,7 +63,10 @@ class BaseActor(private[this] val jobConf : Config, masterFactory : (Config, Clu
   }
 
   def masterProps : Props = {
-    Props(masterFactory(jobConf, cluster))
+    Props({
+      val master = masterFactory(jobConf, cluster)
+      master.setSubmissionClientAddress(submissionClientActorAddress)
+      master})
   }
   def workerProps : Props = {
     Props(workerFactory())

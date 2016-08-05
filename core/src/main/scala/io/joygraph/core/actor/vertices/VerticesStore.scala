@@ -130,8 +130,9 @@ trait VerticesStore[I,V,E] extends Types {
   def vertexValue(vId : I) : V
   def setVertexValue(vId : I, v : V)
   def setHalted(vId : I, halted : Boolean)
-  def localNumVertices : Int
-  def localNumEdges : Int
+  def localNumVertices : Long
+  def localNumEdges: Long
+  def localNumActiveVertices : Long
   def computeVertices(computation : PregelVertexComputation[I,V,E]) : Boolean
   def createQueries(qapComputation : QueryAnswerVertexComputation[I, V, E, _, _,_]) : Unit = ???
 

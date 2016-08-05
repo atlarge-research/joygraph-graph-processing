@@ -117,7 +117,7 @@ protected[this] var partitioner : VertexPartitioner,
   }
 
 
-  def localNumEdges: Int = numEdgesCounter.intValue()
+  def localNumEdges: Long = numEdgesCounter.intValue()
 
   def parVertices : ParIterable[I] = {
     _vEdges.par.keys
@@ -127,7 +127,9 @@ protected[this] var partitioner : VertexPartitioner,
     override def iterator: Iterator[I] = _vEdges.keysIterator
   }
 
-  def localNumVertices: Int = _vEdges.size
+  def localNumVertices: Long = _vEdges.size
+
+  def localNumActiveVertices : Long = _halted.size
 
   def halted(vId : I) : Boolean = _halted.getOrElse(vId, false)
 

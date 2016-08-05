@@ -37,6 +37,7 @@ object YarnAMBaseActor {
   def main(args : Array[String]) : Unit = {
     val configLocation : String = args(0)
     val paths : String = args(1)
+    val submissionClientActorAddress = if (args.length > 2) Some(args(2)) else None
 
     val jobConf = ConfigFactory.parseFile(new java.io.File(configLocation))
     val actorSystemName = "actorSystemName" // TODO configurable?
@@ -116,7 +117,8 @@ object YarnAMBaseActor {
       }, () => {
 //         Worker.workerWithSerializedTrieMapMessageStore(masterConf, definition, new VertexHashPartitioner)
          Worker.workerWithSerializeOpenHashMapStore(masterConf, definition, new VertexHashPartitioner)
-      }
+      },
+      submissionClientActorAddress
     ))
     // wait indefinitely until it terminates
     Await.ready(system.whenTerminated, Duration(Int.MaxValue, TimeUnit.MILLISECONDS))
@@ -124,7 +126,13 @@ object YarnAMBaseActor {
   }
 }
 
-class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, masterFactory : (Config, Cluster) => _ <: Master, workerFactory : () => Worker[_,_,_]) extends BaseActor(jobConf, masterFactory, workerFactory) {
+class YarnAMBaseActor
+(paths : String,
+ jobConf : Config,
+ workerConf : Config,
+ masterFactory : (Config, Cluster) => _ <: Master,
+ workerFactory : () => Worker[_,_,_],
+ submissionClientActorAddress : Option[String]) extends BaseActor(jobConf, masterFactory, workerFactory, submissionClientActorAddress) {
 
   private[this] val dfsPaths = YARNUtils.deserializeResourcesFileStatuses(paths)
   private[this] val jarFileStatus = dfsPaths.head
@@ -152,6 +160,8 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
   //    conf.addResource() // TODO get configuration from classpath?
 
   private[this] val amRMClient = AMRMClientAsync.createAMRMClientAsync[ContainerRequest](1000, allocListener)
+
+  private[this] var finalApplicationStatus = FinalApplicationStatus.SUCCEEDED
 
   private[this] val containerListener = new NMClientAsync.CallbackHandler {
     override def onContainerStarted(containerId: ContainerId, allServiceResponse: util.Map[String, ByteBuffer]): Unit =
@@ -209,9 +219,9 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
   override def postStop(): Unit = {
     super.postStop()
     // TODO propagate fail/success state
-    val appStatus = FinalApplicationStatus.SUCCEEDED
+
     // TODO kill all containers
-    amRMClient.unregisterApplicationMaster(appStatus, "Shut down successfully", null)
+    amRMClient.unregisterApplicationMaster(finalApplicationStatus, "Shut down successfully", null)
     amRMClient.stop()
     nmClientAsync.stop()
   }
@@ -256,6 +266,11 @@ class YarnAMBaseActor(paths : String, jobConf : Config, workerConf : Config, mas
           log.info(s"${status.getContainerId} completed\n" +
             s"diagnostics: ${status.getDiagnostics}\n" +
             s"exit status: ${status.getExitStatus}")
+          if (status.getExitStatus == 255) {
+            log.info("Abnormal exit status, terminating job, job failed")
+            finalApplicationStatus = FinalApplicationStatus.FAILED
+            context.system.terminate()
+          }
       }
       // noop
     }

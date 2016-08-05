@@ -3,9 +3,12 @@ package io.joygraph.impl.hadoop.submission
 import java.io.File
 import java.util
 
+import akka.actor.{Actor, ActorLogging, ActorSystem, Props}
 import com.typesafe.config.ConfigFactory
 import io.joygraph.core.config.JobSettings
+import io.joygraph.core.message._
 import io.joygraph.core.submission.SubmissionClient
+import io.joygraph.core.util.net.{NetUtils, PortFinder}
 import io.joygraph.impl.hadoop.util.YARNUtils
 import io.joygraph.impl.hadoop.util.YARNUtils._
 import org.apache.hadoop.conf.Configuration
@@ -116,7 +119,7 @@ object YARNSubmissionClient {
       .amVCores(amVCores)
       .build()
 
-    submissionClient.submit()
+    submissionClient.submitBlocking()
   }
 
 }
@@ -147,7 +150,7 @@ class YARNSubmissionClient protected(
     localResources += pathsLocalResource
   }
 
-  private[this] def _submitApplication() : ApplicationId = {
+  private[this] def _submitApplication(actorAddress : Option[String] = None) : ApplicationId = {
     val application = yarnClient.createApplication()
     val context = application.getApplicationSubmissionContext
     val response = application.getNewApplicationResponse
@@ -157,7 +160,7 @@ class YARNSubmissionClient protected(
 
     setResources(context)
     env += classPath()
-    commands += masterCommand(APPMASTERJARNAME, JOYGRAPHCONFIGNAME, RESOURCEPATHSNAME, amMemory)
+    commands += masterCommand(APPMASTERJARNAME, JOYGRAPHCONFIGNAME, RESOURCEPATHSNAME, amMemory, actorAddress)
 
     val capability = YARNUtils.cappedResource(response.getMaximumResourceCapability, amMemory, amVCores)
     println("Actual resource: " + capability)
@@ -210,7 +213,46 @@ class YARNSubmissionClient protected(
   }
 
   override def submitBlocking(): Unit = {
-    val appId = _submitApplication()
+    val hostName = NetUtils.getHostName
+    val port = PortFinder.findFreePort()
+
+    val remotingConf = ConfigFactory.parseString(
+      s"""
+         |akka {
+         |  actor {
+         |    provider = "akka.cluster.ClusterActorRefProvider"
+         |  }
+         |  remote {
+         |    watch-failure-detector.acceptable-heartbeat-pause = 120 s
+         |    transport-failure-detector {
+         |      acceptable-heartbeat-pause = 120 s
+         |    }
+         |    netty.tcp {
+         |      maximum-frame-size = 10M
+         |      hostname = "$hostName"
+         |      port = $port
+         |    }
+         |  }
+         |}
+       """.stripMargin
+    )
+    val systemName = "SubmissionClient"
+    val actorName = "submissionClientActor"
+    val system = ActorSystem(systemName, remotingConf)
+    val actorRef = system.actorOf(Props(new SubmissionClientActor), actorName)
+    val akkaAddress = s"akka.tcp://$systemName@$hostName:$port/user/$actorName"
+    println(s"ADDRESS : $akkaAddress")
+
+    val appId = _submitApplication(Option(akkaAddress))
     pollForCompletion(appId)
+    system.terminate()
+  }
+
+  class SubmissionClientActor extends Actor with ActorLogging {
+
+    override def receive: Receive = {
+      case TotalProcessingTime(processingTime) =>
+        println(s"ProcessingTime: $processingTime")
+    }
   }
 }

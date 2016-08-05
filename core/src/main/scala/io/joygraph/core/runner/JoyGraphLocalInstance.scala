@@ -391,7 +391,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
           .withFallback(ConfigFactory.parseString(createAkkaRemoteConfig(port)))
           .withFallback(pureJobConfig)
       val system = ActorSystem(actorSystemName, config)
-      system.actorOf(Props(classOf[BaseActor], config, masterFac, () => _workerFactory(pureJobConfig, programDefinition, _partitioner)))
+      system.actorOf(Props(classOf[BaseActor], config, masterFac, () => _workerFactory(pureJobConfig, programDefinition, _partitioner), None))
       port = PortFinder.findFreePort(port + 1)
 
       // wait for system to terminate

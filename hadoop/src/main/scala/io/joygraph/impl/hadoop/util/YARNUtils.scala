@@ -126,21 +126,38 @@ object YARNUtils {
     ("CLASSPATH", classPathEnv)
   }
 
-  def masterCommand(jarName : String, configName : String, resourcePathsNames : String, memory : Int) : String = {
+  def masterCommand(jarName : String, configName : String, resourcePathsNames : String, memory : Int, actorAddress : Option[String]) : String = {
     val heapMemory : Int = (memory * heapFraction).toInt
     val directMemory : Int = (memory * directMemoryFraction).toInt
-    Seq(
+
+    val java = Seq(
       ApplicationConstants.Environment.JAVA_HOME.$$() + "/bin/java",
       s"-Xms${heapMemory}m",
       s"-Xmx${heapMemory}m",
       s"-XX:MaxDirectMemorySize=${directMemory}m",
-//      jarName, // the jar is redundant as it's in the classpath
-      classOf[YarnAMBaseActor].getName, // the class
-      configName, // args
-      resourcePathsNames, // args
+      //      jarName, // the jar is redundant as it's in the classpath
+      classOf[YarnAMBaseActor].getName // the class
+    )
+    val args = actorAddress match {
+      case Some(x) =>
+        Seq(
+          configName, // args
+          resourcePathsNames, // args
+          x
+        )
+      case None =>
+        Seq(
+        configName, // args
+        resourcePathsNames // args
+      )
+    }
+
+    val output = Seq(
       "1>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + s"/$jarName.stdout",
       "2>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + s"/$jarName.stderr"
-    ).reduce(_ + " " + _)
+    )
+
+    (java ++ args ++ output).reduce(_ + " " + _)
   }
 
   def workerCommand(jarName : String, configName : String, memory : Int) : String = {

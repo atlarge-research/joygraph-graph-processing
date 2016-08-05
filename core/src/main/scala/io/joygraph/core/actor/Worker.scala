@@ -636,7 +636,7 @@ abstract class Worker[I,V,E]
   }
 
   def superStepLocalComplete() = {
-    master() ! SuperStepLocalComplete()
+    master() ! SuperStepLocalComplete(verticesStore.localNumActiveVertices)
   }
 
   private[this] val RUN_SUPERSTEP : PartialFunction[Any, Unit] = {

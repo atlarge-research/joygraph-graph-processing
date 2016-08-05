@@ -5,11 +5,18 @@ import java.lang.management.{ManagementFactory, MemoryMXBean, MemoryUsage}
 import akka.actor.{ActorSystem, Address}
 import akka.cluster.Cluster
 import akka.cluster.metrics._
+
 object NonHeapMemoryMetrics {
   final val NonHeapMemoryUsed = "non-heap-memory-used"
   final val NonHeapMemoryCommitted = "non-heap-memory-committed"
   final val NonHeapMemoryMax = "non-heap-memory-max"
 }
+
+object OffHeapMemoryMetrics {
+  final val OffHeapMemoryUsed = "off-heap-memory-used"
+  final val OffHeapMemoryMax = "off-heap-memory-max"
+}
+
 
 /**
   * Based on JmxMetricsCollector
@@ -40,6 +47,16 @@ class GeneralMetricsCollector(address: Address, decayFactor: Double) extends Jmx
     value = heap.getMax,
     decayFactor = None)
 
+  def offHeapUsed(): Option[Metric] = Metric.create(
+    name = OffHeapMemoryMetrics.OffHeapMemoryUsed,
+    value = sun.misc.SharedSecrets.getJavaNioAccess.getDirectBufferPool.getMemoryUsed,
+    decayFactor = decayFactorOption)
+
+  def offHeapMax(): Option[Metric] = Metric.create(
+    name = OffHeapMemoryMetrics.OffHeapMemoryMax,
+    value = sun.misc.VM.maxDirectMemory(),
+    decayFactor = None)
+
   def bytesSent() : Option[Metric] = Metric.create(
     name = NetworkMetrics.BytesSent,
     value = NetworkMetrics.getBytesSentAndReset,
@@ -58,6 +75,7 @@ class GeneralMetricsCollector(address: Address, decayFactor: Double) extends Jmx
     Set(systemLoadAverage,
       heapUsed(heap), heapCommitted(heap), heapMax(heap),
       nonHeapUsed(nonHeap), nonHeapCommitted(nonHeap), nonHeapMax(nonHeap),
+      offHeapUsed(), offHeapMax(),
       bytesSent(), bytesReceived(),
       processors).flatten
   }

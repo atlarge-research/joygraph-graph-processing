@@ -50,7 +50,8 @@ object YarnBaseActor {
         Master.initialize(master)
       }, () => {
         Worker.workerWithSerializeOpenHashMapStore(workerConf, definition, new VertexHashPartitioner)
-      }
+      },
+      None
     ))
     // wait indefinitely until it terminates
     Await.ready(system.whenTerminated, Duration(Int.MaxValue, TimeUnit.MILLISECONDS))
