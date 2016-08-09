@@ -24,7 +24,7 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
   private[this] val workerGroup = new NioEventLoopGroup(numThreads, new ThreadFactory {
     override def newThread(r: Runnable): Thread = new Thread(r, "sender-worker-group-" + workerGroupThreadId.incrementAndGet())
   })
-  private[this] val _channels : TrieMap[Int, Channel] = TrieMap.empty
+  private[this] val _channels : TrieMap[Int, (AtomicInteger, Array[Channel])] = TrieMap.empty
   private[this] val b = new Bootstrap()
   private[this] val messageSenderChannelInitializer = new MessageSenderChannelInitializer
   private[this] var errorReporter : (Channel, Throwable) => Unit = _
@@ -61,20 +61,27 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
     messageSenderChannelInitializer.setOnExceptionHandler(reporter)
   }
 
-  def connectToAll(destinations : Iterable[(Int, HostPort)]): Iterable[Future[Channel]] = {
+  def connectToAll(destinations : Iterable[(Int, HostPort)]): Iterable[Future[Unit]] = {
     destinations.map{case (destination, hostPort) => connectTo(destination, hostPort)}
   }
 
-  def connectTo(destination : Int, hostPort: HostPort): Future[Channel] = {
+  def connectTo(destination : Int, hostPort: HostPort): Future[Unit] = {
     val (host, port) = hostPort
-    val promise = Promise[Channel]
+    val promise = Promise[Unit]
     // don't reconnect to connected channel
     _channels.get(destination) match {
       case Some(x) =>
         // noop
-        promise.success(x)
+        promise.success()
       case None =>
-        b.connect(host, port).addListener(new ChannelCreateCompleteListener(destination, promise))
+        val numChannels = 4
+        val counter = new AtomicInteger(numChannels)
+        val channelArr = new Array[Channel](numChannels)
+        val channelChooser = new AtomicInteger(-1)
+        _channels.put(destination, (channelChooser, channelArr))
+        (0 until numChannels).foreach { i =>
+          b.connect(host, port).addListener(new ChannelCreateCompleteListener(destination, promise, channelArr, i, counter))
+        }
     }
     promise.future
   }
@@ -92,11 +99,13 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
   def shutDown() = workerGroup.shutdownGracefully().sync()
 
   def closeAllChannels(): Unit = {
-    _channels.values.foreach(_.close().sync())
+    _channels.values.foreach(_._2.foreach(_.close().sync()))
   }
 
   private[this] def channel(destination : Int) : Channel = {
-    _channels(destination)
+    val (channelChooser, channels) = _channels(destination)
+    val index = channelChooser.incrementAndGet() % channels.length
+    channels(Math.abs(index))
   }
 
   override protected[this] def transform(source : Int, i: ByteBuffer): ByteBuf = {
@@ -151,11 +160,12 @@ class MessageSenderNetty(protected[this] val msgCounting: MessageCounting, numTh
     }
   }
 
-  private class ChannelCreateCompleteListener(destination : Int, p: Promise[Channel]) extends ChannelFutureListener {
+  private class ChannelCreateCompleteListener(destination : Int, p: Promise[Unit], channelArr: Array[Channel], index : Int, counter : AtomicInteger) extends ChannelFutureListener {
     override def operationComplete(future: ChannelFuture): Unit = {
       if (future.isSuccess) {
-        _channels.put(destination, future.channel())
-        p.success(future.channel())
+        channelArr(index) = future.channel()
+        if (counter.decrementAndGet() == 0)
+          p.success()
       } else {
         errorReporter(future.channel(), future.cause())
       }

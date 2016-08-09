@@ -945,7 +945,7 @@ abstract class Worker[I,V,E]
       queryDeserializer = new AsyncDeserializer(new Kryo())
       answerDeserializer = new AsyncDeserializer(new Kryo())
 
-      messageSender = new MessageSenderNetty(this)
+      messageSender = new MessageSenderNetty(this, jobSettings.nettyWorkers)
       messageSender.setOnExceptionHandler(nettySenderException)
 
       requestResponseService = new RequestResponseService[I,V,E](clazzI, verticesStore, messageSender, workerId, partitioner, computationExecutionContext)
