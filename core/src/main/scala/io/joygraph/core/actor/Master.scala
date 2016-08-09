@@ -13,7 +13,7 @@ import com.typesafe.config.Config
 import io.joygraph.core.actor.elasticity.policies.ElasticPolicy
 import io.joygraph.core.actor.elasticity.policies.ElasticPolicy.{Grow, Shrink}
 import io.joygraph.core.actor.elasticity.{ElasticityHandler, ElasticityPromise, WorkerProviderProxy}
-import io.joygraph.core.actor.metrics.{WorkerOperation, WorkerStateRecorder}
+import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation, WorkerStateRecorder}
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
@@ -55,7 +55,9 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   val initializationLock = new Semaphore(1)
   // TODO keep state in Master explicitly instead of implicitly
   var doingElasticity : Boolean = false
-  val elasticityHandler : ElasticityHandler = new ElasticityHandler(this, cluster, timeout, executionContext)
+
+  private[this] val policy : ElasticPolicy = jobSettings.policy
+  val elasticityHandler : ElasticityHandler = new ElasticityHandler(this, cluster, policy, timeout, executionContext)
   private[this] var totalProcessingTimeStart : Long = Long.MaxValue
 
   // An actor providing actors
@@ -72,7 +74,6 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
   private[this] val barrierSuccessReceived = new AtomicInteger
   private[this] val loadDataSuccessReceived = new AtomicInteger()
   private[this] val superStepSuccessReceived = new AtomicInteger()
-  private[this] val policy : ElasticPolicy = jobSettings.policy
   private[this] val workerStateRecorder : WorkerStateRecorder = new WorkerStateRecorder
   policy.init(jobSettings.policySettings, workerStateRecorder)
 
@@ -107,6 +108,9 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     log.info("Initializing")
     // TODO cluster.state.members.size may not be always up to date, retrieve count from parent (BaseActor)
     log.info(s"There are ${cluster.state.members.size} members")
+    val currentSupply = cluster.state.members.size - 1
+    val currentDemand = currentSupply
+    policy.addSupplyDemand(SupplyDemandMetrics(System.currentTimeMillis(), currentSupply, currentDemand))
 
     // we are up
     var workerId = 0
@@ -319,7 +323,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     case RegisterWorkerProvider(workerProviderRef) =>
       setWorkerProvider(workerProviderRef)
     case ElasticityComplete() => {
-      logWorkerActionStart(sender().path.address, WorkerOperation.DISTRIBUTE_DATA)
+      logWorkerActionStop(sender().path.address, WorkerOperation.DISTRIBUTE_DATA)
       elasticityHandler.elasticityCompleted()
     }
     case wResponse @ WorkersResponse(numWorkers) =>
@@ -388,7 +392,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       logWorkerAction(senderRef.path.address, "SuperStepLocalComplete", currentSuperStep)
       akkaAddressToWorkerIdMap.get(senderRef.path.address) match {
         case Some(workerId) =>
-          workerStateRecorder.setActiveVertices(currentSuperStep, workerId, numActiveVertices)
+          policy.addActiveVertices(currentSuperStep, workerId, numActiveVertices)
         case None =>
           log.error("Non worker sends numActiveVertices " + senderRef.path.address)
       }
@@ -464,8 +468,17 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
   def terminate(): Unit = {
     log.info("Initiating cluster termination")
+    log.info("Persisting metrics...")
+    try jobSettings.metricsPersistenceFilePath.foreach { path =>
+      policy.exportMetrics(path)
+    } catch {
+      case exception : Throwable =>
+        log.error("Error persisting metrics", exception)
+    }
+    log.info("Persisted metrics")
     allWorkers().foreach(x => cluster.leave(x.actorRef.path.address))
     allWorkers().foreach(x => context.stop(x.actorRef))
     context.stop(self)
+    log.info("Terminated")
   }
 }

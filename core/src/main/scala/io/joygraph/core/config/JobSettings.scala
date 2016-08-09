@@ -8,6 +8,7 @@ import io.joygraph.core.writer.LineWriter
 case class JobSettings(private val conf : Config) {
   val policy : ElasticPolicy = if (conf.hasPath("job.policy.class")) Class.forName(conf.getString("job.policy.class")).newInstance().asInstanceOf[ElasticPolicy] else ElasticPolicy.default()
   val policySettings : Config = if (conf.hasPath("job.policy.settings")) conf.getConfig("job.policy.settings") else ConfigFactory.empty()
+  val metricsPersistenceFilePath : Option[String] = if (conf.hasPath("job.metrics.persistence.file.path")) Some(conf.getString("job.metrics.persistence.file.path")) else None
   val programDefinition : String = conf.getString("job.program.definition.class")
   val masterMemory : Int = conf.getInt("job.master.memory")
   val masterCores : Int = conf.getInt("job.master.cores")

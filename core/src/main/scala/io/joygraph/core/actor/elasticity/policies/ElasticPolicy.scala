@@ -1,15 +1,18 @@
 package io.joygraph.core.actor.elasticity.policies
 
+import java.io.{FileInputStream, FileOutputStream, ObjectInputStream, ObjectOutputStream}
+
 import akka.actor.Address
 import akka.cluster.metrics.NodeMetrics
 import com.typesafe.config.Config
-import io.joygraph.core.actor.metrics.{WorkerOperation, WorkerState, WorkerStateRecorder}
+import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation, WorkerState, WorkerStateRecorder}
 import io.joygraph.core.message.AddressPair
 import io.joygraph.core.partitioning.VertexPartitioner
 
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.util.{Failure, Success, Try}
 
 object ElasticPolicy {
   protected type WorkerId = Int
@@ -66,12 +69,41 @@ object ElasticPolicy {
 }
 
 abstract class ElasticPolicy {
+
   import ElasticPolicy.WorkerId
 
   private type SuperStep = Int
-  private type WorkerMetrics = mutable.OpenHashMap[WorkerId, ArrayBuffer[NodeMetrics]]
-  private[this] val _superStepMetrics = TrieMap.empty[SuperStep, WorkerMetrics]
+
+  private type WorkerMetrics = mutable.HashMap[WorkerId, ArrayBuffer[NodeMetrics]]
+  private[this] var _superStepMetrics = TrieMap.empty[SuperStep, WorkerMetrics]
   private[this] var _statesRecorder : WorkerStateRecorder = _
+  private[this] var _activeVerticesEndOfStep = TrieMap.empty[Int, scala.collection.mutable.Map[Int, Long]]
+  private[this] var _supplyDemandMetrics = ArrayBuffer.empty[SupplyDemandMetrics]
+
+  final def addSupplyDemand(supplyDemand : SupplyDemandMetrics) : Unit = synchronized {
+    _supplyDemandMetrics += supplyDemand
+  }
+
+  def supplyDemands : ArrayBuffer[SupplyDemandMetrics] = {
+    _supplyDemandMetrics
+  }
+
+  final def addActiveVertices(step : Int, workerId : Int, num : Long) : Unit = {
+    val workerMap = _activeVerticesEndOfStep.getOrElseUpdate(step, TrieMap.empty)
+    workerMap.getOrElseUpdate(workerId, num)
+  }
+
+  def activeVerticesOf(step : Int, workerId : Int) : Option[Long] = {
+    _activeVerticesEndOfStep.get(step) match {
+      case Some(x) =>
+        x.get(workerId) match {
+          case Some(y) => Some(y)
+          case None => None
+        }
+      case None =>
+        None
+    }
+  }
 
   final def addMetrics(superStep : Int, metricsSet : Set[NodeMetrics], addressToWorkerMap : Map[Address, WorkerId]): Unit = synchronized {
     val workerMetrics = _superStepMetrics.getOrElseUpdate(superStep, new WorkerMetrics)
@@ -91,7 +123,7 @@ abstract class ElasticPolicy {
     *
     * @return
     */
-  protected[this] def metricsOf(superStep : Int, workerId : Int, state : WorkerOperation.Value): Option[ArrayBuffer[NodeMetrics]] = {
+  def metricsOf(superStep : Int, workerId : Int, state : WorkerOperation.Value): Option[ArrayBuffer[NodeMetrics]] = {
     // find worker
     val states = _statesRecorder.statesFor(superStep, workerId)
     states.get(state) match {
@@ -106,12 +138,12 @@ abstract class ElasticPolicy {
     }
   }
 
-  protected def stepTime(superStep : SuperStep, workerId : WorkerId) : Long = {
+  def stepTime(superStep : SuperStep, workerId : WorkerId) : Long = {
     val timestamps = superStepWorkerMetrics(superStep, workerId).map(_.timestamp)
     timestamps.max - timestamps.min
   }
 
-  protected def timeOfOperation(superStep : SuperStep, workerId : WorkerId, operation : WorkerOperation.Value): Option[Long] = {
+  def timeOfOperation(superStep : SuperStep, workerId : WorkerId, operation : WorkerOperation.Value): Option[Long] = {
     val WorkerState(_, start, stopOpt) = _statesRecorder.statesFor(superStep, workerId)(operation)
     stopOpt match {
       case Some(stop) =>
@@ -128,7 +160,7 @@ abstract class ElasticPolicy {
   /**
     * @return Immutable metrics snapshot
     */
-  protected[this] def superStepWorkerMetrics(superStep : SuperStep, workerId : WorkerId) : Iterable[NodeMetrics]= {
+  def superStepWorkerMetrics(superStep : SuperStep, workerId : WorkerId) : Iterable[NodeMetrics]= {
     superStepMetrics(superStep).getOrElse(workerId, ArrayBuffer.empty).toIndexedSeq
   }
 
@@ -141,4 +173,49 @@ abstract class ElasticPolicy {
 
   def decide(currentStep: Int, currentWorkers: Map[Int, AddressPair], currentPartitioner: VertexPartitioner, maxNumWorkers: Int) : Option[ElasticPolicy.Result]
 
+  def importMetrics(path : String) : Unit = {
+    Try {
+      new FileInputStream(path)
+    } match {
+      case Failure(exception) =>
+        throw exception
+      case Success(fis) =>
+        Try {
+          new ObjectInputStream(fis)
+        } match {
+          case Failure(exception) =>
+            fis.close()
+            throw exception
+          case Success(ois) =>
+            _superStepMetrics = ois.readObject().asInstanceOf[TrieMap[SuperStep, WorkerMetrics]]
+            _statesRecorder = ois.readObject().asInstanceOf[WorkerStateRecorder]
+            _activeVerticesEndOfStep = ois.readObject().asInstanceOf[TrieMap[Int, scala.collection.mutable.Map[Int, Long]]]
+            _supplyDemandMetrics = ois.readObject().asInstanceOf[ArrayBuffer[SupplyDemandMetrics]]
+        }
+    }
+  }
+
+  def exportMetrics(path : String): Unit = {
+    Try {
+      new FileOutputStream(path)
+    } match {
+      case Failure(exception) =>
+      case Success(fos) =>
+        Try {
+          new ObjectOutputStream(fos)
+        } match {
+          case Failure(exception) =>
+            fos.close()
+          case Success(oos) =>
+            try {
+              oos.writeObject(_superStepMetrics)
+              oos.writeObject(_statesRecorder)
+              oos.writeObject(_activeVerticesEndOfStep)
+              oos.writeObject(_supplyDemandMetrics)
+            } finally {
+              oos.close()
+            }
+        }
+    }
+  }
 }

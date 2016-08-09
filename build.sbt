@@ -13,6 +13,13 @@ lazy val commonSettings = Seq(
   //  checksums := Seq("")
 )
 
+lazy val analysis = (project in file("analysis")).
+  settings(commonSettings: _*).
+  settings(
+    libraryDependencies ++= testDependencies
+  ).
+  dependsOn(core)
+
 lazy val hadoop = (project in file("hadoop")).
   settings(commonSettings: _*).
   settings(

@@ -11,7 +11,7 @@ import io.joygraph.core.actor.Master
 import io.joygraph.core.actor.elasticity.ElasticityHandler.ElasticityOperation
 import io.joygraph.core.actor.elasticity.policies.ElasticPolicy
 import io.joygraph.core.actor.elasticity.policies.ElasticPolicy.{Grow, Shrink}
-import io.joygraph.core.actor.metrics.WorkerOperation
+import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation}
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.message.elasticity.{NewWorkerMap, _}
 import io.joygraph.core.message.{AddressPair, State, WorkerId}
@@ -24,7 +24,7 @@ object ElasticityHandler {
   final case class ElasticityOperation(result : ElasticPolicy.Result, promise : ElasticityPromise, currentWorkers : Map[Int, AddressPair])
 }
 
-class ElasticityHandler(master : Master, cluster : Cluster,
+class ElasticityHandler(master : Master, cluster : Cluster, policy : ElasticPolicy,
                         implicit val askTimeout : Timeout,
                         implicit val executionContext : ExecutionContext) {
   private[this] var _currentOperation : ElasticityOperation = _
@@ -49,11 +49,13 @@ class ElasticityHandler(master : Master, cluster : Cluster,
     result match {
       case Shrink(workersToRemove, partitioner) =>
         workersToRemove.foreach(nextWorkers.remove)
+        policy.addSupplyDemand(SupplyDemandMetrics(System.currentTimeMillis(), currentWorkers.size, currentWorkers.size - workersToRemove.size))
         sendElasticityOperationIfCompleted()
       case Grow(workersToAdd, partitioner) =>
         // clear and set new ids
         _newWorkerIds.clear()
         workersToAdd.foreach(_newWorkerIds.add)
+        policy.addSupplyDemand(SupplyDemandMetrics(System.currentTimeMillis(), currentWorkers.size, currentWorkers.size + workersToAdd.size))
         workerProviderProxy.requestWorkers(jobConf, workersToAdd.size).foreach { r =>
           sendElasticityOperationIfCompleted()
         }
@@ -98,6 +100,7 @@ class ElasticityHandler(master : Master, cluster : Cluster,
 
       // set state to superstep
       FutureUtil.callbackOnAllComplete(nextWorkersMap.map(_._2.actorRef).map(_ ? State(GlobalState.SUPERSTEP))) {
+        policy.addSupplyDemand(SupplyDemandMetrics(System.currentTimeMillis(), nextWorkersMap.size, nextWorkersMap.size))
         _currentOperation.promise.success(nextWorkersMap)
       }
     }
