@@ -63,7 +63,7 @@ lazy val joygraph = (project in file("."))
   .settings(
     publish := {}
   )
-  .aggregate(core, cluster, hadoop)
+  .aggregate(core, cluster, hadoop, analysis)
 
 lazy val hadoopTestDependencies = Seq(
   "org.apache.hadoop" % "hadoop-client" % HADOOP_VERSION % Test exclude("jline", "jline"),
