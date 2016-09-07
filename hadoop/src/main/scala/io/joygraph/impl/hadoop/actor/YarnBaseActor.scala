@@ -49,7 +49,8 @@ object YarnBaseActor {
         val master = new Master(conf, cluster) with HadoopMaster
         Master.initialize(master)
       }, () => {
-        Worker.workerWithSerializeOpenHashMapStore(workerConf, definition, new VertexHashPartitioner)
+        Worker.workerWithSerializeJavaHashMapStore(workerConf, definition, new VertexHashPartitioner)
+//        Worker.workerWithSerializeOpenHashMapStore(workerConf, definition, new VertexHashPartitioner)
       },
       None
     ))

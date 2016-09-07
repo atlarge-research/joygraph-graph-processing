@@ -47,6 +47,12 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
   private[this] val waitObject = new CountDownLatch(1)
   @volatile private[this] var queriesSent = false
 
+  private[this] val threadLocalReusableVertex : ThreadLocal[Vertex[I,V,E]] = new ThreadLocal[Vertex[I, V, E]] {
+    override def initialValue(): Vertex[I, V, E] = new VertexImpl[I,V,E] {
+      override def addEdge(dst: I, e: E): Unit = throw new UnsupportedOperationException()
+    }
+  }
+
   private[this] def serializeQuery(kryo : Kryo, kryoOutput : Output, q : QueryMessage[I,S]) = {
     kryo.writeObject(kryoOutput, q.src)
     kryo.writeObject(kryoOutput, q.dst)
@@ -129,58 +135,55 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
     processedAllQueriesTrigger(srcWorkerId)
   }
 
-  def vertexQuery(vId : I, verticesStore: VerticesStore[I,V,E], simpleVertexInstancePool : SimplePool[Vertex[I,V,E]]): Unit = {
+  def vertexQuery(vId : I, verticesStore: VerticesStore[I,V,E], reusableVertex : Vertex[I,V,E]): Unit = {
     val messages = messageStore.messages(vId, clazzM)
 
     verticesStore.halted(vId) && messages.nonEmpty match {
       case false =>
         // get vertex impl
-        simpleVertexInstancePool { v =>
-          val reusableQuery : QueryMessage[I,S] = QueryMessage(null.asInstanceOf[I], null.asInstanceOf[I], null.asInstanceOf[S])
-          val value: V = verticesStore.vertexValue(vId)
-          val edgesIterable: Iterable[Edge[I, E]] = verticesStore.edges(vId)
-          val mutableEdges = verticesStore.mutableEdges(vId)
-          v.load(vId, value, edgesIterable, mutableEdges)
-          _superStepFunctionPool { ssF =>
-            val threadId = ThreadId.getMod(parallelism)
+        val reusableQuery : QueryMessage[I,S] = QueryMessage(null.asInstanceOf[I], null.asInstanceOf[I], null.asInstanceOf[S])
+        val value: V = verticesStore.vertexValue(vId)
+        val edgesIterable: Iterable[Edge[I, E]] = verticesStore.edges(vId)
+        val mutableEdges = verticesStore.mutableEdges(vId)
+        reusableVertex.load(vId, value, edgesIterable, mutableEdges)
+        _superStepFunctionPool { ssF =>
+          val threadId = ThreadId.getMod(parallelism)
 
-            val queries = ssF.query(v, messages)
-            val numQueries = queries.size
-            // set value
-            verticesStore.setVertexValue(vId, v.value)
+          val queries = ssF.query(reusableVertex, messages)
+          val numQueries = queries.size
+          // set value
+          verticesStore.setVertexValue(vId, reusableVertex.value)
 
-            if (queries.nonEmpty) {
-              // release before sending away queries
-              verticesStore.releaseEdgesIterable(edgesIterable)
-              verticesStore.releaseEdgesIterable(mutableEdges)
+          if (queries.nonEmpty) {
+            // release before sending away queries
+            verticesStore.releaseEdgesIterable(edgesIterable)
+            verticesStore.releaseEdgesIterable(mutableEdges)
 
-              // set sent-received to establish a happens-before relationship
-              messagesToBeReceived.put(vId, new AtomicInteger(numQueries))
-              vertexAnswers.put(vId, new VolatileArray[G](numQueries, clazzG))
-              answersLatch.put(vId, new CountDownLatch(numQueries))
+            // set sent-received to establish a happens-before relationship
+            messagesToBeReceived.put(vId, new AtomicInteger(numQueries))
+            vertexAnswers.put(vId, new VolatileArray[G](numQueries, clazzG))
+            answersLatch.put(vId, new CountDownLatch(numQueries))
 
-              queries.foreach {
-                case query @ (dst, message) =>
-                  val dstWorkerId = vertexPartitioner.destination(dst)
-
-                  ifMessageToSelf(dstWorkerId) {
-                    vertexAnswerLocal(threadId, vId, query, verticesStore, simpleVertexInstancePool)
-                  } {
-                    reusableQuery.src = vId
-                    reusableQuery.dst = dst
-                    reusableQuery.message = message
-                    querySerializer.serialize(threadId, dstWorkerId, reusableQuery, serializeQuery) { byteBuffer =>
-                      messageSender.sendNoAck(selfWorkerId, dstWorkerId, byteBuffer)
-                    }
+            queries.foreach {
+              case query @ (dst, message) =>
+                val dstWorkerId = vertexPartitioner.destination(dst)
+                ifMessageToSelf(dstWorkerId) {
+                  vertexAnswerLocal(threadId, vId, query, verticesStore, reusableVertex)
+                } {
+                  reusableQuery.src = vId
+                  reusableQuery.dst = dst
+                  reusableQuery.message = message
+                  querySerializer.serialize(threadId, dstWorkerId, reusableQuery, serializeQuery) { byteBuffer =>
+                    messageSender.sendNoAck(selfWorkerId, dstWorkerId, byteBuffer)
                   }
-              }
-            } else {
-              // do computation
-              vertexComputation(v, verticesStore, Iterable.empty)
-              // release after computation queries
-              verticesStore.releaseEdgesIterable(edgesIterable)
-              verticesStore.releaseEdgesIterable(mutableEdges)
+                }
             }
+          } else {
+            // do computation
+            vertexComputation(reusableVertex, verticesStore, Iterable.empty)
+            // release after computation queries
+            verticesStore.releaseEdgesIterable(edgesIterable)
+            verticesStore.releaseEdgesIterable(mutableEdges)
           }
         }
       case _ => // noop
@@ -188,17 +191,15 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
     messageStore.releaseMessages(messages, clazzM)
   }
 
-  def vertexAnswerLocal(threadId : Int, srcId : I, query : (I, S), partitionedVerticesStore: VerticesStore[I,V,E], simpleVertexInstancePool : SimplePool[Vertex[I,V,E]]) : Unit = {
+  def vertexAnswerLocal(threadId : Int, srcId : I, query : (I, S), partitionedVerticesStore: VerticesStore[I,V,E], reusableVertex : Vertex[I,V,E]) : Unit = {
     val (vId, message) = query
     val value: V = workerVerticesStore.vertexValue(vId)
 
     val answer = workerVerticesStore.explicitlyScopedEdges(vId) { edgesIterable =>
       // get vertex impl
-      simpleVertexInstancePool { v =>
-        v.load(vId, value, edgesIterable)
-        _superStepFunctionPool { ssF =>
-          ssF.answer(v, message)
-        }
+      reusableVertex.load(vId, value, edgesIterable)
+      _superStepFunctionPool { ssF =>
+        ssF.answer(reusableVertex, message)
       }
     }
 
@@ -211,7 +212,7 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
       answersLatch.get(srcId).await()
 
       // now we can pass the answers to the vertexComputation
-      vertexComputation(srcId, partitionedVerticesStore, simpleVertexInstancePool, answers)
+      vertexComputation(srcId, partitionedVerticesStore, reusableVertex, answers)
 
       // clean up messagesReceived etc
       messagesToBeReceived.remove(srcId)
@@ -224,39 +225,34 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
     }
   }
 
-  private[this] def computeVertexAnswer(threadId : Int, dstWorkerId : Int, query :  QueryMessage[I,S], verticesStore: VerticesStore[I,V,E], simpleVertexInstancePool : SimplePool[Vertex[I,V,E]] ) = {
+  private[this] def computeVertexAnswer(threadId : Int, dstWorkerId : Int, query :  QueryMessage[I,S], verticesStore: VerticesStore[I,V,E], reusableVertex : Vertex[I,V,E]) = {
     val vId = query.dst
     val value: V = verticesStore.vertexValue(vId)
 
     verticesStore.explicitlyScopedEdges(vId) { edgesIterable =>
       // get vertex impl
-      simpleVertexInstancePool { v =>
-        v.load(vId, value, edgesIterable)
+      reusableVertex.load(vId, value, edgesIterable)
         _superStepFunctionPool { ssF =>
-          val answer = ssF.answer(v, query.message)
+          val answer = ssF.answer(reusableVertex, query.message)
           val queryAnswer = new AnswerMessage[I, G](query.src, answer)
           answerSerializer.serialize(threadId, dstWorkerId, queryAnswer, serializeAnswer) { byteBuffer =>
             messageSender.sendNoAck(selfWorkerId, dstWorkerId, byteBuffer)
           }
         }
-      }
+
     }
   }
 
   def vertexAnswer(verticesStore: VerticesStore[I,V,E], queryDeserializer : AsyncDeserializer, is : ObjectByteBufferInputStream) : Unit = {
     val reusableQuery : QueryMessage[I,S] = QueryMessage(null.asInstanceOf[I], null.asInstanceOf[I], null.asInstanceOf[S])
-
-    val simpleVertexInstancePool : SimplePool[Vertex[I,V,E]] = new SimplePool[Vertex[I, V, E]](new VertexImpl[I,V,E] {
-      override def addEdge(dst: I, e: E): Unit = throw new UnsupportedOperationException()
-    })
-
+    val reusableVertex = threadLocalReusableVertex.get()
     val queriesProcessed = mutable.OpenHashMap.empty[Int, LongCounter]
     ThreadId(parallelism) { threadId =>
       queryDeserializer.deserialize(is, threadId, (kryo, input) => deserializeQuery(kryo, input, reusableQuery)) {
         _.foreach {
           query =>
             val dstWorkerId = vertexPartitioner.destination(query.src)
-            computeVertexAnswer(threadId, dstWorkerId, query, verticesStore, simpleVertexInstancePool)
+            computeVertexAnswer(threadId, dstWorkerId, query, verticesStore, reusableVertex)
             queriesProcessed.getOrElseUpdate(dstWorkerId, new LongCounter()).increment()
         }
       }
@@ -269,11 +265,7 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
 
   def receiveAnswer(verticesStore : VerticesStore[I,V,E], answerDeserializer : AsyncDeserializer, is : ObjectByteBufferInputStream) : Unit = {
     val reusableAnswer :  AnswerMessage[I,G] = AnswerMessage(null.asInstanceOf[I], null.asInstanceOf[G])
-
-    val simpleVertexInstancePool : SimplePool[Vertex[I,V,E]] = new SimplePool[Vertex[I, V, E]](new VertexImpl[I,V,E] {
-      override def addEdge(dst: I, e: E): Unit = throw new UnsupportedOperationException()
-    })
-
+    val reusableVertex = threadLocalReusableVertex.get()
     ThreadId(parallelism) { threadId =>
       answerDeserializer.deserialize(is, threadId, (kryo, input) => deserializerAnswer(kryo, input, reusableAnswer)) {
         _.foreach { answer =>
@@ -287,8 +279,7 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
             answersLatch.get(vId).await()
 
             // now we can pass the answers to the vertexComputation
-            vertexComputation(vId, verticesStore, simpleVertexInstancePool, answers)
-
+            vertexComputation(vId, verticesStore, reusableVertex, answers)
 
             // clean up messagesReceived etc
             messagesToBeReceived.remove(vId)
@@ -316,16 +307,13 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
     }
   }
 
-  def vertexComputation(vId: I, verticesStore: VerticesStore[I,V,E], simpleVertexInstancePool : SimplePool[Vertex[I,V,E]], answers : Iterable[G]) : Unit = {
+  def vertexComputation(vId: I, verticesStore: VerticesStore[I,V,E], reusableVertex : Vertex[I,V,E], answers : Iterable[G]) : Unit = {
     val value: V = verticesStore.vertexValue(vId)
     verticesStore.explicitlyScopedEdges(vId) { edgesIterable =>
       // get vertex impl
-      simpleVertexInstancePool { v =>
-        v.load(vId, value, edgesIterable)
-        vertexComputation(v, verticesStore, answers)
-      }
+      reusableVertex.load(vId, value, edgesIterable)
+      vertexComputation(reusableVertex, verticesStore, answers)
     }
-
   }
 
   def await(): Boolean = {

@@ -116,7 +116,8 @@ object YarnAMBaseActor {
         Master.initialize(master)
       }, () => {
 //         Worker.workerWithSerializedTrieMapMessageStore(masterConf, definition, new VertexHashPartitioner)
-         Worker.workerWithSerializeOpenHashMapStore(masterConf, definition, new VertexHashPartitioner)
+         Worker.workerWithSerializeJavaHashMapStore(masterConf, definition, new VertexHashPartitioner)
+//         Worker.workerWithSerializeOpenHashMapStore(masterConf, definition, new VertexHashPartitioner)
       },
       submissionClientActorAddress
     ))

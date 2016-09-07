@@ -23,6 +23,9 @@ class AsyncSerializer
  protected[this] val bufferExceededThreshold : Int)
   extends AsyncBufferedSerializer {
 
+  private[this] val kryoThreadLocal = new ThreadLocal[Kryo] {
+    override def initialValue(): Kryo = kryoFactory()
+  }
   private[this] val maxRetries = 10
 
   @tailrec
@@ -71,13 +74,11 @@ class AsyncSerializer
   }
 
   def serialize[T](index : ThreadId, workerId: WorkerId, o: T, serializer: (Kryo, Output, T) => Unit)(outputHandler: ByteBuffer => Future[ByteBuffer]): Unit = {
-    val kryo = kryos(index) // zero contention
-    kryo.synchronized {
-      val start = System.currentTimeMillis()
-      serialize(kryo, workerId, o, serializer)(outputHandler)
-      val diff = System.currentTimeMillis() - start
-      timeSpent.addAndGet(diff)
-    }
+    val kryo = kryoThreadLocal.get // zero contention
+    val start = System.currentTimeMillis()
+    serialize(kryo, workerId, o, serializer)(outputHandler)
+    val diff = System.currentTimeMillis() - start
+    timeSpent.addAndGet(diff)
   }
 
 }

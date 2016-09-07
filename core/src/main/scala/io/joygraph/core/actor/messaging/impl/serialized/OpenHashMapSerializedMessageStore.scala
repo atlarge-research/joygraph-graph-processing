@@ -20,26 +20,34 @@ object OpenHashMapSerializedMessageStore {
     private[this] var nextMessages = mutable.OpenHashMap.empty[Any, DirectByteBufferGrowingOutputStream]
     private[this] var currentMessages = mutable.OpenHashMap.empty[Any, DirectByteBufferGrowingOutputStream]
     private[this] val EMPTY_MESSAGES : Iterable[Any] = Iterable.empty[Any]
-    private[this] var _reusableIterable : ReusableIterable[_] = _
+    private[this] var _reusableIterableThreadLocal : ThreadLocal[ReusableIterable[_]] = _
     // TODO inject factory from worker
     // Reading and writing can occur at the same time, so we need 2 instances of Kryo.
-    private[this] val kryoRead = new Kryo()
-    private[this] val kryoWrite = new Kryo()
+    private[this] val kryoReadFactory = () => new Kryo()
+    private[this] val kryoWriteThreadLocal = new ThreadLocal[Kryo] {
+      override def initialValue(): Kryo = new Kryo()
+    }
     // buffersize should be the same as the AsyncSerializer
-    private[this] val kryoOutput = new KryoOutput(maxMessageSize, maxMessageSize)
+    private[this] val kryoOutputThreadLocal = new ThreadLocal[KryoOutput] {
+      override def initialValue(): KryoOutput = new KryoOutput(maxMessageSize, maxMessageSize)
+    }
 
     override def setReusableIterableFactory(factory: => ReusableIterable[Any]): Unit = {
-      _reusableIterable = factory
-      _reusableIterable.kryo(kryoRead)
+      _reusableIterableThreadLocal = new ThreadLocal[ReusableIterable[_]] {
+        override def initialValue(): ReusableIterable[_] = {
+          factory.kryo(kryoReadFactory())
+        }
+      }
     }
     private[this] def reusableIterable[M](clazz : Class[M]) : ReusableIterable[M] = {
-      _reusableIterable.asInstanceOf[ReusableIterable[M]]
+      _reusableIterableThreadLocal.get().asInstanceOf[ReusableIterable[M]]
     }
 
     override def _handleMessage[I](index: WorkerId, dstMPair: Message[I], clazzI: Class[I], clazzM: Class[_]): Unit = {
       val os = nextMessages.getOrElseUpdate(dstMPair.dst, new DirectByteBufferGrowingOutputStream(8))
+      val kryoOutput = kryoOutputThreadLocal.get
       kryoOutput.setOutputStream(os)
-      kryoWrite.writeObject(kryoOutput, dstMPair.msg)
+      kryoWriteThreadLocal.get().writeObject(kryoOutput, dstMPair.msg)
       kryoOutput.flush()
       // TODO evaluate the removal of trim
       //    outputStream.trim()

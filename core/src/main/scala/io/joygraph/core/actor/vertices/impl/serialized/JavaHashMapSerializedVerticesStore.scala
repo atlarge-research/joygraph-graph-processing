@@ -1,12 +1,15 @@
 package io.joygraph.core.actor.vertices.impl.serialized
 
+import java.lang.Thread.UncaughtExceptionHandler
 import java.nio.ByteBuffer
+import java.util
+import java.util.concurrent.CountDownLatch
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.vertices.VerticesStore
-import io.joygraph.core.actor.vertices.impl.serialized.OpenHashMapSerializedVerticesStore.Partition
+import io.joygraph.core.actor.vertices.impl.serialized.JavaHashMapSerializedVerticesStore.Partition
 import io.joygraph.core.actor.{PregelVertexComputation, QueryAnswerVertexComputation}
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.partitioning.impl.VertexHashPartitioner
@@ -23,9 +26,9 @@ import scala.collection.parallel.ParIterable
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 
-object OpenHashMapSerializedVerticesStore {
+object JavaHashMapSerializedVerticesStore {
 
-  protected[OpenHashMapSerializedVerticesStore] class Partition[I,V,E]
+  protected[JavaHashMapSerializedVerticesStore] class Partition[I,V,E]
   (override protected[this] val clazzI: Class[I],
    override protected[this] val clazzE: Class[E],
    override protected[this] val clazzV: Class[V],
@@ -35,62 +38,67 @@ object OpenHashMapSerializedVerticesStore {
   ) extends VerticesStore[I,V,E] {
 
     private[this] val _halted : scala.collection.mutable.Map[I, Boolean] = mutable.OpenHashMap.empty
-    private[this] val _edges : scala.collection.mutable.Map[I, DirectByteBufferGrowingOutputStream] = mutable.OpenHashMap.empty
+    private[this] val _edges : java.util.HashMap[I, DirectByteBufferGrowingOutputStream] = new util.HashMap[I, DirectByteBufferGrowingOutputStream]()
     private[this] val _values :  scala.collection.mutable.Map[I, V] = mutable.OpenHashMap.empty
     private[this] val NO_EDGES = Iterable.empty[Edge[I,E]]
     // TODO inject kryo
-    private[this] val kryo = new Kryo()
-    private[this] val kryoOutput = new KryoOutput(maxEdgeSize, maxEdgeSize)
+    private[this] val kryoThreadLocal = new ThreadLocal[Kryo] {
+      override def initialValue(): Kryo = {
+        new Kryo()
+      }
+    }
+    private[this] val kryoOutputThreadLocal = new ThreadLocal[KryoOutput] {
+      override def initialValue(): KryoOutput = new KryoOutput(maxEdgeSize, maxEdgeSize)
+    }
     private[this] var numEdges = 0
-
-    private[this] val reusableIterablePool = new SimplePool({
-      new ReusableIterable[Edge[I,E]] {
-        private[this] val reusableEdge : Edge[I,E] = Edge[I,E](null.asInstanceOf[I], null.asInstanceOf[E])
-        override protected[this] def deserializeObject(): Edge[I, E] = {
-          reusableEdge.dst = _kryo.readObject(_input, clazzI)
-          if (!voidOrUnitClass) {
-            reusableEdge.e = _kryo.readObject(_input, clazzE)
+    private[this] val reusableIterableThreadLocal = new ThreadLocal[ReusableIterable[Edge[I,E]]] {
+      override def initialValue(): ReusableIterable[Edge[I, E]] = {
+        new ReusableIterable[Edge[I,E]] {
+          private[this] val reusableEdge : Edge[I,E] = Edge[I,E](null.asInstanceOf[I], null.asInstanceOf[E])
+          override protected[this] def deserializeObject(): Edge[I, E] = {
+            reusableEdge.dst = _kryo.readObject(_input, clazzI)
+            if (!voidOrUnitClass) {
+              reusableEdge.e = _kryo.readObject(_input, clazzE)
+            }
+            reusableEdge
           }
-          reusableEdge
-        }
-      }.input(new ByteBufferInput(maxEdgeSize))
-        .kryo(new Kryo)
-    })
-
-    private[this] val reusableIterable = new ReusableIterable[Edge[I,E]] {
-      private[this] val reusableEdge : Edge[I,E] = Edge[I,E](null.asInstanceOf[I], null.asInstanceOf[E])
-      override protected[this] def deserializeObject(): Edge[I, E] = {
-        reusableEdge.dst = _kryo.readObject(_input, clazzI)
-        if (!voidOrUnitClass) {
-          reusableEdge.e = _kryo.readObject(_input, clazzE)
-        }
-        reusableEdge
+        }.input(new ByteBufferInput(maxEdgeSize))
+          .kryo(new Kryo)
       }
-    }.input(new ByteBufferInput(maxEdgeSize))
-      .kryo(kryo)
+    }
 
-
-    private[this] val mutableIterable = {
-      val mIterable = new MutableReusableIterable[I, Edge[I, E]] {
-        override protected[this] def deserializeObject(): Edge[I, E] = {
-          if (!voidOrUnitClass) {
-            Edge(_kryo.readObject(_input, clazzI), _kryo.readObject(_input, clazzE))
-          } else {
-            Edge(_kryo.readObject(_input, clazzI), null.asInstanceOf[E])
+    private[this] val mutableReusableIterableThreadLocal =  new ThreadLocal[MutableReusableIterable[I, Edge[I, E]]]{
+      override def initialValue(): MutableReusableIterable[I, Edge[I, E]] = {
+        val mIterable = new MutableReusableIterable[I, Edge[I, E]] {
+          override protected[this] def deserializeObject(): Edge[I, E] = {
+            if (!voidOrUnitClass) {
+              Edge(_kryo.readObject(_input, clazzI), _kryo.readObject(_input, clazzE))
+            } else {
+              Edge(_kryo.readObject(_input, clazzI), null.asInstanceOf[E])
+            }
           }
-        }
 
-        override def readOnly: Iterable[Edge[I, E]] = throw new UnsupportedOperationException
+          override def readOnly: Iterable[Edge[I, E]] = throw new UnsupportedOperationException
+        }
+        mIterable
+          .input(new ByteBufferInput(maxEdgeSize))
+          .kryo(new Kryo)
+        mIterable
       }
-      mIterable
-        .input(new ByteBufferInput(maxEdgeSize))
-        .kryo(kryo)
-      mIterable
     }
 
     override def halted(vId: I): Boolean = _halted.getOrElse(vId, false)
 
-    override def vertices: Iterable[I] = _edges.keys
+    override def vertices: Iterable[I] = new Iterable[I] {
+      override def iterator: Iterator[I] = new Iterator[I] {
+        val it = _edges.keySet().iterator()
+        override def hasNext: Boolean = it.hasNext
+
+        override def next(): I = it.next()
+      }
+    }
+
+    def rawEdges = _edges
 
     override def removeAllFromVertex(vId: I): Unit = {
       _halted.remove(vId)
@@ -107,15 +115,17 @@ object OpenHashMapSerializedVerticesStore {
         _halted.remove(vId)
       }
 
-    private[this] def edgeStream(vId : I) = _edges.getOrElseUpdate(vId, new DirectByteBufferGrowingOutputStream(0))
+    private[this] def edgeStream(vId : I) = {
+      _edges.computeIfAbsent(vId, _ => new DirectByteBufferGrowingOutputStream(0))
+    }
 
     def explicitlyScopedEdges[T](vId: I)(f : Iterable[Edge[I, E]] => T) : T = {
-      val edges = _edges.get(vId) match  {
+      val edges = Option(_edges.get(vId)) match  {
         case Some(os) =>
           if (os.isEmpty) {
             NO_EDGES
           } else {
-            reusableIterablePool.borrow()
+            reusableIterableThreadLocal.get()
               .bufferProvider(() => os.getBuf)
           }
         case None => NO_EDGES
@@ -126,23 +136,24 @@ object OpenHashMapSerializedVerticesStore {
         case NO_EDGES =>
           // noop
         case reusable : ReusableIterable[Edge[I,E] @unchecked] =>
-          reusableIterablePool.release(reusable)
+          // noop
       }
       res
     }
 
-    override def edges(vId: I): Iterable[Edge[I, E]] = _edges.get(vId) match {
+    override def edges(vId: I): Iterable[Edge[I, E]] = Option(_edges.get(vId)) match {
       case Some(os) =>
         if (os.isEmpty) {
           NO_EDGES
         } else {
-          reusableIterable
+          reusableIterableThreadLocal.get()
             .bufferProvider(() => os.getBuf)
         }
       case None => NO_EDGES
     }
 
     override def releaseEdgesIterable(edgesIterable: Iterable[Edge[I, E]]): Unit = {
+      val mutableIterable = mutableReusableIterableThreadLocal.get()
       if (edgesIterable eq mutableIterable) {
         val src = mutableIterable.vId
         val os = edgeStream(src)
@@ -166,7 +177,9 @@ object OpenHashMapSerializedVerticesStore {
       numEdges += 1
     }
 
-    private[this] def serializeEdge(dst : I, value : E, os : DirectByteBufferGrowingOutputStream): Unit = {
+    private[this] def serializeEdge(dst : I, value : E, os : DirectByteBufferGrowingOutputStream): Unit = synchronized {
+      val kryoOutput = kryoOutputThreadLocal.get()
+      val kryo = kryoThreadLocal.get()
       kryoOutput.setOutputStream(os)
       kryo.writeObject(kryoOutput, dst)
       if (!voidOrUnitClass) {
@@ -178,13 +191,13 @@ object OpenHashMapSerializedVerticesStore {
 
     override def localNumEdges: Long = numEdges
 
-    override def localNumVertices: Long = _edges.keys.size
+    override def localNumVertices: Long = _edges.size
 
     override def localNumActiveVertices : Long = _halted.size
 
-    override def mutableEdges(vId: I): Iterable[Edge[I, E]] = _edges.get(vId) match {
+    override def mutableEdges(vId: I): Iterable[Edge[I, E]] = Option(_edges.get(vId)) match {
       case Some(os) =>
-        mutableIterable
+        mutableReusableIterableThreadLocal.get()
           .vId(vId)
           .bufferProvider(() => os.getBuf)
       case None =>
@@ -193,29 +206,15 @@ object OpenHashMapSerializedVerticesStore {
 
     override def addVertex(vertex: I): Unit = edgeStream(vertex)
 
-    override def setVertexValue(vId: I, v: V): Unit = _values(vId) = v
-
+    override def setVertexValue(vId: I, v: V): Unit = synchronized { _values(vId) = v }
     override def parVertices: ParIterable[I] = throw new UnsupportedOperationException
 
     override def computeVertices(computation: PregelVertexComputation[I, V, E]): Boolean = {
-      val verticesStore = this
-      val simpleVertexInstancePool = new SimplePool[Vertex[I,V,E]](new VertexImpl[I,V,E] {
-        override def addEdge(dst: I, e: E): Unit = {
-          verticesStore.addEdge(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
-        }
-      })
-      vertices.foreach(computation.computeVertex(_, verticesStore, simpleVertexInstancePool))
-      computation.hasHalted
+      throw new UnsupportedOperationException
     }
 
     override def createQueries(qapComputation : QueryAnswerVertexComputation[I,V,E,_,_,_]): Unit = {
-      val verticesStore = this
-      val reusableVertex = new VertexImpl[I,V,E] {
-        override def addEdge(dst: I, e: E): Unit = {
-          verticesStore.addEdge(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
-        }
-      }
-      vertices.foreach(qapComputation.vertexQuery(_, verticesStore, reusableVertex))
+      throw new UnsupportedOperationException
     }
 
     override def distributeVertices
@@ -255,7 +254,7 @@ object OpenHashMapSerializedVerticesStore {
   }
 }
 
-class OpenHashMapSerializedVerticesStore[I,V,E]
+class JavaHashMapSerializedVerticesStore[I,V,E]
 (protected[this] val clazzI : Class[I],
  protected[this] val clazzE : Class[E],
  protected[this] val clazzV : Class[V],
@@ -263,6 +262,10 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
  maxEdgeSize : Int,
  errorReporter : (Throwable) => Unit
 ) extends VerticesStore[I,V,E] {
+
+  private[this] val forkJoinPool = ExecutionContextUtil.createForkJoinPoolWithPrefix("vertex-partition-workers-", numPartitions, new UncaughtExceptionHandler {
+    override def uncaughtException(t: Thread, e: Throwable): Unit = errorReporter(e)
+  })
 
   private[this] val workers = new Array[PartitionWorker](numPartitions)
   private[this] val partitions = new Array[Partition[I,V,E]](numPartitions)
@@ -277,32 +280,6 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
     val partId = localPartitioner.destination(vId)
     partitions(partId)
   }
-//
-//  def internalBalance(): Unit = {
-//    // check if there's deviation between partitions
-//    val averageNumVertices = partitions.map(_.localNumVertices).sum / numPartitions
-//    val reHashPartitionerBuilder = new ReHashPartitioner.Builder()
-//      .partitioner(localPartitioner)
-//    val tooManyVertices = partitions.zipWithIndex
-//      .filter {
-//        case (part, index) =>
-//          part.localNumVertices > averageNumVertices
-//      }.map {
-//      case (part, index) =>
-//        index -> (part.localNumVertices - averageNumVertices).toDouble / averageNumVertices.toDouble
-//    }
-//    val tooLittleVertices = partitions.zipWithIndex.filter {
-//      case (part, index) =>
-//        part.localNumVertices < averageNumVertices
-//    }.map{
-//      case (part, index) =>
-//       index -> (1.0 - (part.localNumVertices.toDouble / averageNumVertices.toDouble))
-//    }
-//    tooLittleVertices.foreach{
-//      case (index, fraction) =>
-//        fraction -
-//    }
-//  }
 
   override def removeAllFromVertex(vId: I): Unit = {
     val part = partition(vId)
@@ -366,33 +343,58 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
   override def parVertices: ParIterable[I] = throw new UnsupportedOperationException
 
   override def computeVertices(computation: PregelVertexComputation[I, V, E]): Boolean = {
-     workers.zipWithIndex.map {
-      case (worker, index) =>
-        val promise = Promise[Unit]
-        worker.execute(new Runnable {
-          override def run(): Unit = {
-            partitions(index).computeVertices(computation)
-            promise.success()
+    val latch = new CountDownLatch(numPartitions)
+    partitions.foreach{ partition =>
+      forkJoinPool.submit(new Runnable {
+        override def run(): Unit = {
+          println(s"${Thread.currentThread().getName} computing")
+          try {
+            partition.rawEdges.keySet().parallelStream().forEach { vId =>
+              val verticesStore = partition
+              val simpleVertexInstancePool = new SimplePool[Vertex[I, V, E]](new VertexImpl[I, V, E] {
+                override def addEdge(dst: I, e: E): Unit = {
+                  verticesStore.addEdge(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
+                }
+              })
+              computation.computeVertex(vId, verticesStore, simpleVertexInstancePool)
+            }
+          } catch {
+            case t : Throwable =>
+              val sb = mutable.StringBuilder.newBuilder
+              sb.append(t.getMessage)
+              sb.append("\n")
+              t.getStackTrace.foreach(x => sb.append(x + "\n"))
+              println(sb.toString)
           }
-        })
-        promise.future
-    }.foreach(Await.ready(_, Duration.Inf))
+          println(s"${Thread.currentThread().getName} finished computing")
+          latch.countDown()
+        }
+      })
+    }
+    latch.await()
     // TODO abort on exception
     computation.hasHalted
   }
 
   override def createQueries(qapComputation: QueryAnswerVertexComputation[I,V,E,_,_,_]): Unit = {
-    workers.zipWithIndex.map {
-      case (worker, index) =>
-        val promise = Promise[Unit]
-        worker.execute(new Runnable {
-          override def run(): Unit = {
-            partitions(index).createQueries(qapComputation)
-            promise.success()
+    val latch = new CountDownLatch(numPartitions)
+    partitions.foreach{ partition =>
+      forkJoinPool.submit(new Runnable {
+        override def run(): Unit = {
+          partition.rawEdges.keySet().parallelStream().forEach{ vId =>
+            val verticesStore = partition
+            val reusableVertex = new VertexImpl[I,V,E] {
+              override def addEdge(dst: I, e: E): Unit = {
+                verticesStore.addEdge(id, dst, e) // As of bufferProvider in ReusableIterable, the changes are immediately visible to new iterators
+              }
+            }
+            qapComputation.vertexQuery(vId, verticesStore, reusableVertex)
           }
-        })
-        promise.future
-    }.foreach(Await.ready(_, Duration.Inf))
+          latch.countDown()
+        }
+      })
+    }
+    latch.await()
   }
 
   override def distributeVertices
@@ -431,4 +433,5 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
   }
 
 }
+
 
