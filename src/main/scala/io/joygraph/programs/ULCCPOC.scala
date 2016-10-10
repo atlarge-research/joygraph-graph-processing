@@ -292,4 +292,10 @@ class InquiryPOC2 extends KryoSerializable {
     }
     edges = edgesArr
   }
+
+  override def toString: String = {
+    val sb = new StringBuilder
+    edges.foreach(v => sb.append(v + " "))
+    sb.toString()
+  }
 }
