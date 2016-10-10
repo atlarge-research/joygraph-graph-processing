@@ -23,5 +23,7 @@ trait SerializedMessaging  {
 
   def remove[I](source : I)
 
+  def removeNext[I](source : I)
+
   def emptyNextMessages : Boolean
 }

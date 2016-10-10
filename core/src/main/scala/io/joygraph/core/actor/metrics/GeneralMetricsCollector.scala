@@ -5,6 +5,7 @@ import java.lang.management.{ManagementFactory, MemoryMXBean, MemoryUsage}
 import akka.actor.{ActorSystem, Address}
 import akka.cluster.Cluster
 import akka.cluster.metrics._
+import org.hyperic.sigar.SigarProxy
 
 object NonHeapMemoryMetrics {
   final val NonHeapMemoryUsed = "non-heap-memory-used"
@@ -19,16 +20,36 @@ object OffHeapMemoryMetrics {
 
 
 /**
-  * Based on JmxMetricsCollector
+  * Based on SigarMetricsCollector
   */
-class GeneralMetricsCollector(address: Address, decayFactor: Double) extends JmxMetricsCollector(address, decayFactor) {
+class GeneralMetricsCollector(address: Address, decayFactor: Double, sigar : SigarProxy) extends JmxMetricsCollector(address, decayFactor) {
 
-  private def this(address: Address, settings: ClusterMetricsSettings) = this(address,
-      EWMA.alpha(settings.CollectorMovingAverageHalfLife, settings.CollectorSampleInterval))
-  def this(system: ActorSystem) = this(Cluster(system).selfAddress, ClusterMetricsExtension(system).settings)
+  import StandardMetrics._
+  import org.hyperic.sigar.CpuPerc
 
   private val memoryMBean: MemoryMXBean = ManagementFactory.getMemoryMXBean
   private val decayFactorOption = Some(decayFactor)
+
+  def this(address: Address, settings: ClusterMetricsSettings, sigar: SigarProxy) =
+    this(address,
+      EWMA.alpha(settings.CollectorMovingAverageHalfLife, settings.CollectorSampleInterval),
+      sigar)
+
+  def this(address: Address, settings: ClusterMetricsSettings) =
+    this(address, settings, {
+      val sigarProvider = DefaultSigarProvider(settings)
+      val sigarInstance = sigarProvider.createSigarInstance
+      sigarInstance
+    })
+
+  /**
+    * This constructor is used when creating an instance from configured FQCN
+    */
+  def this(system: ActorSystem) = this(Cluster(system).selfAddress, {
+    val metricsExtension = ClusterMetricsExtension(system)
+    val metricsExtensionSettings = metricsExtension.settings
+    metricsExtensionSettings
+  })
 
   def nonHeapMemoryUsage: MemoryUsage = memoryMBean.getNonHeapMemoryUsage
 
@@ -69,10 +90,34 @@ class GeneralMetricsCollector(address: Address, decayFactor: Double) extends Jmx
     decayFactor = None
   )
 
+  override def systemLoadAverage: Option[Metric] = Metric.create(
+    name = SystemLoadAverage,
+    value = sigar.getLoadAverage()(0).asInstanceOf[Number],
+    decayFactor = None)
+
+  def cpuCombined(cpuPerc: CpuPerc): Option[Metric] = Metric.create(
+    name = CpuCombined,
+    value = cpuPerc.getCombined.asInstanceOf[Number],
+    decayFactor = decayFactorOption)
+
+  def cpuStolen(cpuPerc: CpuPerc): Option[Metric] = Metric.create(
+    name = CpuStolen,
+    value = cpuPerc.getStolen.asInstanceOf[Number],
+    decayFactor = decayFactorOption)
+
+  def cpuIdle(cpuPerc: CpuPerc): Option[Metric] = Metric.create(
+    name = CpuIdle,
+    value = cpuPerc.getIdle.asInstanceOf[Number],
+    decayFactor = decayFactorOption)
+
+  override def close(): Unit = SigarProvider.close(sigar)
+
   override def metrics(): Set[Metric] = {
     val heap = heapMemoryUsage
     val nonHeap = nonHeapMemoryUsage
+    val cpuPerc = sigar.getCpuPerc
     Set(systemLoadAverage,
+      cpuCombined(cpuPerc), cpuStolen(cpuPerc),
       heapUsed(heap), heapCommitted(heap), heapMax(heap),
       nonHeapUsed(nonHeap), nonHeapCommitted(nonHeap), nonHeapMax(nonHeap),
       offHeapUsed(), offHeapMax(),

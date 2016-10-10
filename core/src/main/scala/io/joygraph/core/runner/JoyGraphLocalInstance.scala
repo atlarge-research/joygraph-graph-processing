@@ -51,7 +51,7 @@ class JoyGraphLocalInstanceBuilder[I,V,E](programDefinition: ProgramDefinition[S
   }
 
   def undirected() : BuilderType = {
-    _isDirected = Some(true)
+    _isDirected = Some(false)
     this
   }
 
@@ -215,7 +215,7 @@ protected[this] class JoyGraphLocalInstance(programDefinition : ProgramDefinitio
             ConfigFactory.parseString(createAkkaRemoteConfig(port))
               .withFallback(jobConf) // jobconf already contains the seed port of the cluster
         val system = ActorSystem(actorSystemName, jobConfig)
-        system.actorOf(Props(classOf[BaseActor], jobConfig, _masterFactory, () => _workerFactory(jobConfig, programDefinition, _partitioner)))
+        system.actorOf(Props(classOf[BaseActor], jobConfig, _masterFactory, () => _workerFactory(jobConfig, programDefinition, _partitioner), None))
         addSystem()
         system.whenTerminated.foreach(_ =>
           finish()

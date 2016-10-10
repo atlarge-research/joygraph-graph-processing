@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.Input
+import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.util.buffers.streams.bytebuffer.ObjectByteBufferInputStream
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.Types
@@ -13,7 +14,7 @@ import scala.concurrent.Future
 
 trait MessageStore extends Types {
 
-  def importCurrentMessagesData[I, M]
+  def importNextMessagesData[I, M]
   (index : ThreadId,
    is : ObjectByteBufferInputStream,
    messagesDeserializer : AsyncDeserializer,
@@ -30,7 +31,7 @@ trait MessageStore extends Types {
     }
   }
 
-  def exportAndRemoveMessages[I,M](vId : I, clazzM : Class[M], threadId : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer]) = {
+  def exportMessages[I,M](vId : I, clazzM : Class[M], threadId : ThreadId, workerId : WorkerId, asyncSerializer: AsyncSerializer, outputHandler : ByteBuffer => Future[ByteBuffer]) = {
     val vMessages = nextMessages(vId, clazzM)
     if (vMessages.nonEmpty) {
       vMessages.foreach{ m =>
@@ -42,16 +43,17 @@ trait MessageStore extends Types {
 
       // release messages
       releaseMessages(vMessages, clazzM)
-
-      // remove messages
-      removeMessages(vId)
     }
   }
 
+  def addAllNextMessages(elasticMessagesStore: MessageStore) : Unit = ???
+
   def _handleMessage[I](index: WorkerId, message: Message[I], clazzI: Class[I], clazzM: Class[_])
-  protected[messaging] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
+  def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
   def messages[I,M](dst : I, clazzM : Class[M]) : Iterable[M]
   protected[messaging] def removeMessages[I](dst : I)
+  protected[messaging] def removeNextMessages[I](dst : I)
+  def removeNextMessages(workerId: WorkerId, partitioner: VertexPartitioner) : Unit = ???
   def releaseMessages(messages : Iterable[_ <: Any], clazz : Class[_ <: Any])
   def messagesOnBarrier()
   def emptyNextMessages : Boolean

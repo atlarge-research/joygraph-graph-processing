@@ -75,10 +75,19 @@ abstract class ElasticPolicy {
   private type SuperStep = Int
 
   private type WorkerMetrics = mutable.HashMap[WorkerId, ArrayBuffer[NodeMetrics]]
-  private[this] var _superStepMetrics = TrieMap.empty[SuperStep, WorkerMetrics]
-  private[this] var _statesRecorder : WorkerStateRecorder = _
-  private[this] var _activeVerticesEndOfStep = TrieMap.empty[Int, scala.collection.mutable.Map[Int, Long]]
-  private[this] var _supplyDemandMetrics = ArrayBuffer.empty[SupplyDemandMetrics]
+  protected[this] var _superStepMetrics = TrieMap.empty[SuperStep, WorkerMetrics]
+  protected[this] var _statesRecorder : WorkerStateRecorder = _
+  protected[this] var _activeVerticesEndOfStep = TrieMap.empty[Int, scala.collection.mutable.Map[Int, Long]]
+  protected[this] var _supplyDemandMetrics = ArrayBuffer.empty[SupplyDemandMetrics]
+  protected[this] var _rawSupplyDemandMetrics = ArrayBuffer.empty[SupplyDemandMetrics]
+
+  final def addRawSupplyDemand(supplyDemand : SupplyDemandMetrics) : Unit = synchronized {
+    _rawSupplyDemandMetrics += supplyDemand
+  }
+
+  def rawSupplyDemands : ArrayBuffer[SupplyDemandMetrics] = {
+    _rawSupplyDemandMetrics
+  }
 
   final def addSupplyDemand(supplyDemand : SupplyDemandMetrics) : Unit = synchronized {
     _supplyDemandMetrics += supplyDemand
@@ -93,6 +102,25 @@ abstract class ElasticPolicy {
     workerMap.getOrElseUpdate(workerId, num)
   }
 
+  final def workerSuperStepTimes(step : Int, workerIds : Iterable[Int]) : Iterable[(Int, Long)] = {
+    workerIds.map {
+      workerId =>
+        // get superstep time
+        workerId -> timeOfOperation(step, workerId, WorkerOperation.RUN_SUPERSTEP).get
+    }
+  }
+  final def averageTimeOfStep(step : Int, workerIds : Iterable[Int]): Double = {
+    ElasticPolicy.average[Double](workerSuperStepTimes(step, workerIds).map(_._2.toDouble))
+  }
+
+  def activeVerticesSumOf(step : Int) : Long = {
+    _activeVerticesEndOfStep.get(step) match {
+      case Some(x) =>
+        x.values.sum
+      case None =>
+        0
+    }
+  }
   def activeVerticesOf(step : Int, workerId : Int) : Option[Long] = {
     _activeVerticesEndOfStep.get(step) match {
       case Some(x) =>
@@ -130,9 +158,9 @@ abstract class ElasticPolicy {
       case Some(WorkerState(_, startTime, stopOpt)) =>
         stopOpt match {
           case Some(stopTime) =>
-            Some(superStepMetrics(superStep)(workerId).filter(x => x.timestamp >= startTime && x.timestamp <= stopTime))
+            Some(superStepWorkerMetrics(superStep, workerId).filter(x => x.timestamp >= startTime && x.timestamp <= stopTime))
           case None =>
-            Some(superStepMetrics(superStep)(workerId).filter(x => x.timestamp >= startTime))
+            Some(superStepWorkerMetrics(superStep, workerId).filter(x => x.timestamp >= startTime))
         }
       case None => None
     }
@@ -160,8 +188,12 @@ abstract class ElasticPolicy {
   /**
     * @return Immutable metrics snapshot
     */
-  def superStepWorkerMetrics(superStep : SuperStep, workerId : WorkerId) : Iterable[NodeMetrics]= {
-    superStepMetrics(superStep).getOrElse(workerId, ArrayBuffer.empty).toIndexedSeq
+  def superStepWorkerMetrics(superStep : SuperStep, workerId : WorkerId) : ArrayBuffer[NodeMetrics]= {
+    superStepMetrics(superStep).getOrElse(workerId, ArrayBuffer.empty)
+  }
+
+  def superStepMetricsAllWorkers(superStep : SuperStep): mutable.Map[WorkerId, ArrayBuffer[NodeMetrics]] = {
+    superStepMetrics(superStep).withDefaultValue(ArrayBuffer.empty)
   }
 
   final def init(policyParams : Config, statesRecorder : WorkerStateRecorder) : Unit = {
@@ -191,6 +223,7 @@ abstract class ElasticPolicy {
             _statesRecorder = ois.readObject().asInstanceOf[WorkerStateRecorder]
             _activeVerticesEndOfStep = ois.readObject().asInstanceOf[TrieMap[Int, scala.collection.mutable.Map[Int, Long]]]
             _supplyDemandMetrics = ois.readObject().asInstanceOf[ArrayBuffer[SupplyDemandMetrics]]
+            _rawSupplyDemandMetrics = ois.readObject().asInstanceOf[ArrayBuffer[SupplyDemandMetrics]]
         }
     }
   }
@@ -212,6 +245,7 @@ abstract class ElasticPolicy {
               oos.writeObject(_statesRecorder)
               oos.writeObject(_activeVerticesEndOfStep)
               oos.writeObject(_supplyDemandMetrics)
+              oos.writeObject(_rawSupplyDemandMetrics)
             } finally {
               oos.close()
             }

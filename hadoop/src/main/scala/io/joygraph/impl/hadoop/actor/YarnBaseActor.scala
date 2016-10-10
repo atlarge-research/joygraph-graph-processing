@@ -16,10 +16,10 @@ import scala.concurrent.duration.Duration
 
 object YarnBaseActor {
 
-  def startActorSystem(jobConf : Config): Unit = {
+  def startActorSystem(jobConf : Config, targetPort : Int): Unit = {
     val actorSystemName = "actorSystemName" // TODO configurable?
     val hostName = NetUtils.getHostName
-    val port = PortFinder.findFreePort()
+    val port = PortFinder.findFreePort(targetPort)
     val remotingConf = ConfigFactory.parseString(
       s"""
          |akka {
@@ -49,8 +49,8 @@ object YarnBaseActor {
         val master = new Master(conf, cluster) with HadoopMaster
         Master.initialize(master)
       }, () => {
-        Worker.workerWithSerializeJavaHashMapStore(workerConf, definition, new VertexHashPartitioner)
-//        Worker.workerWithSerializeOpenHashMapStore(workerConf, definition, new VertexHashPartitioner)
+//        Worker.workerWithSerializeJavaHashMapStore(workerConf, definition, new VertexHashPartitioner)
+        Worker.workerWithSerializeOpenHashMapStore(workerConf, definition, new VertexHashPartitioner)
       },
       None
     ))
@@ -61,21 +61,23 @@ object YarnBaseActor {
 
   def main(args : Array[String]): Unit = {
     val configLocation : String = args(0)
+    val port : Int = args(1).toInt
 
     val jobConf = ConfigFactory.parseFile(new java.io.File(configLocation))
     val maxTries = 10
     var tries = 0
     try {
       tries += 1
-      startActorSystem(jobConf)
+      startActorSystem(jobConf, port)
     } catch {
       case (t : Throwable) =>
         t.printStackTrace()
         if (tries < maxTries) {
           tries += 1
-          startActorSystem(jobConf)
+          startActorSystem(jobConf, port)
         }
     }
+    System.exit(0)
   }
 }
 

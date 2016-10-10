@@ -1,6 +1,7 @@
 package io.joygraph.core.actor.vertices.impl.serialized
 
 import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicLong
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
@@ -18,7 +19,6 @@ import io.joygraph.core.util.concurrency.PartitionWorker
 import io.joygraph.core.util.serde.AsyncSerializer
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.collection.parallel.ParIterable
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future, Promise}
@@ -33,15 +33,15 @@ object OpenHashMapSerializedVerticesStore {
    val totalPartitions : Int,
    maxEdgeSize : Int
   ) extends VerticesStore[I,V,E] {
-
     private[this] val _halted : scala.collection.mutable.Map[I, Boolean] = mutable.OpenHashMap.empty
     private[this] val _edges : scala.collection.mutable.Map[I, DirectByteBufferGrowingOutputStream] = mutable.OpenHashMap.empty
+    protected[OpenHashMapSerializedVerticesStore] val rawEdges = _edges
     private[this] val _values :  scala.collection.mutable.Map[I, V] = mutable.OpenHashMap.empty
     private[this] val NO_EDGES = Iterable.empty[Edge[I,E]]
     // TODO inject kryo
     private[this] val kryo = new Kryo()
     private[this] val kryoOutput = new KryoOutput(maxEdgeSize, maxEdgeSize)
-    private[this] var numEdges = 0
+    private[this] var numEdges = 0L
 
     private[this] val reusableIterablePool = new SimplePool({
       new ReusableIterable[Edge[I,E]] {
@@ -182,6 +182,10 @@ object OpenHashMapSerializedVerticesStore {
 
     override def localNumActiveVertices : Long = _halted.size
 
+    override def countActiveVertices(m: MessageStore, clazzM: Class[_]): Long = {
+      vertices.count(vId => !halted(vId) || m.nextMessages(vId, clazzM).nonEmpty)
+    }
+
     override def mutableEdges(vId: I): Iterable[Edge[I, E]] = _edges.get(vId) match {
       case Some(os) =>
         mutableIterable
@@ -230,11 +234,9 @@ object OpenHashMapSerializedVerticesStore {
      messagesAsyncSerializer: AsyncSerializer,
      currentOutgoingMessageClass: Class[_])(implicit exeContext : ExecutionContext): Unit = {
       val threadId = ThreadId.getMod(totalPartitions)
-      val verticesToBeRemoved = ArrayBuffer.empty[I]
-      vertices.toSet.foreach { vId : I =>
+      vertices.foreach { vId : I =>
         val workerId = partitioner.destination(vId)
         if (selfWorkerId != workerId) {
-          verticesToBeRemoved += vId
           distributeVertex(
             vId,
             workerId,
@@ -250,7 +252,23 @@ object OpenHashMapSerializedVerticesStore {
           )
         }
       }
-      verticesToBeRemoved.foreach(removeAllFromVertex)
+    }
+
+    override def removeDistributedVerticesEdgesAndMessages(selfWorkerId: WorkerId, partitioner: VertexPartitioner): Unit = {
+      vertices
+        .filter(vId => partitioner.destination(vId) != selfWorkerId)
+        .foreach(removeAllFromVertex)
+    }
+
+    def clearAll(): Unit = {
+      _halted.clear()
+      _edges.clear()
+      _values.clear()
+      numEdges = 0
+    }
+
+    def addNumEdges(n : Long) : Unit = {
+      numEdges += n
     }
   }
 }
@@ -265,17 +283,18 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
 ) extends VerticesStore[I,V,E] {
 
   private[this] val workers = new Array[PartitionWorker](numPartitions)
-  private[this] val partitions = new Array[Partition[I,V,E]](numPartitions)
+  private[this] val _partitions = new Array[Partition[I,V,E]](numPartitions)
   for(i <- 0 until numPartitions) {
     workers(i) = new PartitionWorker("vertex-partition-" + i, errorReporter)
-    partitions(i) = new Partition[I, V, E](clazzI, clazzE, clazzV, i, numPartitions, maxEdgeSize)
+    _partitions(i) = new Partition[I, V, E](clazzI, clazzE, clazzV, i, numPartitions, maxEdgeSize)
   }
 
   private[this] var localPartitioner : VertexPartitioner = new VertexHashPartitioner(numPartitions)
 
+  def partitions : Array[Partition[I,V,E]] = _partitions
   private[this] def partition(vId : I) : Partition[I,V,E] = {
     val partId = localPartitioner.destination(vId)
-    partitions(partId)
+    _partitions(partId)
   }
 //
 //  def internalBalance(): Unit = {
@@ -311,11 +330,11 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
     }
   }
 
-  override def halted(vId: I): Boolean = throw new UnsupportedOperationException
+  override def halted(vId: I): Boolean = partition(vId).halted(vId)
 
   override def vertices: Iterable[I] = {
     new Iterable[I] {
-      override def iterator: Iterator[I] = partitions.map(_.vertices.toIterator).reduce(_ ++ _)
+      override def iterator: Iterator[I] = _partitions.map(_.vertices.toIterator).reduce(_ ++ _)
     }
   }
 
@@ -341,11 +360,28 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
     }
   }
 
-  override def localNumEdges: Long = partitions.map(_.localNumEdges).sum
+  override def localNumEdges: Long = _partitions.map(_.localNumEdges).sum
 
-  override def localNumVertices: Long = partitions.map(_.localNumVertices).sum
+  override def localNumVertices: Long = _partitions.map(_.localNumVertices).sum
 
-  override def localNumActiveVertices : Long = partitions.map(_.localNumActiveVertices).sum
+  override def localNumActiveVertices : Long = _partitions.map(_.localNumActiveVertices).sum
+
+  override def countActiveVertices(m: MessageStore, clazzM: Class[_]): Long = {
+    val aLong = new AtomicLong(0)
+    workers.zipWithIndex.map {
+      case (worker, index) =>
+        val promise = Promise[Unit]
+        worker.execute(new Runnable {
+          override def run(): Unit = {
+            val numVertices = _partitions(index).countActiveVertices(m, clazzM)
+            aLong.addAndGet(numVertices)
+            promise.success()
+          }
+        })
+        promise.future
+    }.foreach(Await.ready(_, Duration.Inf))
+    aLong.get()
+  }
 
   override def addVertex(vertex: I): Unit = {
     val part = partition(vertex)
@@ -371,7 +407,7 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
         val promise = Promise[Unit]
         worker.execute(new Runnable {
           override def run(): Unit = {
-            partitions(index).computeVertices(computation)
+            _partitions(index).computeVertices(computation)
             promise.success()
           }
         })
@@ -387,7 +423,7 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
         val promise = Promise[Unit]
         worker.execute(new Runnable {
           override def run(): Unit = {
-            partitions(index).createQueries(qapComputation)
+            _partitions(index).createQueries(qapComputation)
             promise.success()
           }
         })
@@ -411,7 +447,7 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
         val promise = Promise[Unit]
         worker.execute(new Runnable {
           override def run(): Unit = {
-            partitions(index).distributeVertices(
+            _partitions(index).distributeVertices(
               selfWorkerId,
               haltedAsyncSerializer,
               idAsyncSerializer,
@@ -430,5 +466,48 @@ class OpenHashMapSerializedVerticesStore[I,V,E]
     }.foreach(Await.ready(_, Duration.Inf))
   }
 
+
+  override def removeDistributedVerticesEdgesAndMessages(selfWorkerId: WorkerId, partitioner: VertexPartitioner): Unit = {
+    workers.zipWithIndex.map {
+      case (worker, index) =>
+        val promise = Promise[Unit]
+        worker.execute(new Runnable {
+          override def run(): Unit = {
+            _partitions(index).removeDistributedVerticesEdgesAndMessages(selfWorkerId, partitioner)
+            promise.success()
+          }
+        })
+        promise.future
+    }.foreach(Await.ready(_, Duration.Inf))
+  }
+//
+//  def getRawEdges(vId : I): Option[DirectByteBufferGrowingOutputStream] = {
+//    val part = partition(vId)
+//    part.rawEdges.get(vId)
+//  }
+//
+//  def setRawEdges(vId : I, rawEdgesStream : DirectByteBufferGrowingOutputStream) = {
+//    val part = partition(vId)
+//    part.rawEdges(vId) = rawEdgesStream
+//  }
+
+  override def addAll(other: VerticesStore[I, V, E]): Unit = {
+    other match {
+      case otherStore: OpenHashMapSerializedVerticesStore[I, V, E] =>
+        // partitions correspond
+        otherStore.partitions.zipWithIndex.foreach{
+          case (otherPart, index) =>
+            otherPart.rawEdges.foreach{
+              case (vId, rawEdges) =>
+                partitions(index).rawEdges(vId) = rawEdges
+                partitions(index).setVertexValue(vId, otherPart.vertexValue(vId))
+                partitions(index).setHalted(vId, otherPart.halted(vId))
+            }
+            partitions(index).addNumEdges(otherPart.localNumEdges)
+            otherPart.clearAll()
+        }
+      case _ =>
+    }
+  }
 }
 

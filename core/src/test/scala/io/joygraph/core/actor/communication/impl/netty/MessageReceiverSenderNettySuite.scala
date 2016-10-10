@@ -37,7 +37,7 @@ class MessageReceiverSenderNettySuite extends FunSuite with TimeLimitedTests{
     Await.result(sender.send(0, 0, someData), 10 seconds)
 
     latch.await()
-    channel.close().sync()
+    sender.closeAllChannels()
   }
 
   test("Receiver should receive same data as written sender id and data") {

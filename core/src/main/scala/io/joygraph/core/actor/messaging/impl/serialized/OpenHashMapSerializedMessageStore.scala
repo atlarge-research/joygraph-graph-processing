@@ -3,6 +3,7 @@ package io.joygraph.core.actor.messaging.impl.serialized
 import com.esotericsoftware.kryo.Kryo
 import io.joygraph.core.actor.messaging.impl.serialized.OpenHashMapSerializedMessageStore.Partition
 import io.joygraph.core.actor.messaging.{Message, MessageStore}
+import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.util.DirectByteBufferGrowingOutputStream
 import io.joygraph.core.util.buffers.KryoOutput
 import io.joygraph.core.util.collection.ReusableIterable
@@ -17,6 +18,14 @@ object OpenHashMapSerializedMessageStore {
   (val partitionIndex : Int,
    val totalPartitions : Int,
    maxMessageSize : Int) extends MessageStore {
+    def transferNextMessagesTo(partition: Partition): Unit = {
+      nextMessages.foreach{
+        case (key, stream) =>
+          partition.nextMessagesRaw(key) = stream
+      }
+      nextMessages.clear()
+    }
+
     private[this] var nextMessages = mutable.OpenHashMap.empty[Any, DirectByteBufferGrowingOutputStream]
     private[this] var currentMessages = mutable.OpenHashMap.empty[Any, DirectByteBufferGrowingOutputStream]
     private[this] val EMPTY_MESSAGES : Iterable[Any] = Iterable.empty[Any]
@@ -65,7 +74,17 @@ object OpenHashMapSerializedMessageStore {
       }
     }
 
-    override protected[messaging] def nextMessages[I, M](dst: I, clazzM: Class[M]): Iterable[M] = {
+    override protected[messaging] def removeNextMessages[I](dst: I): Unit = synchronized {
+      nextMessages.remove(dst) match {
+        case Some(x) =>
+          x.destroy()
+        case None =>
+      }
+    }
+
+    def nextMessagesRaw = nextMessages
+
+    override def nextMessages[I, M](dst: I, clazzM: Class[M]): Iterable[M] = {
       nextMessages.get(dst) match {
         case Some(os) =>
           reusableIterable(clazzM).bufferProvider(() => os.getBuf)
@@ -88,6 +107,13 @@ object OpenHashMapSerializedMessageStore {
         case None => EMPTY_MESSAGES.asInstanceOf[Iterable[M]]
       }
     }
+
+    override def removeNextMessages(workerId: WorkerId, partitioner: VertexPartitioner): Unit = {
+      nextMessages
+        .keys
+        .filter(vId => partitioner.destination(vId) != workerId)
+        .foreach(vId => removeNextMessages(vId))
+    }
   }
 }
 
@@ -97,22 +123,26 @@ class OpenHashMapSerializedMessageStore
  errorReporter : (Throwable) => Unit) extends MessageStore {
 
   private[this] val workers = new Array[PartitionWorker](numPartitions)
-  private[this] val partitions = new Array[Partition](numPartitions)
+  private[this] val _partitions = new Array[Partition](numPartitions)
   for(i <- 0 until numPartitions) {
     workers(i) = new PartitionWorker("message-partition-" + i, errorReporter)
-    partitions(i) = new Partition(i, numPartitions, maxMessageSize)
+    _partitions(i) = new Partition(i, numPartitions, maxMessageSize)
+  }
+
+  def partitions : Array[Partition] = {
+    _partitions
   }
 
   private[this] def partition(vId : Any) : Partition = {
     val partId = vId.hashCode() % numPartitions
-    partitions(partId)
+    _partitions(partId)
   }
 
   /**
     * Pooling for serialized message iterables
     */
   override def setReusableIterableFactory(factory: => ReusableIterable[Any]): Unit = {
-    partitions.foreach(_.setReusableIterableFactory(factory))
+    _partitions.foreach(_.setReusableIterableFactory(factory))
   }
 
   override def _handleMessage[I](index: WorkerId, dstMPair: Message[I], clazzI: Class[I], clazzM: Class[_]): Unit = {
@@ -130,11 +160,11 @@ class OpenHashMapSerializedMessageStore
     partition(dst).removeMessages(dst)
   }
 
-  override protected[messaging] def nextMessages[I, M](dst: I, clazzM: Class[M]): Iterable[M] = {
+  override def nextMessages[I, M](dst: I, clazzM: Class[M]): Iterable[M] = {
     partition(dst).nextMessages(dst, clazzM)
   }
 
-  override def emptyNextMessages: Boolean = partitions.map(_.emptyNextMessages).reduce(_ && _)
+  override def emptyNextMessages: Boolean = _partitions.map(_.emptyNextMessages).reduce(_ && _)
 
   override def messagesOnBarrier(): Unit = {
     workers.zipWithIndex.map {
@@ -142,7 +172,7 @@ class OpenHashMapSerializedMessageStore
         val p = Promise[Unit]
         worker.execute(new Runnable {
           override def run(): Unit = {
-            partitions(index).messagesOnBarrier()
+            _partitions(index).messagesOnBarrier()
             p.success()
           }
 
@@ -153,4 +183,31 @@ class OpenHashMapSerializedMessageStore
 
   override def messages[I, M](dst: I, clazzM: Class[M]): Iterable[M] = partition(dst).messages(dst, clazzM)
 
+  override protected[messaging] def removeNextMessages[I](dst: I): Unit = ???
+
+  override def removeNextMessages(workerId: WorkerId, partitioner: VertexPartitioner): Unit = {
+    workers.zipWithIndex.map {
+      case (worker, index) =>
+        val p = Promise[Unit]
+        worker.execute(new Runnable {
+          override def run(): Unit = {
+            _partitions(index).removeNextMessages(workerId, partitioner)
+            p.success()
+          }
+
+        })
+        p.future
+    }.foreach(Await.ready(_, Duration.Inf))
+  }
+
+  override def addAllNextMessages(other: MessageStore): Unit = {
+    other match {
+      case otherStore : OpenHashMapSerializedMessageStore =>
+        otherStore.partitions.zipWithIndex.foreach{
+          case (otherPart, index) =>
+            otherPart.transferNextMessagesTo(partitions(index))
+        }
+      case _ =>
+    }
+  }
 }

@@ -160,7 +160,7 @@ object YARNUtils {
     (java ++ args ++ output).reduce(_ + " " + _)
   }
 
-  def workerCommand(jarName : String, configName : String, memory : Int) : String = {
+  def workerCommand(jarName : String, configName : String, targetPort : Int, memory : Int) : String = {
     val heapMemory : Int = (memory * heapFraction).toInt
     val directMemory : Int = (memory * directMemoryFraction).toInt
     Seq(
@@ -171,6 +171,7 @@ object YARNUtils {
       //      jarName, // the jar is redundant as it's in the classpath
       classOf[YarnBaseActor].getName, // the class
       configName, // args
+      targetPort.toString, // args
       "1>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + s"/$jarName.stdout",
       "2>" + ApplicationConstants.LOG_DIR_EXPANSION_VAR + s"/$jarName.stderr"
     ).reduce(_ + " " + _)

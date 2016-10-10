@@ -244,6 +244,7 @@ class YARNSubmissionClient protected(
     println(s"ADDRESS : $akkaAddress")
 
     val appId = _submitApplication(Option(akkaAddress))
+    println(s"applicationId: ${appId.toString}")
     pollForCompletion(appId)
     system.terminate()
   }

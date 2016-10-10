@@ -20,5 +20,7 @@ trait Messaging {
 
   def remove[I](source : I)
 
+  def removeNext[I](source: I): Unit
+
   def emptyNextMessages : Boolean
 }

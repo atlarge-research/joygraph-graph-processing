@@ -84,7 +84,12 @@ object Worker{
         verticesStore = new OpenHashMapSerializedVerticesStore[I,V,E](
           clazzI, clazzE, clazzV, jobSettings.workerCores, jobSettings.maxEdgeSize, exceptionReporter
         )
+
+        elasticVerticesStore = new OpenHashMapSerializedVerticesStore[I,V,E](
+          clazzI, clazzE, clazzV, jobSettings.workerCores, jobSettings.maxEdgeSize, exceptionReporter
+        )
         messageStore = new OpenHashMapSerializedMessageStore(jobSettings.workerCores, jobSettings.maxFrameLength, exceptionReporter)
+        elasticMessagesStore = new OpenHashMapSerializedMessageStore(jobSettings.workerCores, jobSettings.maxFrameLength, exceptionReporter)
       }
     }
     worker.initialize()
@@ -119,7 +124,9 @@ abstract class Worker[I,V,E]
 
   protected[this] val jobSettings = JobSettings(config)
   protected[this] var verticesStore : VerticesStore[I,V,E] = _
+  protected[this] var elasticVerticesStore : VerticesStore[I,V,E] = _
   protected[this] var messageStore : MessageStore = _
+  protected[this] var elasticMessagesStore : MessageStore = _
 
   protected[this] val exceptionReporter : (Throwable) => Unit = (t : Throwable) => {
     log.info("Sending terminate to master on exception\n" + Errors.messageAndStackTraceString(t))
@@ -406,11 +413,6 @@ abstract class Worker[I,V,E]
           log.info(s"${id.get} final sending to $workerId, size: ${byteBuffer.position()}")
           messageSender.send(id.get, workerId, byteBuffer)
         })
-        verticesStore.vertices.foreach{v =>
-          val sb = StringBuilder.newBuilder
-          verticesStore.edges(v).foreach(e => sb.append(e + " "))
-          println(s"$v ${sb.toString()}")
-        }
 
         sendingComplete()
         loadingCompleteTrigger()
@@ -661,7 +663,7 @@ abstract class Worker[I,V,E]
   }
 
   def superStepLocalComplete() = {
-    master() ! SuperStepLocalComplete(verticesStore.localNumActiveVertices)
+    master() ! SuperStepLocalComplete()
   }
 
   private[this] val RUN_SUPERSTEP : PartialFunction[Any, Unit] = {
@@ -730,6 +732,9 @@ abstract class Worker[I,V,E]
         log.info("Do next step! ")
         sender() ! DoNextStep(true)
       }
+    case GetNumActiveVertices() =>
+      val senderRef = sender()
+      senderRef ! NumActiveVertices(id.get, verticesStore.countActiveVertices(messageStore, currentOutgoingMessageClass))
     case QapFlushAnswers(workerId) =>
       qapComputation.flushAnswers(workerId)
     case QapQueryProcessed(workerId, numProcessed) =>
@@ -770,14 +775,14 @@ abstract class Worker[I,V,E]
       is.msgType match {
         case _ =>
           val threadId = ThreadId.getMod(jobSettings.nettyWorkers)
-          verticesStore.importVerticesStoreData(threadId, is,
+          elasticVerticesStore.importVerticesStoreData(threadId, is,
             elasticDeserializer,
             elasticDeserializer,
             elasticDeserializer,
             elasticDeserializer
           )
           messageSerDes { implicit messageSerDe =>
-            messageStore.importCurrentMessagesData(threadId, is, messagesDeserializer, messageSerDe.messagePairDeserializer, clazzI, currentOutgoingMessageClass)
+            elasticMessagesStore.importNextMessagesData(threadId, is, messagesDeserializer, messageSerDe.messagePairDeserializer, clazzI, currentOutgoingMessageClass)
           }
       }
     } catch {
@@ -940,7 +945,7 @@ abstract class Worker[I,V,E]
     log.info("Error sender handler\n" + Errors.messageAndStackTraceString(t))
     terminate()
   }
-  
+
   private[this] val BASE_OPERATION : PartialFunction[Any, Unit] = {
     case UnreachableMember(member) =>
       log.info(s"${member.address} ${master().path.address}")
@@ -993,6 +998,21 @@ abstract class Worker[I,V,E]
       val senderRef = sender()
       log.info(s"new workers: $newWorkers")
       addWorkers(senderRef, newWorkers)
+    case ElasticCleanUp() =>
+      log.info("elastic cleanup start")
+      val senderRef = sender()
+      // we remove the vertices that have been sent away in the ElasticDistribute step
+      verticesStore.removeDistributedVerticesEdgesAndMessages(id.get, partitioner)
+      messageStore.removeNextMessages(id.get, partitioner)
+
+      log.info("adding bufferStore")
+      // merge the elastic store and clean it up
+      verticesStore.addAll(elasticVerticesStore)
+      messageStore.addAllNextMessages(elasticMessagesStore)
+      log.info("adding bufferstore complete")
+
+      log.info("elastic cleanup stop")
+      senderRef ! true
     case ElasticRemoval(workersToBeRemoved) =>
       val senderRef = sender()
       log.info(s"workers to be removed: $workersToBeRemoved")

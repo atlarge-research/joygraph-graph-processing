@@ -20,6 +20,17 @@ class BaseActor
   // TODO assume seedNodeAddresses == 1
   private[this] val seedNodeAddresses : util.List[String] = jobConf.getStringList("akka.cluster.seed-nodes")
 
+  cluster.registerOnMemberRemoved {
+    workerRef.foreach{
+      actorRef =>
+        Option(context) match {
+          case Some(x) =>
+            context.system.stop(actorRef)
+          case None =>
+        }
+    }
+  }
+
   // subscribe to cluster changes, re-subscribe when restart
   override def preStart(): Unit = {
     //#subscribe

@@ -22,6 +22,8 @@ trait VerticesStore[I,V,E] extends Types {
   protected[this] val clazzV : Class[V]
   protected[this] val voidOrUnitClass = TypeUtil.unitOrVoid(clazzE)
 
+  def countActiveVertices(m: MessageStore, clazzM: Class[_]): Long = ???
+
   def importVerticesStoreData
   (index : Int,
   is : ObjectByteBufferInputStream,
@@ -167,6 +169,10 @@ trait VerticesStore[I,V,E] extends Types {
     exportValue(vId, threadId, workerId, valueAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
     exportEdges(vId, threadId, workerId, edgesAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
     // TODO move this to Messagestore
-    messageStore.exportAndRemoveMessages(vId, currentOutgoingMessageClass, threadId, workerId, messagesAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
+    messageStore.exportMessages(vId, currentOutgoingMessageClass, threadId, workerId, messagesAsyncSerializer, (buffer) => outputHandler(buffer, workerId))
   }
+
+  def addAll(other : VerticesStore[I,V,E]) : Unit = ???
+
+  def removeDistributedVerticesEdgesAndMessages(workerId: WorkerId, partitioner: VertexPartitioner): Unit = ???
 }

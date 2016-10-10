@@ -58,4 +58,6 @@ class TrieMapSerializedMessaging extends SerializedMessaging {
   override def emptyNextMessages: Boolean = nextMessages.isEmpty
 
   override def remove[I](source: I): Unit = currentMessages.remove(source)
+
+  override def removeNext[I](source: I): Unit = nextMessages.remove(source)
 }

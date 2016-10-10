@@ -8,8 +8,10 @@ import javax.json.{Json, JsonObject}
 import com.typesafe.config.Config
 import io.joygraph.core.actor.elasticity.policies.ElasticPolicy
 import io.joygraph.core.actor.elasticity.policies.ElasticPolicy.{Grow, Result, Shrink}
+import io.joygraph.core.actor.metrics.SupplyDemandMetrics
 import io.joygraph.core.message.AddressPair
 import io.joygraph.core.partitioning.VertexPartitioner
+import io.joygraph.core.partitioning.impl.VertexHashPartitioner
 
 import scala.reflect.io.Directory
 import scala.util.{Failure, Success, Try}
@@ -52,7 +54,7 @@ abstract case class AutoScalePython(path : String) extends ElasticPolicy {
 
     // start process server
     serverProcess = new ProcessBuilder()
-      .command("python2.7", executableLocation)
+      .command("/usr/bin/bash", "-c", s"python2.7 $executableLocation")
       .directory(new File(workingDir))
       .start()
     val br = new BufferedReader(new InputStreamReader(serverProcess.getErrorStream))
@@ -79,20 +81,61 @@ abstract case class AutoScalePython(path : String) extends ElasticPolicy {
     sys.addShutdownHook(shutdown())
   }
 
-  override def decide(currentStep: Int, currentWorkers: Map[Int, AddressPair], currentPartitioner: VertexPartitioner, maxNumWorkers: Int): Option[Result] = {
-    val capacity : Int = maxNumWorkers
-    val averageServerSpeed : Double = averageTimeOfStep(currentStep, currentWorkers.keys)
-    val loadRequests : Long = currentWorkers.keys.flatMap(activeVerticesOf(currentStep, _)).sum
-    val prediction = predict(averageServerSpeed, capacity, loadRequests)
+  def averageServerSpeedNonNormalized(currentStep: Int, currentWorkers: Map[Int, AddressPair]) : Double = {
+    val prevAverageRequest = activeVerticesSumOf(currentStep - 1).toDouble / currentWorkers.size.toDouble
+    prevAverageRequest.toDouble
+  }
 
+  def averageServerSpeedNormalizedByProcessingTime(currentStep : Int, currentWorkers :Map[Int, AddressPair]) : Double = {
+    val prevAverageRequest = activeVerticesSumOf(currentStep - 1).toDouble / currentWorkers.size
+    val averageTime = averageTimeOfStep(currentStep, currentWorkers.keys)
+
+    // TODO
+    ???
+  }
+
+  override def decide(currentStep: Int, currentWorkers: Map[Int, AddressPair], currentPartitioner: VertexPartitioner, maxNumWorkers: Int): Option[Result] = {
+    val capacity : Int = currentWorkers.size
+    val loadRequests : Long = activeVerticesSumOf(currentStep)
+    val averageServerSpeed = averageServerSpeedNonNormalized(currentStep, currentWorkers)
+    val rawPrediction = predict(averageServerSpeed, capacity, loadRequests)
+    val prediction = predictionLimiter(rawPrediction, capacity, maxNumWorkers)
+    println(s"time: ${System.currentTimeMillis()}")
+    println(s"capacity: $capacity, averageServerSpeed: $averageServerSpeed, loadRequests: $loadRequests")
+    println(s"predictionRaw: $rawPrediction, prediction: $prediction")
+
+    // add raw prediction to supply demand
+    addRawSupplyDemand(SupplyDemandMetrics(currentStep, System.currentTimeMillis(), capacity, rawPrediction + capacity))
+    shrinkOrGrow(prediction, currentWorkers)
+  }
+
+  def predictionLimiter(rawPrediction : Int, currentNumWorkers : Int, maxNumWorkers : Int) : Int = {
+    if (rawPrediction > 0) {
+      Math.min(
+        rawPrediction, // maximum should be a little bit different
+        Math.max(0, maxNumWorkers - currentNumWorkers) // lowerbound
+      )
+    } else if (rawPrediction < 0) {
+      if (currentNumWorkers + rawPrediction < 1) {
+        -(currentNumWorkers - 1)
+      } else {
+        rawPrediction
+      }
+    } else {
+      0
+    }
+  }
+
+  def shrinkOrGrow(prediction : Int, currentWorkers : Map[Int, AddressPair]): Option[Result] = {
+    val numCurrentWorkers = currentWorkers.size
     if (prediction > 0) {
       // naively add workers
-      val workerIds = for(i <- currentWorkers.keys.max + 1 until currentWorkers.keys.max + prediction) yield i
-      Some(Grow(workerIds, currentPartitioner))
+      val workerIds = for(i <- numCurrentWorkers until numCurrentWorkers + prediction) yield i
+      Some(Grow(workerIds, new VertexHashPartitioner(workerIds.size + numCurrentWorkers)))
     } else if (prediction < 0) {
       // naively remove workers
-      val workerIds = for(i <- currentWorkers.keys.max - prediction until currentWorkers.keys.max) yield i
-      Some(Shrink(workerIds, currentPartitioner))
+      val workerIds = for(i <- numCurrentWorkers + prediction until numCurrentWorkers) yield i
+      Some(Shrink(workerIds, new VertexHashPartitioner(currentWorkers.keys.size - workerIds.size)))
     } else {
       None
     }

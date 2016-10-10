@@ -34,7 +34,7 @@ class TrieMapSerializedMessageStore(protected[this] var partitioner : VertexPart
     messaging.remove(dst)
   }
 
-  protected[messaging] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {
+  def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {
     // todo remove code duplication with messages
     implicit val iterable = reusableIterablePool().borrow()
     iterable.kryo(kryoPool.borrow())
@@ -72,5 +72,8 @@ class TrieMapSerializedMessageStore(protected[this] var partitioner : VertexPart
     messaging.emptyNextMessages
   }
 
+  override protected[messaging] def removeNextMessages[I](dst: I): Unit = messaging.removeNext(dst)
+
   override protected[this] def kryoOutputFactory: KryoOutput = new KryoOutput(maxMessageSize, maxMessageSize)
+
 }

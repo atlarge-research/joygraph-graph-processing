@@ -116,14 +116,15 @@ object YarnAMBaseActor {
         Master.initialize(master)
       }, () => {
 //         Worker.workerWithSerializedTrieMapMessageStore(masterConf, definition, new VertexHashPartitioner)
-         Worker.workerWithSerializeJavaHashMapStore(masterConf, definition, new VertexHashPartitioner)
-//         Worker.workerWithSerializeOpenHashMapStore(masterConf, definition, new VertexHashPartitioner)
+//         Worker.workerWithSerializeJavaHashMapStore(masterConf, definition, new VertexHashPartitioner)
+         Worker.workerWithSerializeOpenHashMapStore(masterConf, definition, new VertexHashPartitioner)
       },
       submissionClientActorAddress
     ))
     // wait indefinitely until it terminates
     Await.ready(system.whenTerminated, Duration(Int.MaxValue, TimeUnit.MILLISECONDS))
     println("I have terminated")
+    System.exit(0)
   }
 }
 
@@ -185,6 +186,15 @@ class YarnAMBaseActor
   }
 
   private[this] val nmClientAsync = new NMClientAsyncImpl(containerListener)
+
+  private[this] val workerPortAtomic = new AtomicInteger(PortFinder.MIN_PORT)
+  private[this] def workerPort() : Int = {
+    val port = Math.min(PortFinder.MAX_PORT, workerPortAtomic.incrementAndGet())
+    if (port == PortFinder.MAX_PORT) {
+      workerPortAtomic.set(PortFinder.MIN_PORT)
+    }
+    port
+  }
 
   private[this] def addContainerRequest(): Unit = {
     log.info("Requesting container with {} memory and {} cores", capability.getMemory, capability.getVirtualCores)
@@ -320,8 +330,9 @@ class YarnAMBaseActor
         localResources += jarResource
         localResources += confResource
         env += YARNUtils.classPath()
-        log.info(s"Launching worker with ${workerMemory * 8 / 10}")
-        commands += YARNUtils.workerCommand(jarFileName, confFileName, workerMemory * 8 / 10)
+        val targetWorkerPort = workerPort()
+        log.info(s"Launching worker with ${workerMemory * 8 / 10} and port $targetWorkerPort")
+        commands += YARNUtils.workerCommand(jarFileName, confFileName, targetWorkerPort, workerMemory * 8 / 10)
 
         val credentials: Credentials = UserGroupInformation.getCurrentUser.getCredentials
         val dob = new DataOutputBuffer()

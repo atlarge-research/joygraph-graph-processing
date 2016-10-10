@@ -9,7 +9,7 @@ class TrieMapMessageStore extends MessageStore {
     messaging.add(dstMPair.dst, dstMPair.msg)
   }
 
-  protected[messaging] def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {
+  def nextMessages[I,M](dst : I, clazzM : Class[M]) : Iterable[M] = {
     messaging.getNext(dst)
   }
 
@@ -33,4 +33,7 @@ class TrieMapMessageStore extends MessageStore {
     messaging.remove(dst)
   }
 
+  protected[messaging] def removeNextMessages[I](dst: I): Unit = {
+    messaging.removeNext(dst)
+  }
 }

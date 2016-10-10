@@ -18,7 +18,8 @@ import io.joygraph.core.message.{AddressPair, State, WorkerId}
 import io.joygraph.core.util.{FutureUtil, IOUtil}
 
 import scala.collection.concurrent.TrieMap
-import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, ExecutionContext}
 
 object ElasticityHandler {
   final case class ElasticityOperation(result : ElasticPolicy.Result, promise : ElasticityPromise, currentWorkers : Map[Int, AddressPair])
@@ -35,8 +36,11 @@ class ElasticityHandler(master : Master, cluster : Cluster, policy : ElasticPoli
   private[this] val elasticityComplete = new AtomicInteger(0)
   private[this] val workerCounter : AtomicInteger = new AtomicInteger(0)
 
-  def startElasticityOperation(operation: ElasticityOperation, workerProviderProxy: WorkerProviderProxy, jobConf : Config) = {
+  private[this] var _currentSuperStep : Int = _
+
+  def startElasticityOperation(currentSuperStep : Int, operation: ElasticityOperation, workerProviderProxy: WorkerProviderProxy, jobConf : Config) = {
     _currentOperation = operation
+    _currentSuperStep = currentSuperStep
 
     nextWorkers.clear()
     newWorkers.clear()
@@ -49,13 +53,13 @@ class ElasticityHandler(master : Master, cluster : Cluster, policy : ElasticPoli
     result match {
       case Shrink(workersToRemove, partitioner) =>
         workersToRemove.foreach(nextWorkers.remove)
-        policy.addSupplyDemand(SupplyDemandMetrics(System.currentTimeMillis(), currentWorkers.size, currentWorkers.size - workersToRemove.size))
+        policy.addSupplyDemand(SupplyDemandMetrics(_currentSuperStep, System.currentTimeMillis(), currentWorkers.size, currentWorkers.size - workersToRemove.size))
         sendElasticityOperationIfCompleted()
       case Grow(workersToAdd, partitioner) =>
         // clear and set new ids
         _newWorkerIds.clear()
         workersToAdd.foreach(_newWorkerIds.add)
-        policy.addSupplyDemand(SupplyDemandMetrics(System.currentTimeMillis(), currentWorkers.size, currentWorkers.size + workersToAdd.size))
+        policy.addSupplyDemand(SupplyDemandMetrics(_currentSuperStep, System.currentTimeMillis(), currentWorkers.size, currentWorkers.size + workersToAdd.size))
         workerProviderProxy.requestWorkers(jobConf, workersToAdd.size).foreach { r =>
           sendElasticityOperationIfCompleted()
         }
@@ -85,23 +89,28 @@ class ElasticityHandler(master : Master, cluster : Cluster, policy : ElasticPoli
     if (elasticityComplete.incrementAndGet() == currentWorkers.size) {
       val nextWorkersMap = nextWorkers.toMap
 
-      _currentOperation.result match {
-        case Shrink(workersToRemove, partitioner) =>
-          val workersToBeRemoved = currentWorkers.filterNot(x => nextWorkersMap.contains(x._1))
-          // disconnect old workers' connections in network stack in remaining workers.
-          FutureUtil.callbackOnAllComplete(currentWorkers.map(_._2.actorRef).map(_ ? ElasticRemoval(workersToBeRemoved))) {
-            // remove old workers gracefully
-            workersToBeRemoved.foreach(x => cluster.leave(x._2.actorRef.path.address))
-            workersToBeRemoved.foreach(x => cluster.system.stop(x._2.actorRef))
-          }
-        case Grow(workersToAdd, partitioner) =>
+      FutureUtil.callbackOnAllComplete((currentWorkers ++ nextWorkersMap).map(_._2.actorRef).map(_ ? ElasticCleanUp())) {
+        _currentOperation.result match {
+          case Shrink(workersToRemove, partitioner) =>
+            val workersToBeRemoved = currentWorkers.filterNot(x => nextWorkersMap.contains(x._1))
+            // disconnect old workers' connections in network stack in remaining workers.
+            val fut = FutureUtil.callbackOnAllComplete(currentWorkers.map(_._2.actorRef).map(_ ? ElasticRemoval(workersToBeRemoved))) {
+              // remove old workers gracefully
+              workersToBeRemoved.foreach(x => cluster.leave(x._2.actorRef.path.address))
+              workersToBeRemoved.foreach(x => cluster.down(x._2.actorRef.path.address))
+              // we wait for the worker to remove itself.
+              workersToBeRemoved.foreach(x => cluster.system.stop(x._2.actorRef))
+            }
+            Await.ready(fut, Duration.Inf)
+          case Grow(workersToAdd, partitioner) =>
           // noop
-      }
+        }
 
-      // set state to superstep
-      FutureUtil.callbackOnAllComplete(nextWorkersMap.map(_._2.actorRef).map(_ ? State(GlobalState.SUPERSTEP))) {
-        policy.addSupplyDemand(SupplyDemandMetrics(System.currentTimeMillis(), nextWorkersMap.size, nextWorkersMap.size))
-        _currentOperation.promise.success(nextWorkersMap)
+        // set state to superstep
+        FutureUtil.callbackOnAllComplete(nextWorkersMap.map(_._2.actorRef).map(_ ? State(GlobalState.SUPERSTEP))) {
+          policy.addSupplyDemand(SupplyDemandMetrics(_currentSuperStep, System.currentTimeMillis(), nextWorkersMap.size, nextWorkersMap.size))
+          _currentOperation.promise.success(nextWorkersMap)
+        }
       }
     }
   }

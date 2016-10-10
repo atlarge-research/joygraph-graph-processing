@@ -13,6 +13,16 @@ lazy val commonSettings = Seq(
   //  checksums := Seq("")
 )
 
+lazy val pyautoscale = (project in file("pyautoscale")).
+  settings(commonSettings: _*).
+  settings(
+    libraryDependencies ++= Seq(
+      "javax.json" % "javax.json-api" % "1.0",
+      "org.glassfish" % "javax.json" % "1.0.4"
+    ) ++ testDependencies
+  ).
+  dependsOn(core)
+
 lazy val analysis = (project in file("analysis")).
   settings(commonSettings: _*).
   settings(
@@ -47,7 +57,8 @@ lazy val core = (project in file("core"))
       "com.typesafe.akka" %% "akka-cluster-metrics" % AKKA_VERSION,
       "com.typesafe" % "config" % "1.3.0",
       "com.esotericsoftware" % "kryo-shaded" % "3.0.3",
-      "io.netty" % "netty-all" % "4.0.34.Final"
+      "io.netty" % "netty-all" % "4.0.34.Final",
+      "io.kamon" % "sigar-loader" % "1.6.6-rev002" // hyperic sigar for enhanced CPU metrics
       //  "net.openhft" % "chronicle-map" % "3.4.2-beta"
     ))
   .settings(
@@ -63,7 +74,7 @@ lazy val joygraph = (project in file("."))
   .settings(
     publish := {}
   )
-  .aggregate(core, cluster, hadoop, analysis)
+  .aggregate(core, cluster, hadoop, analysis, pyautoscale)
 
 lazy val hadoopTestDependencies = Seq(
   "org.apache.hadoop" % "hadoop-client" % HADOOP_VERSION % Test exclude("jline", "jline"),

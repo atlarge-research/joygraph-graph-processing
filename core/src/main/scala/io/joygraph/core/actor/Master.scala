@@ -46,7 +46,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     }
   )
   // TODO set in configuration
-  implicit val timeout = Timeout(30, TimeUnit.SECONDS)
+  implicit val timeout = Timeout(60, TimeUnit.SECONDS)
 
   val jobSettings : JobSettings = JobSettings(conf)
   var workerIdAddressMap : Map[Int, AddressPair] = Map.empty
@@ -110,7 +110,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
     log.info(s"There are ${cluster.state.members.size} members")
     val currentSupply = cluster.state.members.size - 1
     val currentDemand = currentSupply
-    policy.addSupplyDemand(SupplyDemandMetrics(System.currentTimeMillis(), currentSupply, currentDemand))
+    policy.addSupplyDemand(SupplyDemandMetrics(-1, System.currentTimeMillis(), currentSupply, currentDemand))
 
     // we are up
     var workerId = 0
@@ -238,7 +238,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
                 val canShrink = allWorkers().size > 1
                 if (canShrink) {
                   currentPartitioner = partitioner
-                  elasticityHandler.startElasticityOperation(ElasticityHandler.ElasticityOperation(shrink, elasticityPromise, workerIdAddressMap), workerProviderProxy, conf)
+                  elasticityHandler.startElasticityOperation(currentSuperStep, ElasticityHandler.ElasticityOperation(shrink, elasticityPromise, workerIdAddressMap), workerProviderProxy, conf)
                 } else {
                   log.info("min workers reached, cannot shrink")
                   elasticityPromise.success(workerIdAddressMap)
@@ -248,7 +248,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
                 val canGrow = allWorkers().size < jobSettings.maxWorkers
                 if (canGrow) {
                   currentPartitioner = partitioner
-                  elasticityHandler.startElasticityOperation(ElasticityHandler.ElasticityOperation(grow, elasticityPromise, workerIdAddressMap), workerProviderProxy, conf)
+                  elasticityHandler.startElasticityOperation(currentSuperStep, ElasticityHandler.ElasticityOperation(grow, elasticityPromise, workerIdAddressMap), workerProviderProxy, conf)
                 } else {
                   log.info("max workers reached, cannot grow")
                   elasticityPromise.success(workerIdAddressMap)
@@ -257,6 +257,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
             }
           case None =>
             log.info("No grow or shrink")
+            policy.addSupplyDemand(SupplyDemandMetrics(currentSuperStep, System.currentTimeMillis(), workerIdAddressMap.size, workerIdAddressMap.size))
             elasticityPromise.success(workerIdAddressMap)
         }
       case None =>
@@ -356,6 +357,7 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
       logWorkerActionStop(senderRef.path.address, WorkerOperation.LOAD_DATA)
       numVertices.addAndGet(numV)
       numEdges.addAndGet(numEdge)
+      policy.addActiveVertices(-1, workerId, numV)
       if (allLoadDataCompleteReceived.decrementAndGet() == 0) {
         log.info(s"total : ${numVertices.get} ${numEdges.get}")
         // set to superstep
@@ -387,16 +389,9 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
         allWorkers().foreach(_.actorRef ! RunSuperStep(currentSuperStep))
       }
     }
-    case SuperStepLocalComplete(numActiveVertices) => // A message only used to indicate local completion of a step.
+    case SuperStepLocalComplete() => // A message only used to indicate local completion of a step.
       val senderRef = sender()
       logWorkerAction(senderRef.path.address, "SuperStepLocalComplete", currentSuperStep)
-      akkaAddressToWorkerIdMap.get(senderRef.path.address) match {
-        case Some(workerId) =>
-          policy.addActiveVertices(currentSuperStep, workerId, numActiveVertices)
-        case None =>
-          log.error("Non worker sends numActiveVertices " + senderRef.path.address)
-      }
-
       logWorkerActionStop(senderRef.path.address, WorkerOperation.RUN_SUPERSTEP)
     case SuperStepComplete(aggregators) =>
       log.info(s"Left : ${superStepSuccessReceived.get()}")
@@ -419,33 +414,44 @@ abstract class Master(protected[this] val conf : Config, cluster : Cluster) exte
 
       if (superStepSuccessReceived.decrementAndGet() == 0) {
         logMasterAction("SuperStepComplete", currentSuperStep)
-        FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? AllSuperStepComplete()).mapTo[DoNextStep])) {
-          implicit results =>
-            log.info("Do next step ?")
-            val doNextStep = results.map(_.yes).reduce(_ || _)
-            log.info(s"${results.size}")
-            log.info(s"${results.map(_.toString).reduce(_ + " " + _)}")
-            log.info(s"Hell $doNextStep")
-            // set to superstep
-            if (doNextStep) {
-              doingElasticity = true
-              doElasticity().foreach( newWorkersMapping => {
-                log.info("Elasticity complete")
-                workerIdAddressMap = newWorkersMapping
-                akkaAddressToWorkerIdMap = workerIdAddressMap.mapValues(_.actorRef.path.address).map(_.swap)
-                currentSuperStep += 1
-                doingElasticity = false
-                barrierSuccessReceived.set(allWorkers().size)
-                logMasterAction("DoBarrier", currentSuperStep)
-                allWorkers().foreach(worker => logWorkerActionStart(worker.actorRef.path.address, WorkerOperation.BARRIER))
-                allWorkers().foreach(_.actorRef ! DoBarrier(currentSuperStep, _aggregatorMapping.toMap))
-              })
 
-            } else {
-              // send data to submission client if any
-              submissionClient.foreach(_ ! TotalProcessingTime(System.currentTimeMillis() - totalProcessingTimeStart))
-              sendDoOutput()
-              log.info(s"we're done at step ${currentSuperStep}")
+        // get the counts
+        FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? GetNumActiveVertices()).mapTo[NumActiveVertices])) {
+          implicit activeVerticesCounts =>
+            activeVerticesCounts.foreach {
+              case NumActiveVertices(workerId, numActiveVertices) =>
+                log.info(s"active vertices: $workerId: $numActiveVertices")
+                policy.addActiveVertices(currentSuperStep, workerId, numActiveVertices)
+            }
+
+            FutureUtil.callbackOnAllCompleteWithResults(allWorkers().map(x => (x.actorRef ? AllSuperStepComplete()).mapTo[DoNextStep])) {
+              implicit results =>
+                log.info("Do next step ?")
+                val doNextStep = results.map(_.yes).reduce(_ || _)
+                log.info(s"${results.size}")
+                log.info(s"${results.map(_.toString).reduce(_ + " " + _)}")
+                log.info(s"Hell $doNextStep")
+                // set to superstep
+                if (doNextStep) {
+                  doingElasticity = true
+                  doElasticity().foreach( newWorkersMapping => {
+                    log.info("Elasticity complete")
+                    workerIdAddressMap = newWorkersMapping
+                    akkaAddressToWorkerIdMap = workerIdAddressMap.mapValues(_.actorRef.path.address).map(_.swap)
+                    currentSuperStep += 1
+                    doingElasticity = false
+                    barrierSuccessReceived.set(allWorkers().size)
+                    logMasterAction("DoBarrier", currentSuperStep)
+                    allWorkers().foreach(worker => logWorkerActionStart(worker.actorRef.path.address, WorkerOperation.BARRIER))
+                    allWorkers().foreach(_.actorRef ! DoBarrier(currentSuperStep, _aggregatorMapping.toMap))
+                  })
+
+                } else {
+                  // send data to submission client if any
+                  submissionClient.foreach(_ ! TotalProcessingTime(System.currentTimeMillis() - totalProcessingTimeStart))
+                  sendDoOutput()
+                  log.info(s"we're done at step ${currentSuperStep}")
+                }
             }
         }
       }
