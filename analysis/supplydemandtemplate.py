@@ -1,0 +1,41 @@
+import matplotlib.pyplot as plt
+
+x1Supply = [1475608680429,1475608766628,1475608766628,1475608857214,1475608857214,1475608895674,1475608895674,1475608980139,1475608980139,1475609013847,1475609013847,1475609086517,1475609086517,1475609107759,1475609107759,1475609110700,1475609110700,1475609184419,1475609184419,1475609186506,1475609186506,1475609331615,1475609331615,1475609332332,1475609332332]
+y1Supply = [10,10,10,10,12,12,12,12,14,14,14,14,17,17,17,17,17,17,5,5,5,5,3,3,3]
+x2Demand = [1475608680429, 1475608766628, 1475608766628, 1475608857214, 1475608895674, 1475608895674, 1475608980139, 1475609013847, 1475609013847, 1475609086517, 1475609107759, 1475609107759, 1475609110700, 1475609110700, 1475609184419, 1475609186506, 1475609186506, 1475609331615, 1475609332332, 1475609332332]
+y2Demand= [10, 10, 12, 12, 12, 14, 14, 14, 17, 17, 17, 17, 17, 5, 5, 5, 3, 3, 3, 3]
+xTicks = [1475608725989,1475608857242,1475608981647,1475609087792,1475609108886,1475609185443,1475609332002]
+xTickLabels = ['0', '1' ,'2', '3','4' ,'5' ,6 ]
+
+minX = min(x1Supply + x2Demand + xTicks)
+
+
+def subtract(x):
+    return x - minX
+
+x1Supply = list(map(subtract, x1Supply))
+x2Demand = list(map(subtract, x2Demand))
+xTicks = list(map(subtract, xTicks))
+
+fig, ax1 = plt.subplots()
+
+ax1.plot(x1Supply, y1Supply)
+ax1.set_xlabel('time (s)')
+# Make the y-axis label and tick labels match the line color.
+ax1.set_ylabel('supply')
+for tl in ax1.get_yticklabels():
+    tl.set_color('b')
+
+ax2 = ax1.twinx()
+ax2.set_ylabel('demand')
+ax2.plot(x2Demand, y2Demand, 'r')
+
+for tl in ax2.get_yticklabels():
+    tl.set_color('r')
+
+ay2 = ax1.twiny()
+ay2.set_xlabel('superstep')
+ay2.set_xticks(xTicks)
+ay2.set_xticklabels(xTickLabels)
+
+plt.show()
