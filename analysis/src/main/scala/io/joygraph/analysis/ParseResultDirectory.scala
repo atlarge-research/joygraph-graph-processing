@@ -6,9 +6,10 @@ import java.util.Properties
 
 import io.joygraph.analysis.autoscale.AutoscalerMetricCalculator
 import io.joygraph.analysis.performance.PerformanceMetric
-import io.joygraph.core.actor.metrics.WorkerOperation
+import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation, WorkerState}
 
 import scala.collection.immutable.IndexedSeq
+import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import scala.reflect.io.{Directory, Path}
 import scala.util.{Failure, Success, Try}
@@ -144,6 +145,56 @@ trait GeneralResultProperties extends BaseResultProperties {
     } else {
       line.substring(8, 31)
     }
+  }
+
+  def startStopTimesOf(workerOperation: WorkerOperation.Value) : Iterable[(Int, Long, Long)] = {
+    val reader = metrics.policyMetricsReader
+    reader.rawStates(workerOperation).flatMap{ workerStates =>
+      if (workerStates.nonEmpty) {
+        Some(workerStates.reduce[WorkerState] {
+          case (WorkerState(_, start1, stop1), WorkerState(_, start2, stop2)) =>
+            WorkerState(workerOperation, math.min(start1, start2), Some(math.max(stop1.get, stop2.get)))
+        })
+      } else {
+        None
+      }
+    }.zipWithIndex.map{
+      case (WorkerState(_, start, Some(stop)), step) =>
+        (step, start, stop)
+    }
+  }
+
+  private[this] def sortedSupplyDemands() : ArrayBuffer[SupplyDemandMetrics] = {
+    val reader = metrics.policyMetricsReader
+    reader.supplyDemands.sortBy(_.timeMs)
+  }
+
+  def supplyTimeMs() : Iterable[(Long, Int)] = {
+    val supplyDemands = sortedSupplyDemands()
+    val supplyDemandPairs = supplyDemands.zip(supplyDemands.tail)
+    val SupplyDemandMetrics(_, lastTime, lastSupply, lastDemand) = supplyDemands.last
+    val supplies = supplyDemandPairs.flatMap {
+      case (SupplyDemandMetrics(superStep, timeMs, supply, demand), SupplyDemandMetrics(superStep2, timeMs2, supply2, demand2)) =>
+        Iterable(timeMs -> supply, timeMs2 -> supply)
+    } ++ Iterable(lastTime -> lastSupply)
+
+    supplies
+  }
+
+  def demandTimeMs() : Iterable[(Long, Int)] = {
+    val supplyDemands = sortedSupplyDemands()
+    val supplyDemandPairs = supplyDemands.zip(supplyDemands.tail)
+    val SupplyDemandMetrics(_, lastTime, lastSupply, lastDemand) = supplyDemands.last
+    val demands = supplyDemandPairs.flatMap {
+      case (SupplyDemandMetrics(superStep, timeMs, supply, demand), SupplyDemandMetrics(superStep2, timeMs2, supply2, demand2)) =>
+        if (superStep != superStep2) {
+          Iterable(timeMs -> demand, timeMs2 -> demand)
+        } else {
+          Iterable(timeMs -> demand)
+        }
+    } ++ Iterable(lastTime -> lastDemand)
+
+    demands
   }
 
   def machineElasticOverheadCalc() : Long = {

@@ -11,7 +11,7 @@ object GeneralProcessingTableFigure {
 
   class Builder {
 
-    type Row = (String, PerformanceMetric)
+    type Row = (String, PerformanceMetric, Double)
     private var _algorithm : String = _
     private var _dataset : String = _
     private val _rows = ArrayBuffer.empty[Row]
@@ -26,8 +26,8 @@ object GeneralProcessingTableFigure {
       this
     }
 
-    def result(policy : String, performanceMetric : PerformanceMetric) : Builder = {
-      _rows += ((policy, performanceMetric))
+    def result(policy : String, performanceMetric : PerformanceMetric, coefficientOfVariationProc : Double) : Builder = {
+      _rows += ((policy, performanceMetric, coefficientOfVariationProc))
       this
     }
 
@@ -36,7 +36,8 @@ object GeneralProcessingTableFigure {
         "$t_{p}$ (s)", "$t_{m}$ (s)", "$\\sum{t_{c}}$ (s)", // times
         "VPS", "EVPS", // vps and eps
         "$\\sum{t_{e}}$ (s)", // elasticity overhead
-        "$\\sum{t_s}$ (s)"
+        "$\\sum{t_s}$ (s)", // pure processing time
+        "CV_{proc}" // CV proc
       )
 
 //      val rows = _rows.map {
@@ -50,7 +51,7 @@ object GeneralProcessingTableFigure {
       val GENERAL = 1
 
       val groupedRows = _rows.groupBy {
-        case (policy, metric) =>
+        case (policy, metric, _) =>
           policy match {
             case "Baseline" =>
               BASELINE
@@ -63,8 +64,8 @@ object GeneralProcessingTableFigure {
         .sortBy(_._1)
         .toMap
         .mapValues(x => x.map {
-        case (policy, PerformanceMetric(pTime, mTime, machineTime, vPs, ePs, eOverhead, superStepSumTime)) =>
-          "%s & %d & %d & %d & %d & %d & %d & %d \\\\\n".format(policy, pTime, mTime, machineTime, vPs, vPs + ePs, eOverhead, superStepSumTime)
+        case (policy, PerformanceMetric(pTime, mTime, machineTime, vPs, ePs, eOverhead, superStepSumTime), cv) =>
+          "%s & %d & %d & %d & %d & %d & %d & %d & %.2f\\\\\n".format(policy, pTime, mTime, machineTime, vPs, vPs + ePs, eOverhead, superStepSumTime, cv)
       }).mapValues(_.reduce(_ + _))
 
 

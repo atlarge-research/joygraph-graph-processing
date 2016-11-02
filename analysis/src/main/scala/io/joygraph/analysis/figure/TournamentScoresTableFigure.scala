@@ -14,6 +14,18 @@ object TournamentScoresTableFigure {
     private var _algorithm : String = _
     private var _dataset : String = _
     private val _rows = ArrayBuffer.empty[Row]
+    private var _partialCaption : String = _
+    private var _labelPrefix : String = _
+
+    def labelPrefix(labelPrefix : String) : Builder = {
+      _labelPrefix = labelPrefix
+      this
+    }
+
+    def partialCaption(partialCaption : String) : Builder = {
+      _partialCaption = partialCaption
+      this
+    }
 
     def algorithm(algorithm : String) : Builder = {
       _algorithm = algorithm
@@ -49,10 +61,11 @@ object TournamentScoresTableFigure {
          | ${_algorithm} ${_dataset} \\\\
          | \\hline
          | \\hline
-         | ${rows.reduce(_ + _)}
+         | ${rows.fold("")(_ + _)}
          | \\hline
          |\\end{tabular}
-         |\\caption{Tournament scores for ${_rows.map(_._1).reduce(_ + ", " + _)} on dataset ${_dataset} and algorithm ${_algorithm}}
+         |\\caption{${_partialCaption} for ${_rows.map(_._1).fold("")(_ + ", " + _)} on dataset ${_dataset} and algorithm ${_algorithm}}
+         |\\label{${_labelPrefix}-tournament-${_algorithm}-${_dataset}}
          |\\end{table}
         """.stripMargin
     }

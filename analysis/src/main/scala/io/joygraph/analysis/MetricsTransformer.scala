@@ -8,6 +8,7 @@ import io.joygraph.core.message.AddressPair
 import io.joygraph.core.partitioning.VertexPartitioner
 
 import scala.collection.concurrent.TrieMap
+import scala.collection.immutable.IndexedSeq
 import scala.collection.mutable
 
 case class MetricsTransformer(metricsFilePath : String) {
@@ -30,14 +31,26 @@ case class ElasticPolicyReader(filePath : String) extends ElasticPolicy {
     statesPerStep.withDefault(Map.empty)(step).toMap
   }
 
-  def timeOfAllWorkersOfAction(step : Int, operation : WorkerOperation.Value): Long = {
+  private[this] def statesPerStep(): TrieMap[Int, mutable.Map[Int, mutable.Map[WorkerOperation.Value, WorkerState]]] = {
     // use reflection to get raw ...
     val workerStateRecorderClazz = classOf[WorkerStateRecorder]
     val field = workerStateRecorderClazz.getDeclaredField("statesPerStep")
     field.setAccessible(true)
-    val statesPerStep = field.get(_statesRecorder).asInstanceOf[TrieMap[Int, mutable.Map[Int, mutable.Map[WorkerOperation.Value, WorkerState]]]]
+    field.get(_statesRecorder).asInstanceOf[TrieMap[Int, mutable.Map[Int, mutable.Map[WorkerOperation.Value, WorkerState]]]]
+  }
 
-    statesFor(step, statesPerStep).flatMap {
+  def rawStates(operation : WorkerOperation.Value): IndexedSeq[Iterable[WorkerState]] = {
+    val states = for (step <- 0 until totalNumberOfSteps()) yield {
+      statesFor(step, statesPerStep()).flatMap{
+        case (workerId, operationsMap) =>
+          operationsMap.get(operation)
+      }
+    }
+    states
+  }
+
+  def timeOfAllWorkersOfAction(step : Int, operation : WorkerOperation.Value): Long = {
+    statesFor(step, statesPerStep()).flatMap {
       case (workerId, operationsMap) =>
         operationsMap.get(operation) match {
           case Some(WorkerState(_, start, stopOpt)) =>

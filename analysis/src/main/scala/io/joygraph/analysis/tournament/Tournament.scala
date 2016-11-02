@@ -1,7 +1,10 @@
 package io.joygraph.analysis.tournament
 
 import io.joygraph.analysis.autoscale.metrics.{AccuracyMetric, InstabilityMetric, WrongProvisioningMetric}
+import io.joygraph.analysis.performance.PerformanceMetric
 import io.joygraph.analysis.{Experiment, PolicyResultProperties}
+
+import scala.collection.mutable.ArrayBuffer
 
 class Tournament() {
 
@@ -9,7 +12,7 @@ class Tournament() {
   val LOSS = 0.0
   val DRAW = 0.5
 
-  def tournament(experiment : Experiment) : Map[String, Double] = {
+  def tournamentElastic(experiment : Experiment) : Map[String, Double] = {
     val averages = experiment.policyGrouped.map {
       case (policy, results) =>
         val accuracyMetric = averageAccuracyMetric(results)
@@ -25,6 +28,35 @@ class Tournament() {
             fight(a, a2) + fight(i, i2) + fight (w, w2)
         }.sum
     }
+  }
+
+  def tournamentPerformance(experiment : Experiment) : Map[String, Double] = {
+    val averages = experiment.policyGrouped.map {
+      case (policy, results) =>
+        val performanceMetric = averagePerformanceMetric(results)
+        policy -> performanceMetric
+    }
+
+    averages.map{
+      case (p, (perf)) =>
+        p -> averages.map {
+          case (p2, perf2) =>
+            fight(perf, perf2)
+        }.sum
+    }
+  }
+
+  def tournamentCombined(experiment : Experiment) : Map[String, Double] = {
+    val perf = tournamentPerformance(experiment)
+    val elastic = tournamentElastic(experiment)
+    perf.map{
+      case (policy, score) =>
+        policy -> (elastic(policy) + score)
+    }
+  }
+
+  def averagePerformanceMetric(results: ArrayBuffer[PolicyResultProperties]) : PerformanceMetric = {
+    results.map(_.performanceMetrics).reduce(_ += _).normalizeBy(results.size)
   }
 
   def averageAccuracyMetric(results : Iterable[PolicyResultProperties]) : AccuracyMetric = {
@@ -61,6 +93,16 @@ class Tournament() {
       result += DRAW
     }
     result
+  }
+
+  def fight(a : PerformanceMetric, b : PerformanceMetric) : Double = {
+    compareLeft(a.makeSpan, b.makeSpan) +
+    compareLeft(a.processingTime, b.processingTime) +
+    compareLeft(a.elasticityOverhead, b.elasticityOverhead) +
+    compareRight(a.verticesPerSecond, b.verticesPerSecond) +
+    compareRight(a.verticesPerSecond + a.edgesPerSecond, b.verticesPerSecond + b.edgesPerSecond) +
+    compareLeft(a.superStepSumTime, b.superStepSumTime) +
+    compareLeft(a.machineTime, b.machineTime)
   }
 
   def fight(a : WrongProvisioningMetric, b : WrongProvisioningMetric) : Double = {
