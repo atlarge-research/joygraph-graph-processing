@@ -37,7 +37,7 @@ object GeneralProcessingTableFigure {
         "VPS", "EVPS", // vps and eps
         "$\\sum{t_{e}}$ (s)", // elasticity overhead
         "$\\sum{t_s}$ (s)", // pure processing time
-        "CV_{proc}" // CV proc
+        "$CV_{proc}$" // CV proc
       )
 
 //      val rows = _rows.map {

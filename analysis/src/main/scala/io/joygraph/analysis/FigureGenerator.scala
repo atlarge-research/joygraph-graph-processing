@@ -34,9 +34,10 @@ object FigureGenerator extends App {
         val latexFigs = x.createSupplyDemandPlot(supplyDemandPlotFilePathPrefix, relativeFigPathDir)
         sb.append(x.createPerformanceTableWithAverages()).append("\n")
         sb.append(x.createElasticTableWithAverages()).append("\n")
-        sb.append(x.createTournamentScoreTableElastic()).append("\n")
-        sb.append(x.createTournamentScoreTablePerformance()).append("\n")
-        sb.append(x.createTournamentScoreTableCombined()).append("\n")
+        sb.append(x.createTournamentScoreTableMerged()).append("\n")
+//        sb.append(x.createTournamentScoreTableElastic()).append("\n")
+//        sb.append(x.createTournamentScoreTablePerformance()).append("\n")
+//        sb.append(x.createTournamentScoreTableCombined()).append("\n")
         latexFigs.foreach{ fig =>
           sb.append(fig).append("\n")
         }

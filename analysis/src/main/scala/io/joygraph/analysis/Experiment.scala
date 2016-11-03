@@ -2,7 +2,7 @@ package io.joygraph.analysis
 
 import io.joygraph.analysis.autoscale.AutoscalerMetricCalculator
 import io.joygraph.analysis.autoscale.metrics.{AccuracyMetric, InstabilityMetric, WrongProvisioningMetric}
-import io.joygraph.analysis.figure.{DiagramFigure, ElasticTableFigure, GeneralProcessingTableFigure, TournamentScoresTableFigure}
+import io.joygraph.analysis.figure._
 import io.joygraph.analysis.performance.PerformanceMetric
 import io.joygraph.analysis.tournament.Tournament
 import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation}
@@ -58,12 +58,16 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
           val barrierTimes = policyResult.startStopTimesOf(WorkerOperation.BARRIER)
           val superStepTimes = policyResult.startStopTimesOf(WorkerOperation.RUN_SUPERSTEP)
           val barrierLabels = barrierTimes.flatMap{
-            case (step, start, stop) =>
+            case (step, Some((start, stop))) =>
               Iterable(start -> "\"b%d\"".format(step), stop -> "\"b%d\"".format(step))
+            case (step, None) =>
+              Iterable()
           }
           val superStepLabels = superStepTimes.flatMap{
-            case (step, start, stop) =>
+            case (step, Some((start, stop))) =>
               Iterable(start -> "\"s%d\"".format(step), stop -> "\"s%d\"".format(step))
+            case (step, None) =>
+              Iterable()
           }
 
           val demandX = policyResult.demandTimeMs().map(_._1)
@@ -84,6 +88,14 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
           val xTicksSuperStep = generatePyArray(superStepLabels.map(_._1))
           val xTicksSuperstepLabels = generatePyArray(superStepLabels.map(_._2))
 
+          val averageProcessingSpeed = generatePyArray(policyResult.averageTimesPerStepOf(WorkerOperation.RUN_SUPERSTEP).map(_._2))
+          val elasticOverheadTimes = policyResult.startStopTimesOf(WorkerOperation.DISTRIBUTE_DATA).map{
+            case (step, Some((start, stop))) =>
+              stop - start
+            case _ => 0
+          }
+          val elasticOverheadTimesPyArray = generatePyArray(elasticOverheadTimes)
+
           val script =
             s"""
                |import numpy as np
@@ -98,6 +110,9 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
                |xTicksSuperStep = $xTicksSuperStep
                |xTicksSuperStepLabels = $xTicksSuperstepLabels
                |
+               |yAverageProcSpeed = $averageProcessingSpeed
+               |yElasticOverhead = $elasticOverheadTimesPyArray
+               |
                |minX = min(x1Supply + x2Demand + xTicksSuperStep + xTicksBarrier)
                |maxX = max(x1Supply + x2Demand + xTicksSuperStep + xTicksBarrier)
                |normMaxX = (maxX - minX) / 1000
@@ -109,6 +124,8 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
                |x2Demand = list(map(subtract, x2Demand))
                |xTicksBarrier = list(map(subtract, xTicksBarrier))
                |xTicksSuperStep = list(map(subtract, xTicksSuperStep))
+               |yAverageProcSpeed = list(map(lambda x: x / 1000, yAverageProcSpeed))
+               |yElasticOverhead = list(map(lambda x: x / 1000, yElasticOverhead))
                |
                |xTickBarrierStart = [xTicksBarrier[i] for i in range(len(xTicksBarrier)) if i % 2 == 0]
                |xTickBarrierEnd = [xTicksBarrier[i] for i in range(len(xTicksBarrier)) if i % 2 == 1]
@@ -117,46 +134,44 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
                |xTicksSuperStep = [xTicksSuperStep[i] for i in range(len(xTicksSuperStep)) if i % 2 == 0]
                |xTicksSuperStepLabels = [xTicksSuperStepLabels[i] for i in range(len(xTicksSuperStepLabels)) if i % 2 == 0]
                |
-               |fig = plt.figure()
-               |barrAxes = fig.add_axes((0.1, 0.15, 0.8, 0.0))
-               |supAxes = fig.add_axes((0.1, 0.3, 0.8, 0.0))
-               |ax1 = fig.add_axes((0.1, 0.4, 0.8, 0.6))
-               |ax2 = ax1.twinx()
+|barWidths = [xTicksSuperStep[i] - xTicksSuperStep[i - 1] for i in range(1, len(xTicksSuperStep))]
+               |barWidths.append(normMaxX)
                |
-               |ax1.set_ylim([0.0, 21])
+               |fig = plt.figure()
+               |supAxes = fig.add_axes((0.1, 0.5, 0.8, 0.0))
+               |ax1 = fig.add_axes((0.1, 0.6, 0.8, 0.4))
+               |ax2 = ax1.twinx()
+               |barChart = fig.add_axes((0.1, 0.1, 0.8, 0.3))
+               |barChart.set_xlim([0.0, normMaxX])
+               |
+ |barChart.bar(xTicksSuperStep, yAverageProcSpeed, barWidths, color='r')
+               |barChart.bar(xTicksSuperStep, yElasticOverhead, barWidths, bottom=yAverageProcSpeed)
+               |barChart.set_xlabel('time (s)')
+               |barChart.set_ylabel('time (s)')
+               |
+ |ax1.set_ylim([0.0, 21])
                |ax2.set_ylim([0.0, 21])
                |
-               |ax1.set_xlim([0.0, normMaxX])
+ |ax1.set_xlim([0.0, normMaxX])
                |supAxes.set_xlim([0.0, normMaxX])
-               |barrAxes.set_xlim([0.0, normMaxX])
-               |barrAxes2 = barrAxes.twiny()
-               |barrAxes2.set_xlim([0.0, normMaxX])
                |
-               |ax1.plot(x1Supply, y1Supply)
+ |ax1.plot(x1Supply, y1Supply)
                |ax1.set_xlabel('time (s)')
                |# Make the y-axis label and tick labels match the line color.
-               |ax1.set_ylabel('supply', color='b')
+               |ax1.set_ylabel('supply (machines)', color='b')
                |for tl in ax1.get_yticklabels():
                |    tl.set_color('b')
                |
-               |ax2.set_ylabel('demand', color='r')
+ |ax2.set_ylabel('demand (machines)', color='r')
                |ax2.plot(x2Demand, y2Demand, 'r')
                |
-               |for tl in ax2.get_yticklabels():
+ |for tl in ax2.get_yticklabels():
                |    tl.set_color('r')
                |
-               |supAxes.yaxis.set_visible(False)
+ |supAxes.yaxis.set_visible(False)
                |supAxes.set_xlabel('superstep')
                |supAxes.set_xticks(xTicksSuperStep)
                |supAxes.set_xticklabels(xTicksSuperStepLabels)
-               |
-               |barrAxes.yaxis.set_visible(False)
-               |barrAxes.set_xticks(xTickBarrierStart)
-               |barrAxes.set_xticklabels(xTicksBarrierLabelsStart)
-               |barrAxes.set_xlabel("barrier")
-               |
-               |barrAxes2.set_xticks(xTickBarrierEnd)
-               |barrAxes2.set_xticklabels(xTicksBarrierLabelsEnd)
                |
                |plt.savefig("$outputPath")
       """.stripMargin
@@ -166,7 +181,10 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
                |\\begin{figure}[H]
                | \\centering
                | \\includegraphics[width=0.8\\linewidth]{$relativeLatexPathPrefix/$fileName}
-               | \\caption{${policyResult.policyName} on $dataSet with $algorithm}
+               | \\caption{${policyResult.policyName} on $dataSet with $algorithm.
+               | The upper plot represents the changes of demand (blue) at the end of each superstep and how the supply (red) follows the demand.
+               | The bottom plot shows a stacked bar plot, the height of the bar represents the time in seconds spent during the operation. Processing time and elasticity overhead; respectively red and blue.
+               | }
                | \\label{policy-$dataSet-$algorithm-${policyResult.policyName}-$index.pdf}
                |\\end{figure}
         """.stripMargin
@@ -179,6 +197,33 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
           latexFigure
       }
     }
+  }
+
+  def createTournamentScoreTable(labelPrefix : String, partialCaption : String, elasticScores: Map[String, Double], performanceScores: Map[String, Double], combinedScores: Map[String, Double]): String = {
+    val sortedElasticScores = elasticScores.toIndexedSeq.sortBy(_._2).reverse
+    val sortedPerformanceScores = performanceScores.toIndexedSeq.sortBy(_._2).reverse
+    val sortedCombinedScores = combinedScores.toIndexedSeq.sortBy(_._2).reverse
+    val builder = MergedTournamentScoresTableFigure.newBuilder
+      .algorithm(algorithm)
+      .dataSet(dataSet)
+      .partialCaption(partialCaption)
+      .labelPrefix(labelPrefix)
+
+    (sortedElasticScores, sortedPerformanceScores, sortedCombinedScores).zipped.foreach {
+      case (pair, pair2, pair3) =>
+        builder.result((pair, pair2, pair3))
+    }
+
+    builder.build()
+  }
+
+  def createTournamentScoreTableMerged() : String = {
+    val t = new Tournament
+    val elasticScores = t.tournamentElastic(this)
+    val performanceScores = t.tournamentPerformance(this)
+    val combinedScores = t.tournamentCombined(this)
+
+    createTournamentScoreTable("merged", "Elastic, Performance and Combined tournament scores", elasticScores, performanceScores, combinedScores)
   }
 
   def createTournamentScoreTableElastic(): String = {

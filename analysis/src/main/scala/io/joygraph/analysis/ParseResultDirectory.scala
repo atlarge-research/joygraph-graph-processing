@@ -147,20 +147,38 @@ trait GeneralResultProperties extends BaseResultProperties {
     }
   }
 
-  def startStopTimesOf(workerOperation: WorkerOperation.Value) : Iterable[(Int, Long, Long)] = {
+  def averageTimesPerStepOf(workerOperation : WorkerOperation.Value) : Iterable[(Int, Double)] = {
     val reader = metrics.policyMetricsReader
-    reader.rawStates(workerOperation).flatMap{ workerStates =>
+    reader.rawStates(workerOperation).flatMap { workerStates =>
       if (workerStates.nonEmpty) {
-        Some(workerStates.reduce[WorkerState] {
+        val workerProcessingTimes = workerStates.map {
+          case WorkerState(_, start, Some(stop)) =>
+            stop - start
+        }
+        Some(
+          workerProcessingTimes.sum.toDouble / workerProcessingTimes.size
+        )
+      } else {
+        None
+      }
+    }.zipWithIndex.map(_.swap)
+  }
+
+  def startStopTimesOf(workerOperation: WorkerOperation.Value) : Iterable[(Int, Option[(Long, Long)])] = {
+    val reader = metrics.policyMetricsReader
+    reader.rawStates(workerOperation).zipWithIndex.map{ case (workerStates, step) =>
+      if (workerStates.nonEmpty) {
+        step -> Some(workerStates.reduce[WorkerState] {
           case (WorkerState(_, start1, stop1), WorkerState(_, start2, stop2)) =>
             WorkerState(workerOperation, math.min(start1, start2), Some(math.max(stop1.get, stop2.get)))
         })
       } else {
-        None
+        step -> None
       }
-    }.zipWithIndex.map{
-      case (WorkerState(_, start, Some(stop)), step) =>
-        (step, start, stop)
+    }.map{
+      case (step, Some(WorkerState(_, start, Some(stop)))) =>
+        (step, Some(start, stop))
+      case (step, None) => step -> None
     }
   }
 
@@ -197,7 +215,7 @@ trait GeneralResultProperties extends BaseResultProperties {
     demands
   }
 
-  def machineElasticOverheadCalc() : Long = {
+  def machineElasticOverheadTimes(): IndexedSeq[Long] = {
     val reader = metrics.policyMetricsReader
     // get grow or shrink
     val growShrinks = reader.supplyDemands.flatMap{ x =>
@@ -209,7 +227,7 @@ trait GeneralResultProperties extends BaseResultProperties {
       }
     }.toMap
 
-    val overheadTimes = for (step <- 0 to reader.totalNumberOfSteps()) yield {
+    for (step <- 0 to reader.totalNumberOfSteps()) yield {
       growShrinks.get(step) match {
         case Some((supply, demand)) =>
           val time = reader.timeOfAllWorkersOfAction(step, WorkerOperation.DISTRIBUTE_DATA)
@@ -222,6 +240,10 @@ trait GeneralResultProperties extends BaseResultProperties {
           0
       }
     }
+  }
+
+  def machineElasticOverheadCalc() : Long = {
+    val overheadTimes = machineElasticOverheadTimes()
     overheadTimes.sum
   }
 
