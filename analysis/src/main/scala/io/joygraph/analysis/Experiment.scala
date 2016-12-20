@@ -42,160 +42,286 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     "[" + arr.map(_.toString).reduce(_ + "," + _) + "]"
   }
 
-  def createSupplyDemandPlot(outputPathPrefix : String, relativeLatexPathPrefix : String, singlePolicyPlot : Boolean = true) : Iterable[String] = {
-    policyResults.sortBy(_.policyName).groupBy(_.policyName).flatMap{ case (policyName, policyResults) =>
-      policyResults.zipWithIndex.filter{case (results, index) =>
-        if (singlePolicyPlot) {
-          index == 0
-        } else {
-          true
+  def plotSupplyDemands(policyName : String, policyResults : Iterable[PolicyResultProperties], outputPathPrefix : String, relativeLatexPathPrefix : String) : String = {
+    val numMinipages = policyResults.size.toDouble
+    val pageFraction = 1.0 / numMinipages - 0.01
+
+    val latexFigures = policyResults.zipWithIndex.map {
+      case (policyResult, index) =>
+        val fileName = s"$dataSet-$algorithm-${policyResult.policyName}-$index.pdf"
+        val outputPath = s"$outputPathPrefix/$fileName"
+
+        val barrierTimes = policyResult.startStopTimesOf(WorkerOperation.BARRIER)
+        val superStepTimes = policyResult.startStopTimesOf(WorkerOperation.RUN_SUPERSTEP)
+        val barrierLabels = barrierTimes.flatMap{
+          case (step, Some((start, stop))) =>
+            Iterable(start -> "\"b%d\"".format(step), stop -> "\"b%d\"".format(step))
+          case (step, None) =>
+            Iterable()
         }
-      }.map{
-        case (policyResult, index) =>
-          val fileName = s"$dataSet-$algorithm-${policyResult.policyName}-$index.pdf"
-          val outputPath = s"$outputPathPrefix/$fileName"
+        val superStepLabels = superStepTimes.flatMap{
+          case (step, Some((start, stop))) =>
+            Iterable(start -> "\"%d\"".format(step), stop -> "\"%d\"".format(step))
+          case (step, None) =>
+            Iterable()
+        }
 
-          val barrierTimes = policyResult.startStopTimesOf(WorkerOperation.BARRIER)
-          val superStepTimes = policyResult.startStopTimesOf(WorkerOperation.RUN_SUPERSTEP)
-          val barrierLabels = barrierTimes.flatMap{
-            case (step, Some((start, stop))) =>
-              Iterable(start -> "\"b%d\"".format(step), stop -> "\"b%d\"".format(step))
-            case (step, None) =>
-              Iterable()
-          }
-          val superStepLabels = superStepTimes.flatMap{
-            case (step, Some((start, stop))) =>
-              Iterable(start -> "\"s%d\"".format(step), stop -> "\"s%d\"".format(step))
-            case (step, None) =>
-              Iterable()
-          }
+        val demandX = policyResult.demandTimeMs().map(_._1)
+        val demandY = policyResult.demandTimeMs().map(_._2)
 
-          val demandX = policyResult.demandTimeMs().map(_._1)
-          val demandY = policyResult.demandTimeMs().map(_._2)
+        val supplyX = policyResult.supplyTimeMs().map(_._1)
+        val supplyY = policyResult.supplyTimeMs().map(_._2)
 
-          val supplyX = policyResult.supplyTimeMs().map(_._1)
-          val supplyY = policyResult.supplyTimeMs().map(_._2)
+        val supplyXPyArray = generatePyArray(supplyX)
+        val supplyYPyArray = generatePyArray(supplyY)
 
-          val supplyXPyArray = generatePyArray(supplyX)
-          val supplyYPyArray = generatePyArray(supplyY)
+        val demandXPyArray = generatePyArray(demandX)
+        val demandYPyArray = generatePyArray(demandY)
 
-          val demandXPyArray = generatePyArray(demandX)
-          val demandYPyArray = generatePyArray(demandY)
+        val xTicksBarrier = generatePyArray(barrierLabels.map(_._1))
+        val xTicksBarrierLabels = generatePyArray(barrierLabels.map(_._2))
 
-          val xTicksBarrier = generatePyArray(barrierLabels.map(_._1))
-          val xTicksBarrierLabels = generatePyArray(barrierLabels.map(_._2))
+        val xTicksSuperStep = generatePyArray(superStepLabels.map(_._1))
+        val xTicksSuperstepLabels = generatePyArray(superStepLabels.map(_._2))
 
-          val xTicksSuperStep = generatePyArray(superStepLabels.map(_._1))
-          val xTicksSuperstepLabels = generatePyArray(superStepLabels.map(_._2))
-
-          val averageProcessingSpeed = generatePyArray(policyResult.averageTimesPerStepOf(WorkerOperation.RUN_SUPERSTEP).map(_._2))
-          val elasticOverheadTimes = policyResult.startStopTimesOf(WorkerOperation.DISTRIBUTE_DATA).map{
-            case (step, Some((start, stop))) =>
-              stop - start
-            case _ => 0
-          }
-          val elasticOverheadTimesPyArray = generatePyArray(elasticOverheadTimes)
-
-          val script =
-            s"""
-               |import numpy as np
-               |import matplotlib.pyplot as plt
-               |
+        val script =
+          s"""
+             |import matplotlib.pyplot as plt
+             |
                |x1Supply = $supplyXPyArray
-               |y1Supply = $supplyYPyArray
-               |x2Demand = $demandXPyArray
-               |y2Demand = $demandYPyArray
-               |xTicksBarrier = $xTicksBarrier
-               |xTicksBarrierLabels = $xTicksBarrierLabels
-               |xTicksSuperStep = $xTicksSuperStep
-               |xTicksSuperStepLabels = $xTicksSuperstepLabels
-               |
-               |yAverageProcSpeed = $averageProcessingSpeed
-               |yElasticOverhead = $elasticOverheadTimesPyArray
-               |
-               |minX = min(x1Supply + x2Demand + xTicksSuperStep + xTicksBarrier)
-               |maxX = max(x1Supply + x2Demand + xTicksSuperStep + xTicksBarrier)
-               |normMaxX = (maxX - minX) / 1000
-               |
+             |y1Supply = $supplyYPyArray
+             |x2Demand = $demandXPyArray
+             |y2Demand = $demandYPyArray
+             |xTicksSuperStep = $xTicksSuperStep
+             |xTicksSuperStepLabels = $xTicksSuperstepLabels
+             |
+               |minX = min(x1Supply + x2Demand + xTicksSuperStep)
+             |maxX = max(x1Supply + x2Demand + xTicksSuperStep)
+             |normMaxX = (maxX - minX) / 1000
+             |
                |def subtract(x):
-               |    return (x - minX) / 1000
-               |
+             |    return (x - minX) / 1000
+             |
                |x1Supply = list(map(subtract, x1Supply))
-               |x2Demand = list(map(subtract, x2Demand))
-               |xTicksBarrier = list(map(subtract, xTicksBarrier))
-               |xTicksSuperStep = list(map(subtract, xTicksSuperStep))
-               |yAverageProcSpeed = list(map(lambda x: x / 1000, yAverageProcSpeed))
-               |yElasticOverhead = list(map(lambda x: x / 1000, yElasticOverhead))
-               |
-               |xTickBarrierStart = [xTicksBarrier[i] for i in range(len(xTicksBarrier)) if i % 2 == 0]
-               |xTickBarrierEnd = [xTicksBarrier[i] for i in range(len(xTicksBarrier)) if i % 2 == 1]
-               |xTicksBarrierLabelsStart = [xTicksBarrierLabels[i] for i in range(len(xTicksBarrierLabels)) if i % 2 == 0]
-               |xTicksBarrierLabelsEnd = [xTicksBarrierLabels[i] for i in range(len(xTicksBarrierLabels)) if i % 2 == 1]
+             |x2Demand = list(map(subtract, x2Demand))
+             |xTicksSuperStep = list(map(subtract, xTicksSuperStep))
+             |
                |xTicksSuperStep = [xTicksSuperStep[i] for i in range(len(xTicksSuperStep)) if i % 2 == 0]
-               |xTicksSuperStepLabels = [xTicksSuperStepLabels[i] for i in range(len(xTicksSuperStepLabels)) if i % 2 == 0]
-               |
-|barWidths = [xTicksSuperStep[i] - xTicksSuperStep[i - 1] for i in range(1, len(xTicksSuperStep))]
-               |barWidths.append(normMaxX)
-               |
+             |xTicksSuperStepLabels = [xTicksSuperStepLabels[i] for i in range(len(xTicksSuperStepLabels)) if i % 2 == 0]
+             |
                |fig = plt.figure()
-               |supAxes = fig.add_axes((0.1, 0.5, 0.8, 0.0))
-               |ax1 = fig.add_axes((0.1, 0.6, 0.8, 0.4))
-               |ax2 = ax1.twinx()
-               |barChart = fig.add_axes((0.1, 0.1, 0.8, 0.3))
-               |barChart.set_xlim([0.0, normMaxX])
-               |
- |barChart.bar(xTicksSuperStep, yAverageProcSpeed, barWidths, color='r')
-               |barChart.bar(xTicksSuperStep, yElasticOverhead, barWidths, bottom=yAverageProcSpeed)
-               |barChart.set_xlabel('time (s)')
-               |barChart.set_ylabel('time (s)')
-               |
- |ax1.set_ylim([0.0, 21])
-               |ax2.set_ylim([0.0, 21])
-               |
- |ax1.set_xlim([0.0, normMaxX])
-               |supAxes.set_xlim([0.0, normMaxX])
-               |
- |ax1.plot(x1Supply, y1Supply)
+             |supAxes = fig.add_axes((0.1, 0.1, 0.8, 0.0))
+             |ax1 = fig.add_axes((0.1, 0.2, 0.8, 0.8))
+             |ax2 = ax1.twinx()
+             |
+               |ax1.set_ylim([0.0, 21])
+             |ax2.set_ylim([0.0, 21])
+             |
+               |ax1.set_xlim([0.0, normMaxX])
+             |supAxes.set_xlim([0.0, normMaxX])
+             |
+               |p1 = ax1.plot(x1Supply, y1Supply)
+             |p2 = ax2.plot(x2Demand, y2Demand, 'r')
+             |
                |ax1.set_xlabel('time (s)')
-               |# Make the y-axis label and tick labels match the line color.
-               |ax1.set_ylabel('supply (machines)', color='b')
-               |for tl in ax1.get_yticklabels():
-               |    tl.set_color('b')
-               |
- |ax2.set_ylabel('demand (machines)', color='r')
-               |ax2.plot(x2Demand, y2Demand, 'r')
-               |
- |for tl in ax2.get_yticklabels():
-               |    tl.set_color('r')
-               |
- |supAxes.yaxis.set_visible(False)
-               |supAxes.set_xlabel('superstep')
-               |supAxes.set_xticks(xTicksSuperStep)
-               |supAxes.set_xticklabels(xTicksSuperStepLabels)
-               |
-               |plt.savefig("$outputPath")
+             |# Make the y-axis label and tick labels match the line color.
+             |ax1.set_ylabel('machines')
+             |ax1.legend((p1[0], p2[0]), ('supply', 'demand'), loc = 0)
+             |
+               |supAxes.yaxis.set_visible(False)
+             |supAxes.set_xlabel('superstep')
+             |supAxes.set_xticks(xTicksSuperStep)
+             |supAxes.set_xticklabels(xTicksSuperStepLabels)
+             |plt.savefig("$outputPath")
       """.stripMargin
 
-          val latexFigure =
-            s"""
-               |\\begin{figure}[H]
-               | \\centering
-               | \\includegraphics[width=0.8\\linewidth]{$relativeLatexPathPrefix/$fileName}
-               | \\caption{${policyResult.policyName} on $dataSet with $algorithm.
-               | The upper plot represents the changes of demand (blue) at the end of each superstep and how the supply (red) follows the demand.
-               | The bottom plot shows a stacked bar plot, the height of the bar represents the time in seconds spent during the operation. Processing time and elasticity overhead; respectively red and blue.
-               | }
-               | \\label{policy-$dataSet-$algorithm-${policyResult.policyName}-$index.pdf}
-               |\\end{figure}
+        val latexFigure =
+          s"""
+             |\\begin{minipage}{${"%.2f".format(pageFraction)}\\linewidth}
+             | \\centering
+             | \\includegraphics[width=1.0\\linewidth]{$relativeLatexPathPrefix/$fileName}
+             |\\end{figure}
         """.stripMargin
 
-          val scriptLocation = File.makeTemp()
-          scriptLocation.writeAll(script)
-          scriptLocation.setExecutable(executable = true)
-          new ProcessBuilder().command("/usr/bin/python", scriptLocation.toString).start().waitFor()
+        val scriptLocation = File.makeTemp()
+        scriptLocation.writeAll(script)
+        scriptLocation.setExecutable(executable = true)
+        new ProcessBuilder().command("/usr/bin/python", scriptLocation.toString).start().waitFor()
 
-          latexFigure
+        latexFigure
+    }
+
+    s"""
+       |\\begin{figure}[H]
+       |${latexFigures.reduce(_ + "\n" + _)}
+       |\\caption{$policyName on $dataSet with $algorithm}
+       |\\label{policy-$dataSet-$algorithm-$policyName}
+       |\\end{figure}
+     """.stripMargin
+  }
+
+  def plotBarVariability(policyName: String, groupedResults: ArrayBuffer[PolicyResultProperties], outputPathPrefix: String, relativeLatexPathPrefix: String): String = {
+    val numResults = groupedResults.size
+    val data: mutable.Seq[(Int, Iterable[(Int, Long)], Iterable[(Int, Long)])] = groupedResults.map{ policyResult =>
+      val superstepTimes: Iterable[(Int, Long)] = policyResult.startStopTimesOf(WorkerOperation.RUN_SUPERSTEP).map{
+        case (step, Some((start, stop))) =>
+          step -> (stop - start)
+        case (step, _) =>
+          step -> 0L
       }
+
+      val elasticOverheadTimes: Iterable[(Int, Long)] = policyResult.startStopTimesOf(WorkerOperation.DISTRIBUTE_DATA).map{
+        case (step, Some((start, stop))) =>
+          step -> (stop - start)
+        case (step, _) =>
+          step -> 0L
+      }
+      val numberOfSteps = policyResult.metrics.policyMetricsReader.totalNumberOfSteps()
+      (numberOfSteps, superstepTimes, elasticOverheadTimes)
+    }
+
+    val (numberOfSteps, sumStepTimes, sumElasticOverheadTimes) = data.reduce[(Int, Iterable[(Int, Long)], Iterable[(Int, Long)])] {
+      case (a, b) =>
+        val (numSteps, superStepTimes, elasticOverheadTimes) = a
+        val (_, superStepTimes2, elasticOverheadTimes2) = b
+
+        val sumStepTimes: Iterable[(Int, Long)] = (superStepTimes, superStepTimes2).zipped.map {
+          case ((step, v), (_, v2)) =>
+            (step, v + v2)
+        }
+
+        val sumElasticOverheadTimes: Iterable[(Int, Long)] = (elasticOverheadTimes, elasticOverheadTimes2).zipped.map {
+          case ((step, v), (_, v2)) =>
+            (step, v + v2)
+        }
+
+        (numSteps, sumStepTimes, sumElasticOverheadTimes)
+    }
+    val meansSuperStepTimes: Iterable[(Int, Double)] = sumStepTimes.map {
+      case (step, sumStepTime) =>
+        step -> (sumStepTime.toDouble / numResults)
+    }
+
+    val averageSumElasticOverheadTimes = sumElasticOverheadTimes.map {
+      case (step, sumElasticOverheadTime) =>
+        step -> (sumElasticOverheadTime.toDouble / numResults)
+    }
+
+    val meansSuperStepTimesMap: Map[Int, Double] = meansSuperStepTimes.toMap
+    val meansElasticTimesMap: Map[Int, Double] = averageSumElasticOverheadTimes.toMap
+
+    data.map(_._2).map(_.toMap)
+
+    val (stdsSum, stdsElasticSum) = data.map { x =>
+      val (_, superStepTimes, elasticOverheadTimes) = x
+
+      val stds = superStepTimes.map{
+        case (step, superStepTime) =>
+          val diff = superStepTime - meansSuperStepTimesMap(step)
+          step -> (diff * diff)
+      }
+
+      val stdselastic = elasticOverheadTimes.map {
+        case (step, superStepTime) =>
+          val diff = superStepTime - meansElasticTimesMap(step)
+          step -> (diff * diff)
+      }
+      (stds, stdselastic)
+//      (0, Math.sqrt((1/ (stds.size - 1)) * stds.sum), Math.sqrt((1/ (stdselastic.size - 1)) * stdselastic.sum))
+    }.reduce[(Iterable[(Int, Double)], Iterable[(Int, Double)])] {
+      case (a, b) =>
+        val (stds, stdselastic) = a
+        val (stds2, stdselastic2) = b
+        val stdsPartSum = (stds, stds2).zipped.map{
+          case ((step, v), (_, v2)) =>
+            step -> (v + v2)
+        }
+        val stdsElasticPartSum = (stdselastic, stdselastic2).zipped.map {
+          case ((step, v), (_, v2)) =>
+            step -> (v + v2)
+        }
+
+        (stdsPartSum, stdsElasticPartSum)
+    }
+
+    val stdsSuperStepTimes = stdsSum.map{
+      case (step, stdSum) =>
+        step -> Math.sqrt(1.0 / (numResults.toDouble - 1.0) * stdSum.toDouble)
+    }
+
+    val stdsElasticSuperStepTimes = stdsElasticSum.map{
+      case (step, stdElasticSum) =>
+        step -> Math.sqrt(1.0 / (numResults.toDouble - 1.0) * stdElasticSum.toDouble)
+    }
+
+    val procSpeedErrors = stdsSuperStepTimes.map{
+      case (step, stdProc) =>
+        step -> stdProc
+    }
+
+    val elasticOverheadErrors = stdsElasticSuperStepTimes.map{
+      case (step, stdProcElastic) =>
+        step -> stdProcElastic
+    }
+
+    val superStepTimes = generatePyArray(meansSuperStepTimes.map(_._2))
+    val elasticOverheadTimesPyArray = generatePyArray(averageSumElasticOverheadTimes.map(_._2))
+    val procSpeedErrorsPyArray = generatePyArray(procSpeedErrors.map(_._2))
+    val elasticOverheadErrorsPyArray = generatePyArray(elasticOverheadErrors.map(_._2))
+
+    val fileName = s"variability-$dataSet-$algorithm-$policyName.pdf"
+    val outputPath = s"$outputPathPrefix/$fileName"
+
+    val script = s"""
+       |import numpy as np
+       |import matplotlib.pyplot as plt
+       |
+       |numSupersteps = $numberOfSteps
+       |yAverageProcSpeed = $superStepTimes
+       |yElasticOverhead = $elasticOverheadTimesPyArray
+       |yProcSpeedError = $procSpeedErrorsPyArray
+       |yElasticOverheadError = $elasticOverheadErrorsPyArray
+       |
+       |yProcSpeedError = list(map(lambda x: x / 1000, yProcSpeedError))
+       |yElasticOverheadError = list(map(lambda x: x / 1000, yElasticOverheadError))
+       |yAverageProcSpeed = list(map(lambda x: x / 1000, yAverageProcSpeed))
+       |yElasticOverhead = list(map(lambda x: x / 1000, yElasticOverhead))
+       |
+       |barWidth = 0.35
+       |steps = np.arange(0, numSupersteps, 1)
+       |
+       |fig = plt.figure()
+       |barChart = fig.add_axes((0.1, 0.1, 0.8, 0.8))
+       |barChart.set_xlim([-0.1, max(steps) + 0.5])
+       |p1 = barChart.bar(steps, yAverageProcSpeed, barWidth, color='r', yerr = yProcSpeedError)
+       |p2 = barChart.bar(steps, yElasticOverhead, barWidth, bottom=yAverageProcSpeed, yerr = yElasticOverheadError)
+       |barChart.set_xticks(steps + barWidth/2.)
+       |barChart.set_xticklabels(steps)
+       |barChart.set_xlabel('supersteps')
+       |barChart.set_ylabel('time (s)')
+       |barChart.legend((p1[0], p2[0]), ('t_proc', 't_elastic'), loc = 0)
+       |plt.savefig("$outputPath")
+       """.stripMargin
+
+    val scriptLocation = File.makeTemp()
+    scriptLocation.writeAll(script)
+    scriptLocation.setExecutable(executable = true)
+    new ProcessBuilder().command("/usr/bin/python", scriptLocation.toString).start().waitFor()
+
+    s"""
+       |\\begin{figure}[H]
+       | \\centering
+       | \\includegraphics[width=1.0\\linewidth]{$relativeLatexPathPrefix/$fileName}
+       |\\caption{Variability of $policyName on $dataSet with $algorithm}
+       |\\label{policy-$dataSet-$algorithm-$policyName}
+       |\\end{figure}
+     """.stripMargin
+  }
+
+  def createSupplyDemandPlot(outputPathPrefix : String, relativeLatexPathPrefix : String) : Iterable[String] = {
+    policyResults.sortBy(_.policyName).groupBy(_.policyName).map{ case (policyName, groupedResults) =>
+      plotSupplyDemands(policyName, groupedResults, outputPathPrefix, relativeLatexPathPrefix) +
+      plotBarVariability(policyName, groupedResults, outputPathPrefix, relativeLatexPathPrefix)
     }
   }
 

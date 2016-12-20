@@ -21,6 +21,8 @@ abstract case class AutoScalePython(path : String) extends ElasticPolicy {
   protected[this] val executableName : String
   protected[this] var serverProcess : Process = _
   protected[this] var port : Int = _
+  // TODO parameterize this
+  protected[this] var lowerBound : Int = _
 
   private[this] def copyResources() : String = {
     val resourceStream = getClass.getResourceAsStream("/EaaS.zip")
@@ -42,6 +44,7 @@ abstract case class AutoScalePython(path : String) extends ElasticPolicy {
 
   override def init(policyParams : Config) : Unit = {
     port = if (policyParams.hasPath("port")) policyParams.getInt("port") else 5012
+    lowerBound = if (policyParams.hasPath("lowerbound")) policyParams.getInt("lowerbound") else 1
     val workingDir = policyParams.getString("workingDir")
     val executableLocation = copyResources() + "/" + executableName
     // check if executableLocation exists
@@ -116,8 +119,8 @@ abstract case class AutoScalePython(path : String) extends ElasticPolicy {
         Math.max(0, maxNumWorkers - currentNumWorkers) // lowerbound
       )
     } else if (rawPrediction < 0) {
-      if (currentNumWorkers + rawPrediction < 1) {
-        -(currentNumWorkers - 1)
+      if (currentNumWorkers + rawPrediction < lowerBound) {
+        -(currentNumWorkers - lowerBound)
       } else {
         rawPrediction
       }

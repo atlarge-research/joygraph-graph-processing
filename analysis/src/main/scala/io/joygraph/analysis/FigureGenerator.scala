@@ -3,7 +3,7 @@ package io.joygraph.analysis
 import scala.reflect.io.{Directory, File}
 
 object FigureGenerator extends App {
-  val baseResultDirectory = "/home/sietse/Documents/experimental-results/elastic"
+  val baseResultDirectory = "/home/sietse/thesis/experimental-results/elastic"
   val bfsResultDirs = baseResultDirectory + "/BFS"
   val prResultDirs = baseResultDirectory + "/PR"
   val wccResultDirs = baseResultDirectory + "/WCC"
@@ -17,8 +17,8 @@ object FigureGenerator extends App {
   ).map(Directory(_)).flatMap(_.dirs.map(_.toFile.toString()))
 
   val relativeFigPathDir = "elastic-figs"
-  val targetFigDir = s"/home/sietse/Documents/Thesis/LateX/${relativeFigPathDir}"
-  val elasticityResultsTexFile = File("/home/sietse/Documents/Thesis/LateX/elasticityresults.tex")
+  val targetFigDir = s"/home/sietse/thesis/Thesis/LateX/${relativeFigPathDir}"
+  val elasticityResultsTexFile = File("/home/sietse/thesis/Thesis/LateX/elasticityresults.tex")
   elasticityResultsTexFile.writeAll("") // empty file
 
   val results = ParseResultDirectories(resultsDirs)
