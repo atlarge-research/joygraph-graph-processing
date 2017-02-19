@@ -78,6 +78,8 @@ trait GeneralResultProperties extends BaseResultProperties {
     }
   )
 
+  val experimentDate = experimentDateCalc()
+
   val (processingTime, makeSpan) = (times.next / 1000L, times.next / 1000L)
   val machineTime = machineTimeCalc() / 1000L
 
@@ -102,6 +104,21 @@ trait GeneralResultProperties extends BaseResultProperties {
   //        (0,0)
   //    }
   //  }
+
+  def experimentDateCalc() : Long = {
+    val format = new SimpleDateFormat("MM/dd/yyyy HH:mm:ss")
+    val fileName = dirs.filter(_.name.startsWith("joygraph-report-")).iterator.next().name
+    val dateRaw = fileName.substring("joygraph-report-".length)
+
+    // transform to proper format
+    val year = "20" + dateRaw.substring(0, 2)
+    val month = dateRaw.substring(2, 4)
+    val day = dateRaw.substring(4,6)
+    val hour = dateRaw.substring(7, 9)
+    val minutes = dateRaw.substring(9, 11)
+    val seconds = dateRaw.substring(11, 13)
+    format.parse(s"$month/$day/$year $hour:$minutes:$seconds").getTime
+  }
 
   def superStepTimeSumCalc() : Long = {
     val reader = metrics.policyMetricsReader
