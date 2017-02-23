@@ -27,8 +27,8 @@ object FigureGenerator extends App {
   val LATEXONLY = true
 
   def buildPerformanceAndElasticityMetrics(experiments : ParIterable[Experiment], mainSb : StringBuilder): Unit = {
-    val sb = StringBuilder.newBuilder
     experiments.map { x =>
+      val sb = StringBuilder.newBuilder
       sb.append(x.createPerformanceTableWithAverages()).append("\n")
       sb.append(x.createElasticTableWithAverages()).append("\n")
       sb.append(x.createTournamentScoreTableMerged()).append("\n")
@@ -39,8 +39,8 @@ object FigureGenerator extends App {
   }
 
   def buildDiagrams(experiments : ParIterable[Experiment], mainSb : StringBuilder): Unit = {
-    val sb = StringBuilder.newBuilder
     experiments.map { x =>
+      val sb = StringBuilder.newBuilder
       val supplyDemandPlotFilePathPrefix = s"$targetFigDir"
       val latexFigs = x.createSupplyDemandPlot(supplyDemandPlotFilePathPrefix, relativeFigPathDir, LATEXONLY)
       latexFigs.foreach{ fig =>
