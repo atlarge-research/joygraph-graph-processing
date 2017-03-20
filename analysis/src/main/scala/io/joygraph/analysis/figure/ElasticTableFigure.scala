@@ -35,7 +35,7 @@ object ElasticTableFigure {
       val columns = Array(
         "$a_U$", "$a_O$", "$\\bar{a}_U$", "$\\bar{a}_O$", // accuracy metric
         "$t_U$", "$t_O$", // wrongProvisioning
-        "$i$", "$i'$" // instability
+        "$k$", "$k'$" // instability
       )
 
 //      val rows =
