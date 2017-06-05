@@ -5,38 +5,41 @@ import java.text.SimpleDateFormat
 import java.util.Properties
 
 import io.joygraph.analysis.autoscale.AutoscalerMetricCalculator
+import io.joygraph.analysis.autoscale.metrics.{AccuracyMetric, InstabilityMetric, WrongProvisioningMetric}
 import io.joygraph.analysis.performance.PerformanceMetric
 import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation, WorkerState}
 
+import scala.collection.immutable
 import scala.collection.immutable.IndexedSeq
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.parallel.immutable.{ParIterable, ParMap, ParSeq}
 import scala.io.Source
-import scala.reflect.io.{Directory, Path}
+import scala.reflect.io.{Directory, File, Path}
 import scala.util.{Failure, Success, Try}
 
 trait BaseResultProperties {
   val dir : Directory
-  val benchmarkId = dir.name
-  val benchmarkLog = dir / "benchmark-log.txt"
-  val joygraphPropertiesPath = dir / "config" / "joygraph.properties"
-  val metricsDir = dir / s"metrics_$benchmarkId"
-  val metricsFile = metricsDir / "metrics.bin"
-  val nodeLogsDir = (dir / "joblog" / "yarnlog").toDirectory
+  val benchmarkId: String = dir.name
+  val benchmarkLog: Path = dir / "benchmark-log.txt"
+  val joygraphPropertiesPath: Path = dir / "config" / "joygraph.properties"
+  val metricsDir: Path = dir / s"metrics_$benchmarkId"
+  val metricsFile: Path = metricsDir / "metrics.bin"
+  val nodeLogsDir: Directory = (dir / "joblog" / "yarnlog").toDirectory
 
-  val graphPropertiesFile = {
+  val graphPropertiesFile: Properties = {
     val p = new Properties()
     p.load(new FileInputStream((dir / "config" / "runs" / "all.properties").jfile))
     p
   }
 
-  val joygraphPropertiesFile = {
+  val joygraphPropertiesFile: Properties = {
     val p = new Properties()
     p.load(new FileInputStream(joygraphPropertiesPath.jfile))
     p
   }
 
-  val algorithmName = getAlgorithmName
-  val datasetName = getDatasetName
+  val algorithmName: String = getAlgorithmName
+  val datasetName: String = getDatasetName
   val (vertices, edges) = getVerticesEdges
 
   def getDatasetName : String = {
@@ -62,13 +65,13 @@ trait BaseResultProperties {
 }
 
 trait GeneralResultProperties extends BaseResultProperties {
-  val dirs = dir.dirs.toIndexedSeq
-  val files = dir.files.toIndexedSeq
-  val valid = Source.fromFile(benchmarkLog.jfile).getLines().find(_.contains("Validation successful"))
+  val dirs: IndexedSeq[Directory] = dir.dirs.toIndexedSeq
+  val files: IndexedSeq[File] = dir.files.toIndexedSeq
+  val valid: Option[String] = Source.fromFile(benchmarkLog.jfile).getLines().find(_.contains("Validation successful"))
   if (valid.isEmpty) throw new IllegalArgumentException("Invalid Result")
   val metrics = MetricsTransformer(metricsFile.jfile.getAbsolutePath)
-  val masterNodeStdout = nodeLogsDir.deepFiles.find(_.name == "appMaster.jar.stdout")
-  val times = Source.fromFile(benchmarkLog.jfile).getLines().flatMap(s =>
+  val masterNodeStdout: Option[File] = nodeLogsDir.deepFiles.find(_.name == "appMaster.jar.stdout")
+  val times: Iterator[Long] = Source.fromFile(benchmarkLog.jfile).getLines().flatMap(s =>
     if (s.startsWith("ProcessingTime")) {
       Some(s.split(":")(1).trim.toLong)
     } else if (s.endsWith(" ms.")) {
@@ -78,32 +81,19 @@ trait GeneralResultProperties extends BaseResultProperties {
     }
   )
 
-  val experimentDate = experimentDateCalc()
+  val experimentDate: Long = experimentDateCalc()
 
   val (processingTime, makeSpan) = (times.next / 1000L, times.next / 1000L)
-  val machineTime = machineTimeCalc() / 1000L
+  val machineTime: Long = machineTimeCalc() / 1000L
 
-  val machineProcessingTime = machineProcessingTimeCalc() / 1000L
-  val machineElasticOverheadTime = machineElasticOverheadCalc() / 1000L
-  val superStepTimeSum = superStepTimeSumCalc() / 1000L
+  val machineProcessingTime: Long = machineProcessingTimeCalc() / 1000L
+  val machineElasticOverheadTime: Long = machineElasticOverheadCalc() / 1000L
+  val superStepTimeSum: Long = superStepTimeSumCalc() / 1000L
 
   val performanceMetrics = PerformanceMetric(processingTime, makeSpan, machineTime,
     vertices / processingTime, edges / processingTime,
     machineElasticOverheadTime,
     superStepTimeSum)
-
-  //  @deprecated
-  //  def verticesEdges : (Long, Long) = {
-  //    Source.fromFile(masterNodeStdout.get.jfile).getLines().find(x => x.contains("total : ")) match {
-  //      case Some(x) =>
-  //        val splits = x.split(" ")
-  //        val vertices = splits(splits.length - 2)
-  //        val edges = splits(splits.length - 1)
-  //        (vertices.toLong, edges.toLong)
-  //      case None =>
-  //        (0,0)
-  //    }
-  //  }
 
   def experimentDateCalc() : Long = {
     val format = new SimpleDateFormat("MM/dd/yyyy HH:mm:ss")
@@ -275,13 +265,13 @@ trait GeneralResultProperties extends BaseResultProperties {
 }
 
 trait PolicyResultProperties extends ExperimentalResult with GeneralResultProperties {
-  val policyClassName = findPolicyClassName()
+  val policyClassName: String = findPolicyClassName()
   if (policyClassName == "NONE") throw new IllegalArgumentException
-  val policyName = transformPolicyName(policyClassName)
-  val maxWorkerCount = findMaxWorkerCount()
-  val accMetric = AutoscalerMetricCalculator.getAccuracyMetric(metrics.policyMetricsReader, maxWorkerCount)
-  val wrongProvisioningMetric = AutoscalerMetricCalculator.getWrongProvisioningMetric(metrics.policyMetricsReader)
-  val instabilityMetric = AutoscalerMetricCalculator.getInstabilityMetric(metrics.policyMetricsReader)
+  val policyName: String = transformPolicyName(policyClassName)
+  val maxWorkerCount: Int = findMaxWorkerCount()
+  val accMetric: AccuracyMetric = AutoscalerMetricCalculator.getAccuracyMetric(metrics.policyMetricsReader, maxWorkerCount)
+  val wrongProvisioningMetric: WrongProvisioningMetric = AutoscalerMetricCalculator.getWrongProvisioningMetric(metrics.policyMetricsReader)
+  val instabilityMetric: InstabilityMetric = AutoscalerMetricCalculator.getInstabilityMetric(metrics.policyMetricsReader)
 
   def transformPolicyName(policyClassName : String) : String = {
     policyClassName.substring(policyClassName.lastIndexOf(".") + 1) match {
@@ -338,13 +328,13 @@ case class ParseResultDirectory(resultsDir : String) {
     }
   }.groupBy(x => (x.datasetName, x.algorithmName))
 
-  lazy val experiments = results.map{case ((datasetName, algorithmName), res) => Experiment(datasetName, algorithmName, res)}
+  lazy val experiments: immutable.Iterable[Experiment] = results.map{case ((datasetName, algorithmName), res) => Experiment(datasetName, algorithmName, res)}
 
 }
 
 case class ParseResultDirectories(resultsDirs : Iterable[String]) {
   val directories: Iterator[Directory] = resultsDirs.map(resultsDir => Directory(Path(resultsDir))).map(_.dirs).reduce(_ ++ _)
-  val results = directories.toIndexedSeq.par.flatMap{
+  val results: ParMap[(String, String), ParSeq[ExperimentalResult]] = directories.toIndexedSeq.par.flatMap{
     dir => Try[ExperimentalResult] {
       new ExperimentalResult(dir)
     } match {
@@ -355,5 +345,5 @@ case class ParseResultDirectories(resultsDirs : Iterable[String]) {
         Some(value)
     }
   }.groupBy(x => (x.datasetName, x.algorithmName))
-  val experiments = results.map{case ((datasetName, algorithmName), res) => Experiment(datasetName, algorithmName, res.toIndexedSeq)}
+  val experiments: ParIterable[Experiment] = results.map{case ((datasetName, algorithmName), res) => Experiment(datasetName, algorithmName, res.toIndexedSeq)}
 }
