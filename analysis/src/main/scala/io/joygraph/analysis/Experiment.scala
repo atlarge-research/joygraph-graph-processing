@@ -14,21 +14,21 @@ import scala.util.{Failure, Success, Try}
 
 case class Experiment(dataSet : String, algorithm : String, experimentalResults : Iterable[ExperimentalResult]) {
 
-  val baseLineResults = ArrayBuffer.empty[GeneralResultProperties]
-  val policyResults = ArrayBuffer.empty[PolicyResultProperties]
-  val invalidResults = ArrayBuffer.empty[BaseResultProperties]
-  lazy val policyGrouped = policyResults.groupBy(_.policyName)
+  val baseLineResults: ArrayBuffer[GeneralResultProperties] = ArrayBuffer.empty[GeneralResultProperties]
+  val policyResults: ArrayBuffer[PolicyResultProperties] = ArrayBuffer.empty[PolicyResultProperties]
+  val invalidResults: ArrayBuffer[BaseResultProperties] = ArrayBuffer.empty[BaseResultProperties]
+  lazy val policyGrouped: Map[String, ArrayBuffer[PolicyResultProperties]] = policyResults.groupBy(_.policyName)
 
   experimentalResults.foreach { r =>
     Try[PolicyResultProperties] {
       new ExperimentalResult(r.dir) with PolicyResultProperties
     } match {
-      case Failure(exception) =>
+      case Failure(_) =>
         Try[GeneralResultProperties] {
           new ExperimentalResult(r.dir) with GeneralResultProperties
         } match {
-          case Failure(exception) =>
-            println(exception)
+          case Failure(_) =>
+            println(_)
             invalidResults += r
           case Success(value) =>
             baseLineResults += value
@@ -423,10 +423,10 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     )
 
     policyGrouped.foreach{
-      case (policyName, policyResults) =>
-        val accuracyMetrics = policyResults.map(_.accMetric)
-        val instabilityMetrics = policyResults.map(_.instabilityMetric)
-        val wrongProvisioningMetrics = policyResults.map(_.wrongProvisioningMetric)
+      case (policyName, results) =>
+        val accuracyMetrics = results.map(_.accMetric)
+        val instabilityMetrics = results.map(_.instabilityMetric)
+        val wrongProvisioningMetrics = results.map(_.wrongProvisioningMetric)
         val averageAccuracyMetric = accuracyMetrics.reduce(_ += _).normalizeBy(accuracyMetrics.size)
         val averageInstabilityMetric = instabilityMetrics.reduce(_ += _).normalizeBy(instabilityMetrics.size)
         val averageWrongProvisioningMetric = wrongProvisioningMetrics.reduce(_ += _).normalizeBy(wrongProvisioningMetrics.size)
@@ -453,8 +453,8 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     builder.result("Baseline", meanPerformanceMetric, coefficientOfVariation)
 
     policyGrouped.foreach{
-      case (policyName, policyResults) =>
-        val performanceMetrics = policyResults.map(_.performanceMetrics)
+      case (policyName, results) =>
+        val performanceMetrics = results.map(_.performanceMetrics)
         val meanPerformanceMetric = performanceMetrics.reduce(_ += _).normalizeBy(performanceMetrics.size)
         val numReps = performanceMetrics.length
         val processingTimes = performanceMetrics.map(_.processingTime)
@@ -504,8 +504,8 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     )
 
     policyGrouped.foreach {
-      case (policyName, policyResults) =>
-        val performanceMetrics = policyResults.map(_.performanceMetrics)
+      case (policyName, results) =>
+        val performanceMetrics = results.map(_.performanceMetrics)
         val averagePerformanceMetric = performanceMetrics.reduce(_ += _).normalizeBy(performanceMetrics.size)
         val (min, max) = performanceMetrics.map( x => (x,x)).reduce[(PerformanceMetric, PerformanceMetric)] {
           case ((x1, x2), (y1, y2)) =>
