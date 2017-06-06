@@ -4,6 +4,7 @@ import java.io.FileInputStream
 import java.text.SimpleDateFormat
 import java.util.Properties
 
+import io.joygraph.analysis.algorithm.AlgorithmMetric
 import io.joygraph.analysis.autoscale.AutoscalerMetricCalculator
 import io.joygraph.analysis.autoscale.metrics.{AccuracyMetric, InstabilityMetric, WrongProvisioningMetric}
 import io.joygraph.analysis.performance.PerformanceMetric
@@ -272,6 +273,8 @@ trait PolicyResultProperties extends ExperimentalResult with GeneralResultProper
   val accMetric: AccuracyMetric = AutoscalerMetricCalculator.getAccuracyMetric(metrics.policyMetricsReader, maxWorkerCount)
   val wrongProvisioningMetric: WrongProvisioningMetric = AutoscalerMetricCalculator.getWrongProvisioningMetric(metrics.policyMetricsReader)
   val instabilityMetric: InstabilityMetric = AutoscalerMetricCalculator.getInstabilityMetric(metrics.policyMetricsReader)
+
+  val algorithmMetrics: AlgorithmMetric = AlgorithmMetric.calculate(metrics.policyMetricsReader)
 
   def transformPolicyName(policyClassName : String) : String = {
     policyClassName.substring(policyClassName.lastIndexOf(".") + 1) match {
