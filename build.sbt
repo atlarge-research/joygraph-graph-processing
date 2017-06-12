@@ -26,7 +26,9 @@ lazy val pyautoscale = (project in file("pyautoscale")).
 lazy val analysis = (project in file("analysis")).
   settings(commonSettings: _*).
   settings(
-    libraryDependencies ++= testDependencies
+    libraryDependencies ++= Seq(
+      "org.apache.commons" % "commons-math3" % "3.6.1"
+    ) ++ testDependencies
   ).
   dependsOn(core)
 
