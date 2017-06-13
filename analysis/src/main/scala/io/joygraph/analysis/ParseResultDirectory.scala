@@ -71,6 +71,7 @@ trait GeneralResultProperties extends BaseResultProperties {
   val valid: Option[String] = Source.fromFile(benchmarkLog.jfile).getLines().find(_.contains("Validation successful"))
   if (valid.isEmpty) throw new IllegalArgumentException("Invalid Result")
   val metrics = MetricsTransformer(metricsFile.jfile.getAbsolutePath)
+  val algorithmMetrics: AlgorithmMetric = AlgorithmMetric.calculate(metrics.policyMetricsReader)
   val masterNodeStdout: Option[File] = nodeLogsDir.deepFiles.find(_.name == "appMaster.jar.stdout")
   val times: Iterator[Long] = Source.fromFile(benchmarkLog.jfile).getLines().flatMap(s =>
     if (s.startsWith("ProcessingTime")) {

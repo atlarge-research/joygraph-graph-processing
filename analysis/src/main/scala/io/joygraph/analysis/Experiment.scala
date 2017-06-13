@@ -161,7 +161,11 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
      """.stripMargin
   }
 
-  def plotBarVariability(policyName: String, groupedResults: ArrayBuffer[PolicyResultProperties], outputPathPrefix: String, relativeLatexPathPrefix: String, latexOnly : Boolean): String = {
+  def plotBarVariability
+  (policyName: String,
+   groupedResults: ArrayBuffer[PolicyResultProperties],
+   outputPathPrefix: String,
+   relativeLatexPathPrefix: String, latexOnly : Boolean): String = {
     val fileName = s"variability-$dataSet-$algorithm-$policyName.pdf"
     if (!latexOnly) {
       val numResults = groupedResults.size
@@ -320,6 +324,17 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
        |\\label{policy-$dataSet-$algorithm-$policyName-variability}
        |\\end{figure}
      """.stripMargin
+  }
+
+  def plotHighDetail
+  (policyName: String,
+   groupedResults: ArrayBuffer[PolicyResultProperties],
+   outputPathPrefix: String,
+   relativeLatexPathPrefix: String, latexOnly : Boolean): String = {
+    groupedResults.map{
+      result =>
+        // TODO
+    }
   }
 
   def createSupplyDemandPlot(outputPathPrefix : String, relativeLatexPathPrefix : String, latexOnly : Boolean) : Iterable[String] = {
