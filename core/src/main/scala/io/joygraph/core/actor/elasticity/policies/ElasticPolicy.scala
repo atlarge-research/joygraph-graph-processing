@@ -168,7 +168,11 @@ abstract class ElasticPolicy {
 
   def stepTime(superStep : SuperStep, workerId : WorkerId) : Long = {
     val timestamps = superStepWorkerMetrics(superStep, workerId).map(_.timestamp)
-    timestamps.max - timestamps.min
+    if (timestamps.isEmpty) {
+      0
+    } else {
+      timestamps.max - timestamps.min
+    }
   }
 
   def timeOfOperation(superStep : SuperStep, workerId : WorkerId, operation : WorkerOperation.Value): Option[Long] = {

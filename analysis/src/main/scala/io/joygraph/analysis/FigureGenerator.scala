@@ -4,7 +4,7 @@ import scala.collection.parallel.ParIterable
 import scala.reflect.io.{Directory, File}
 
 object FigureGenerator extends App {
-  val baseResultDirectory = "/home/sietse/thesis/experimental-results/elastic"
+  val baseResultDirectory = "/home/sietse/Documents/experimental-results/elastic"
   val bfsResultDirs = baseResultDirectory + "/BFS"
   val prResultDirs = baseResultDirectory + "/PR"
   val wccResultDirs = baseResultDirectory + "/WCC"
@@ -18,9 +18,9 @@ object FigureGenerator extends App {
   ).map(Directory(_)).flatMap(_.dirs.map(_.toFile.toString()))
 
   val relativeFigPathDir = "elastic-figs"
-  val targetFigDir = s"/home/sietse/thesis/Thesis/LateX/${relativeFigPathDir}"
-  val elasticityResultsTexFile = File("/home/sietse/thesis/Thesis/LateX/elasticityresults.tex")
-  elasticityResultsTexFile.writeAll("") // empty file
+  val targetFigDir = s"/home/sietse/Documents/Thesis/LateX/$relativeFigPathDir"
+  val elasticityResultsTexFile = File("/home/sietse/Documents/Thesis/LateX/elasticityresults.tex")
+//  elasticityResultsTexFile.writeAll("") // empty file
 
   val results = ParseResultDirectories(resultsDirs)
   val groupedExperiments = results.experiments.groupBy(_.dataSet)
@@ -36,6 +36,20 @@ object FigureGenerator extends App {
       sb.clear()
       x.algorithm -> result
     }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
+  }
+
+  def buildAlgorithmStatistics(experiments : ParIterable[Experiment], mainSb : StringBuilder): Unit = {
+    // get all the algorithms, the active vertices are invariant per step
+    experiments.map { experiment =>
+      val sb = StringBuilder.newBuilder
+      experiment.baseLineResults.groupBy(x => x.datasetName -> x.algorithmName).mapValues {
+        _.collectFirst {
+          case x : GeneralResultProperties => x
+        }.get
+      }.keys.foreach(println)
+
+
+    }
   }
 
   def buildDiagrams(experiments : ParIterable[Experiment], mainSb : StringBuilder): Unit = {
@@ -56,10 +70,11 @@ object FigureGenerator extends App {
     case (dataSet, experiments) =>
       val mainSb = StringBuilder.newBuilder
       mainSb.append("\\subsubsection{Performance and elasticity metrics for %s}".format(dataSet)).append("\n")
-      buildPerformanceAndElasticityMetrics(experiments, mainSb)
+//      buildPerformanceAndElasticityMetrics(experiments, mainSb)
       mainSb.append("\\newpage")
       mainSb.append("\\subsubsection{Supply-demand and variability plots for %s}".format(dataSet)).append("\n")
-      buildDiagrams(experiments, mainSb)
+//      buildDiagrams(experiments, mainSb)
+      buildAlgorithmStatistics(experiments, mainSb)
 //        sb.append(x.createTournamentScoreTableElastic()).append("\n")
 //        sb.append(x.createTournamentScoreTablePerformance()).append("\n")
 //        sb.append(x.createTournamentScoreTableCombined()).append("\n")

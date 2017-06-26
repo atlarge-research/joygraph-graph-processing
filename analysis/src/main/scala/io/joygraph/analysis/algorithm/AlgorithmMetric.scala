@@ -6,6 +6,7 @@ import org.apache.commons.math3.stat.descriptive.moment.{Mean, StandardDeviation
 
 import scala.collection.JavaConversions._
 import scala.collection.immutable
+import scala.util.{Failure, Success, Try}
 
 case class AlgorithmMetric
 (activeVerticesPerStep : immutable.Seq[Long],
@@ -22,7 +23,7 @@ case class Statistics(std : Double, average : Double, n : Long) {}
 
 object AlgorithmMetric {
 
-  private def extractGeneralMetrics[T : Number]
+  private def extractGeneralMetrics[T <: Number]
   (name : String, transformer : Metric => T, metric : Metric) : Option[T] = {
     metric.name match {
       case `name` =>
@@ -32,7 +33,7 @@ object AlgorithmMetric {
     }
   }
 
-  private def extractGeneralMetricsPerStepPerWorker[T,A]
+  private def extractGeneralMetricsPerStepPerWorker[T, A]
   (elasticPolicyReader: ElasticPolicyReader,
    transformer : Metric => Option[T],
    aggregator : Iterable[T] => A
@@ -42,9 +43,9 @@ object AlgorithmMetric {
         for (workerId <- elasticPolicyReader.workersForStep(i))
           yield {
             workerId -> {
-              elasticPolicyReader.superStepWorkerMetrics(i, workerId).map { nodeMetrics =>
+              aggregator(elasticPolicyReader.superStepWorkerMetrics(i, workerId).map { nodeMetrics =>
                 nodeMetrics.getMetrics.flatMap { transformer(_) }
-              }
+              }.foldLeft(Iterable.empty[T])(_ ++ _))
             }
           }
       }
@@ -60,11 +61,19 @@ object AlgorithmMetric {
         val rawArray = collection.map(_.toDouble).toArray
         val std = new StandardDeviation(true)
         val mean = new Mean()
-        Statistics(
-          std.evaluate(),
-          mean.evaluate(rawArray),
-          rawArray.length
-        )
+        Try[Statistics] {
+          Statistics(
+            std.evaluate(rawArray),
+            mean.evaluate(rawArray),
+            rawArray.length
+          )
+        } match {
+          case Failure(exception) =>
+            throw exception;
+          case Success(value) =>
+            value
+        }
+
       }
     )
   }
@@ -81,7 +90,7 @@ object AlgorithmMetric {
     }
   }
 
-  def calculate(policyMetricsReader : ElasticPolicyReader): AlgorithmMetric = {
+  def calculate(policyMetricsReader : ElasticPolicyReader, benchmarkId : String): AlgorithmMetric = {
     val activeVerticesPerStep : immutable.Seq[Long] = {
       for (i <- 0 until policyMetricsReader.totalNumberOfSteps())
         yield policyMetricsReader.activeVerticesSumOf(i)

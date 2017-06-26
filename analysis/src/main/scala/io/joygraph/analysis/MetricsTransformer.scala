@@ -19,7 +19,11 @@ case class ElasticPolicyReader(filePath : String) extends ElasticPolicy {
   importMetrics(filePath)
 
   def totalNumberOfSteps() : Int = {
-    _activeVerticesEndOfStep.keys.max
+    if (_activeVerticesEndOfStep.keys.isEmpty) {
+      0
+    } else {
+      _activeVerticesEndOfStep.keys.max
+    }
   }
 
   def workersForStep(step : Int) : Iterable[Int] = {

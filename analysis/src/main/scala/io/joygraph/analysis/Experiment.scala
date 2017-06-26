@@ -27,8 +27,8 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
         Try[GeneralResultProperties] {
           new ExperimentalResult(r.dir) with GeneralResultProperties
         } match {
-          case Failure(_) =>
-            println(_)
+          case Failure(invalidError) =>
+            println(r.benchmarkId + " " + invalidError)
             invalidResults += r
           case Success(value) =>
             baseLineResults += value
@@ -335,6 +335,7 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
       result =>
         // TODO
     }
+    ???
   }
 
   def createSupplyDemandPlot(outputPathPrefix : String, relativeLatexPathPrefix : String, latexOnly : Boolean) : Iterable[String] = {

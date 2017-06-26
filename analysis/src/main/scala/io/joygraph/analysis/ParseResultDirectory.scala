@@ -71,7 +71,7 @@ trait GeneralResultProperties extends BaseResultProperties {
   val valid: Option[String] = Source.fromFile(benchmarkLog.jfile).getLines().find(_.contains("Validation successful"))
   if (valid.isEmpty) throw new IllegalArgumentException("Invalid Result")
   val metrics = MetricsTransformer(metricsFile.jfile.getAbsolutePath)
-  val algorithmMetrics: AlgorithmMetric = AlgorithmMetric.calculate(metrics.policyMetricsReader)
+  val algorithmMetrics: AlgorithmMetric = AlgorithmMetric.calculate(metrics.policyMetricsReader, benchmarkId)
   val masterNodeStdout: Option[File] = nodeLogsDir.deepFiles.find(_.name == "appMaster.jar.stdout")
   val times: Iterator[Long] = Source.fromFile(benchmarkLog.jfile).getLines().flatMap(s =>
     if (s.startsWith("ProcessingTime")) {
@@ -274,8 +274,6 @@ trait PolicyResultProperties extends ExperimentalResult with GeneralResultProper
   val accMetric: AccuracyMetric = AutoscalerMetricCalculator.getAccuracyMetric(metrics.policyMetricsReader, maxWorkerCount)
   val wrongProvisioningMetric: WrongProvisioningMetric = AutoscalerMetricCalculator.getWrongProvisioningMetric(metrics.policyMetricsReader)
   val instabilityMetric: InstabilityMetric = AutoscalerMetricCalculator.getInstabilityMetric(metrics.policyMetricsReader)
-
-  val algorithmMetrics: AlgorithmMetric = AlgorithmMetric.calculate(metrics.policyMetricsReader)
 
   def transformPolicyName(policyClassName : String) : String = {
     policyClassName.substring(policyClassName.lastIndexOf(".") + 1) match {
