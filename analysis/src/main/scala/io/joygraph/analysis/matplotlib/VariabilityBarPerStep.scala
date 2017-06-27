@@ -2,7 +2,7 @@ package io.joygraph.analysis.matplotlib
 
 import scala.reflect.io.File
 
-class VariabilityBarPerStep
+case class VariabilityBarPerStep
 (
    numSuperSteps : Long,
    means : Iterable[Double],

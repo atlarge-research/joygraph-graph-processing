@@ -538,4 +538,16 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     }
     builder.build()
   }
+
+  def createPerStepDiagrams(): String = {
+    val ((datasetName, algorithmName), properties) = this.baseLineResults.groupBy(x => x.datasetName -> x.algorithmName).mapValues {
+      _.collectFirst {
+        case x : GeneralResultProperties => x
+      }.get
+    }.iterator.next()
+    val metrics = properties.algorithmMetrics
+    val activeVerticesPerStep = metrics.activeVerticesPerStep.zipWithIndex
+
+  }
+
 }

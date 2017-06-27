@@ -1,5 +1,7 @@
 package io.joygraph.analysis
 
+import io.joygraph.analysis.matplotlib.VariabilityBarPerStep
+
 import scala.collection.parallel.ParIterable
 import scala.reflect.io.{Directory, File}
 
@@ -40,14 +42,9 @@ object FigureGenerator extends App {
 
   def buildAlgorithmStatistics(experiments : ParIterable[Experiment], mainSb : StringBuilder): Unit = {
     // get all the algorithms, the active vertices are invariant per step
-    experiments.map { experiment =>
+    experiments.map { x =>
       val sb = StringBuilder.newBuilder
-      experiment.baseLineResults.groupBy(x => x.datasetName -> x.algorithmName).mapValues {
-        _.collectFirst {
-          case x : GeneralResultProperties => x
-        }.get
-      }.keys.foreach(println)
-
+      x.createPerWorkerDiagrams()
 
     }
   }
