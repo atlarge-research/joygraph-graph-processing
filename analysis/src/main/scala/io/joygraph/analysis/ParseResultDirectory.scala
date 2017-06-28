@@ -86,13 +86,13 @@ trait GeneralResultProperties extends BaseResultProperties {
   val experimentDate: Long = experimentDateCalc()
 
   val (processingTime, makeSpan) = (times.next / 1000L, times.next / 1000L)
-  val machineTime: Long = machineTimeCalc() / 1000L
+  lazy val machineTime: Long = machineTimeCalc() / 1000L
 
   val machineProcessingTime: Long = machineProcessingTimeCalc() / 1000L
   val machineElasticOverheadTime: Long = machineElasticOverheadCalc() / 1000L
   val superStepTimeSum: Long = superStepTimeSumCalc() / 1000L
 
-  val performanceMetrics = PerformanceMetric(processingTime, makeSpan, machineTime,
+  lazy val performanceMetrics = PerformanceMetric(processingTime, makeSpan, machineTime,
     vertices / processingTime, edges / processingTime,
     machineElasticOverheadTime,
     superStepTimeSum)

@@ -20,6 +20,10 @@ object DiagramFigure {
     private var _yAxisLabel : String = _
     private var _xAxisLabel : String = _
     private var _diagramTitle : String = _
+    private var _sortByY : Boolean = true
+    private var _manualAxis : Option[(String, String, String, String)] = None
+    private var _manualXAxis : Option[(String, String)] = None
+    private var _logScale : Boolean = true
 
     def values(vals : Properties) : LabelOnlyBuilder = {
       _vals += vals
@@ -46,11 +50,61 @@ object DiagramFigure {
       this
     }
 
+    def sortByY(sortByY : Boolean) : LabelOnlyBuilder = {
+      _sortByY = sortByY
+      this
+    }
+
+    def manualAxis(xMin : String, xMax : String, yMin : String, yMax : String) : LabelOnlyBuilder = {
+      _manualAxis = Some((xMin, xMax, yMin, yMax))
+      this
+    }
+
+    def manualXAxis(xMin : String, xMax : String) : LabelOnlyBuilder = {
+      _manualXAxis = Some((xMin, xMax))
+      this
+    }
+
+    def logScale(logScale : Boolean): LabelOnlyBuilder = {
+      _logScale = logScale
+      this
+    }
+
+    private def createManualAxis() : String = {
+      var output = ""
+      _manualAxis.foreach {
+        case (xMin, xMax, yMin, yMax) => {
+          output = "plt.axis([%s, %s, %s, %s])".format(xMin, xMax, yMin, yMax)
+        }
+      }
+      output
+    }
+
+    private def createManualXAxis() : String = {
+      var output = ""
+      _manualXAxis.foreach {
+        case (xMin, xMax) => {
+          output = "plt.xlim((%s, %s))".format(xMin, xMax)
+        }
+      }
+      output
+    }
+
+    private def createLogScale() : String = {
+      if (_logScale) {
+        "plt.yscale('log')"
+      } else {
+        ""
+      }
+    }
+
     def sanitizeInput() = {
       // we have labels
       // we assume we don't have x values in this case
       // we sort the vals by Y
-      _vals = _vals.sortBy(_._2)
+      if (_sortByY) {
+        _vals = _vals.sortBy(_._2)
+      }
       // we mapped the x values
       _newVals = _vals.zipWithIndex.map {
         case (value , index) => (value._1, index, value._2, value._3)
@@ -110,6 +164,9 @@ object DiagramFigure {
         |plt.xlabel('${_xAxisLabel}')
         |plt.ylabel('${_yAxisLabel}')
         |plt.title("${_diagramTitle}")
+        |${createManualAxis()}
+        |${createManualXAxis()}
+        |${createLogScale()}
         |
         |if len(labels) > 0:
         |\tplt.xticks(x, labels, rotation=30)

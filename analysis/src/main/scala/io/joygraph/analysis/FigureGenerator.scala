@@ -44,9 +44,10 @@ object FigureGenerator extends App {
     // get all the algorithms, the active vertices are invariant per step
     experiments.map { x =>
       val sb = StringBuilder.newBuilder
-      x.createPerWorkerDiagrams()
-
-    }
+      sb.append(x.createPerStepDiagrams("activeverticesperstep-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      val result = sb.toString()
+      x.dataSet -> result
+    }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
   }
 
   def buildDiagrams(experiments : ParIterable[Experiment], mainSb : StringBuilder): Unit = {
@@ -66,12 +67,15 @@ object FigureGenerator extends App {
   groupedExperiments.map {
     case (dataSet, experiments) =>
       val mainSb = StringBuilder.newBuilder
+      mainSb.append("\\subsection{Active vertices per algorithm for %s}".format(dataSet)).append("\n")
+      buildAlgorithmStatistics(experiments, mainSb)
+
       mainSb.append("\\subsubsection{Performance and elasticity metrics for %s}".format(dataSet)).append("\n")
 //      buildPerformanceAndElasticityMetrics(experiments, mainSb)
       mainSb.append("\\newpage")
       mainSb.append("\\subsubsection{Supply-demand and variability plots for %s}".format(dataSet)).append("\n")
 //      buildDiagrams(experiments, mainSb)
-      buildAlgorithmStatistics(experiments, mainSb)
+
 //        sb.append(x.createTournamentScoreTableElastic()).append("\n")
 //        sb.append(x.createTournamentScoreTablePerformance()).append("\n")
 //        sb.append(x.createTournamentScoreTableCombined()).append("\n")

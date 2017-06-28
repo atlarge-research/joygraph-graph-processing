@@ -539,7 +539,7 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     builder.build()
   }
 
-  def createPerStepDiagrams(): String = {
+  def createPerStepDiagrams(fileName : String): String = {
     val ((datasetName, algorithmName), properties) = this.baseLineResults.groupBy(x => x.datasetName -> x.algorithmName).mapValues {
       _.collectFirst {
         case x : GeneralResultProperties => x
@@ -547,6 +547,29 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     }.iterator.next()
     val metrics = properties.algorithmMetrics
     val activeVerticesPerStep = metrics.activeVerticesPerStep.zipWithIndex
+
+    val builder =
+      DiagramFigure.labelOnlyNewBuilder
+        .fileName(fileName)
+        .sortByY(false)
+        .xAxisLabel("Steps")
+        .yAxisLabel("Number of active vertices")
+        .manualXAxis(
+          0.toString,
+          activeVerticesPerStep.maxBy(_._2)._2.toString
+        )
+        .logScale(true)
+        .diagramTitle("Active vertices per step for %s on %s".format(datasetName, algorithmName))
+
+    activeVerticesPerStep.foreach{
+      case (activeVertices, step) => {
+        builder.values(
+          (step.toString, activeVertices, (0, 0))
+        )
+      }
+    }
+
+    builder.build()
 
   }
 
