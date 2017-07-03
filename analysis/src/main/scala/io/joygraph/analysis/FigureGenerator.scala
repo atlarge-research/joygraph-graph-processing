@@ -40,6 +40,15 @@ object FigureGenerator extends App {
     }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
   }
 
+  def buildPerExperimentActiveVerticesPerStepPerWorker(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
+    experiments.map { x =>
+      val sb = StringBuilder.newBuilder
+      sb.append(x.createVerticesPerStepDiagrams("activeverticesperstepperworker-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      val result = sb.toString()
+      x.dataSet -> result
+    }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
+  }
+
   def buildAlgorithmStatistics(experiments : ParIterable[Experiment], mainSb : StringBuilder): Unit = {
     // get all the algorithms, the active vertices are invariant per step
     experiments.map { x =>
@@ -67,9 +76,10 @@ object FigureGenerator extends App {
   groupedExperiments.map {
     case (dataSet, experiments) =>
       val mainSb = StringBuilder.newBuilder
-      mainSb.append("\\subsection{Active vertices per algorithm for %s}".format(dataSet)).append("\n")
-      buildAlgorithmStatistics(experiments, mainSb)
-
+//      mainSb.append("\\subsection{Active vertices per algorithm for %s}".format(dataSet)).append("\n")
+//      buildAlgorithmStatistics(experiments, mainSb)
+      buildPerExperimentActiveVerticesPerStepPerWorker(experiments, mainSb)
+      mainSb.append("\\subsection")
       mainSb.append("\\subsubsection{Performance and elasticity metrics for %s}".format(dataSet)).append("\n")
 //      buildPerformanceAndElasticityMetrics(experiments, mainSb)
       mainSb.append("\\newpage")

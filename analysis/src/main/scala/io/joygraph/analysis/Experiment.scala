@@ -539,6 +539,32 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     builder.build()
   }
 
+  def createVerticesPerStepDiagrams(fileName : String) : String = {
+    this.policyGrouped.foreach {
+      case (policyName, results) =>
+        results.zipWithIndex.foreach {
+          case (result, index) =>
+            val avpw = result.algorithmMetrics.activeVerticesPerStepPerWorker
+            val multiDiagramFigure = MultiDiagramFigure.builder
+            multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
+            avpw.zipWithIndex.foreach{
+              case (v, step) =>
+                val builder = MultiDiagramFigure.diagramBuilder
+
+                v.foreach {
+                  case (workerId, numVertices) =>
+                    builder.values(
+                      (workerId.toDouble, numVertices.toDouble, (0,0))
+                    )
+                }
+                multiDiagramFigure.addSubPlot(builder)
+            }
+            multiDiagramFigure.build()
+        }
+    }
+    ""
+  }
+
   def createPerStepDiagrams(fileName : String): String = {
     val ((datasetName, algorithmName), properties) = this.baseLineResults.groupBy(x => x.datasetName -> x.algorithmName).mapValues {
       _.collectFirst {
