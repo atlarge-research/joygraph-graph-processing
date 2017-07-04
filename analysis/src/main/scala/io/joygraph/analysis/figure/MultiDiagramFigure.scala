@@ -1,6 +1,5 @@
 package io.joygraph.analysis.figure
 
-import io.joygraph.analysis.figure.DiagramFigure.Builder
 import io.joygraph.analysis.figure.PythonTools.createPythonArray
 
 import scala.collection.mutable.ArrayBuffer
@@ -17,14 +16,13 @@ object MultiDiagramFigure {
   }
 
   class DiagramBuilder {
-    type xValue = Double
-    type yValue = Double
+    type xValue = Int
+    type yValue = String
     type yError = (Double, Double) // absDiff from y value (min, max)
     type Properties = (xValue, yValue, yError)
     private var _vals : ArrayBuffer[Properties] = ArrayBuffer.empty[Properties]
-    private var _yAxisLabel : String = _
-    private var _xAxisLabel : String = _
-    private var _diagramTitle : String = _
+    private var _yAxisLabel : String = ""
+    private var _xAxisLabel : String = ""
 
     def values(vals : Properties) : DiagramBuilder = {
       _vals += vals
@@ -41,12 +39,6 @@ object MultiDiagramFigure {
       this
     }
 
-    def diagramTitle(title : String) : DiagramBuilder = {
-      _diagramTitle = title
-      this
-    }
-
-
     def createXValues(): String = {
       if (_vals.isEmpty) {
         "[]"
@@ -59,7 +51,7 @@ object MultiDiagramFigure {
       if (_vals.isEmpty) {
         "[]"
       } else {
-        createPythonArray(_vals.map(_._2.toString))
+        createPythonArray(_vals.map{_._2})
       }
     }
 
@@ -73,22 +65,25 @@ object MultiDiagramFigure {
       }
     }
 
-    def build(): String = {
+    def build(): String =
       s"""
         |plt.xlabel('${_xAxisLabel}')
         |plt.ylabel('${_yAxisLabel}')
-        |plt.title("${_diagramTitle}")
-        |plt.xticks(arange(${_vals.max}), ${createXValues()})
-        |
+        |plt.xticks(${createXValues()}, ${createXValues()}, rotation=30)
         |plt.plot(${createXValues()}, ${createYValues()}, 'ro')
       """.stripMargin
-    }
   }
 
   class FigureBuilder {
 
     private var _name : String = _
     private var _diagramBuilders : ArrayBuffer[DiagramBuilder] = ArrayBuffer.empty[DiagramBuilder]
+    private var _diagramTitle : String = ""
+
+    def diagramTitle(title : String) : FigureBuilder = {
+      _diagramTitle = title
+      this
+    }
 
     def fileName(name : String) : FigureBuilder = {
       _name = name
@@ -111,7 +106,7 @@ object MultiDiagramFigure {
         diagramBuilder =>
           fignum += 1
           s"""
-            |plt.subplot($rows$cols$fignum)
+            |plt.subplot($rows,$cols,$fignum)
             |${diagramBuilder.build()}
             |
           """.stripMargin
@@ -125,7 +120,10 @@ object MultiDiagramFigure {
         |import numpy as np
         |import matplotlib.pyplot as plt
         |
+        |plt.figure(figsize=(10, 20))
+        |plt.title("${_diagramTitle}")
         |${createSubPlots()}
+        |plt.tight_layout()
         |
         |plt.savefig("${_name}.pdf")
         |""".stripMargin

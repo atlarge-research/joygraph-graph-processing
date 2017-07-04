@@ -1,12 +1,10 @@
 package io.joygraph.analysis
 
-import io.joygraph.analysis.matplotlib.VariabilityBarPerStep
-
 import scala.collection.parallel.ParIterable
 import scala.reflect.io.{Directory, File}
 
 object FigureGenerator extends App {
-  val baseResultDirectory = "/home/sietse/Documents/experimental-results/elastic"
+  val baseResultDirectory = "/home/sietse/thesis/experimental-results/elastic"
   val bfsResultDirs = baseResultDirectory + "/BFS"
   val prResultDirs = baseResultDirectory + "/PR"
   val wccResultDirs = baseResultDirectory + "/WCC"
@@ -20,8 +18,8 @@ object FigureGenerator extends App {
   ).map(Directory(_)).flatMap(_.dirs.map(_.toFile.toString()))
 
   val relativeFigPathDir = "elastic-figs"
-  val targetFigDir = s"/home/sietse/Documents/Thesis/LateX/$relativeFigPathDir"
-  val elasticityResultsTexFile = File("/home/sietse/Documents/Thesis/LateX/elasticityresults.tex")
+  val targetFigDir = s"/home/sietse/thesis/Thesis/LateX/$relativeFigPathDir"
+  val elasticityResultsTexFile = File("/home/sietse/thesis/Thesis/LateX/elasticityresults.tex")
 //  elasticityResultsTexFile.writeAll("") // empty file
 
   val results = ParseResultDirectories(resultsDirs)
@@ -43,7 +41,11 @@ object FigureGenerator extends App {
   def buildPerExperimentActiveVerticesPerStepPerWorker(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
     experiments.map { x =>
       val sb = StringBuilder.newBuilder
-      sb.append(x.createVerticesPerStepDiagrams("activeverticesperstepperworker-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+//      sb.append(x.createVerticesPerStepDiagrams("activeverticesperstepperworker-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+//      sb.append(x.createWallClockPerStepDiagrams("wallclock-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+//      sb.append(x.createBytesSentPerStepDiagrams("bytesSent-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+//      sb.append(x.createBytesReceivedPerStepDiagrams("bytesReceived-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+//      sb.append(x.createOffHeapMemoryPerStepDiagrams("offHeap-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
       val result = sb.toString()
       x.dataSet -> result
     }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
@@ -77,8 +79,8 @@ object FigureGenerator extends App {
     case (dataSet, experiments) =>
       val mainSb = StringBuilder.newBuilder
 //      mainSb.append("\\subsection{Active vertices per algorithm for %s}".format(dataSet)).append("\n")
-//      buildAlgorithmStatistics(experiments, mainSb)
-      buildPerExperimentActiveVerticesPerStepPerWorker(experiments, mainSb)
+      buildAlgorithmStatistics(experiments, mainSb)
+//      buildPerExperimentActiveVerticesPerStepPerWorker(experiments, mainSb)
       mainSb.append("\\subsection")
       mainSb.append("\\subsubsection{Performance and elasticity metrics for %s}".format(dataSet)).append("\n")
 //      buildPerformanceAndElasticityMetrics(experiments, mainSb)

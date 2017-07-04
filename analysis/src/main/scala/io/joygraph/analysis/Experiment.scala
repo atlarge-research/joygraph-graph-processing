@@ -1,5 +1,6 @@
 package io.joygraph.analysis
 
+import io.joygraph.analysis.algorithm.Statistics
 import io.joygraph.analysis.autoscale.AutoscalerMetricCalculator
 import io.joygraph.analysis.autoscale.metrics.{AccuracyMetric, InstabilityMetric, WrongProvisioningMetric}
 import io.joygraph.analysis.figure._
@@ -547,15 +548,149 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
             val avpw = result.algorithmMetrics.activeVerticesPerStepPerWorker
             val multiDiagramFigure = MultiDiagramFigure.builder
             multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
+              .diagramTitle(s"$fileName-$policyName-$index")
             avpw.zipWithIndex.foreach{
               case (v, step) =>
                 val builder = MultiDiagramFigure.diagramBuilder
+                val vMap: Map[Int, Long] = v.toMap
+                builder.yAxisLabel(s"Step $step")
+                builder.xAxisLabel(s"Num workers ${vMap.size}")
+                for (workerId <- 0 until result.maxWorkerCount) {
+                  val numVertices : String = vMap.get(workerId) match {
+                    case Some(verticesCount) => verticesCount.toString
+                    case None => "None"
+                  }
+                  builder.values(
+                    (workerId.toInt, numVertices, (0,0))
+                  )
+                }
+                multiDiagramFigure.addSubPlot(builder)
+            }
+            multiDiagramFigure.build()
+        }
+    }
+    ""
+  }
 
-                v.foreach {
-                  case (workerId, numVertices) =>
-                    builder.values(
-                      (workerId.toDouble, numVertices.toDouble, (0,0))
-                    )
+  def createBytesSentPerStepDiagrams(fileName : String) : String = {
+    this.policyGrouped.foreach {
+      case (policyName, results) =>
+        results.zipWithIndex.foreach {
+          case (result, index) =>
+            val avpw = result.algorithmMetrics.bytesSentPerStepPerWorker
+            val multiDiagramFigure = MultiDiagramFigure.builder
+            multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
+              .diagramTitle(s"$fileName-$policyName-$index")
+            avpw.zipWithIndex.foreach{
+              case (v, step) =>
+                val builder = MultiDiagramFigure.diagramBuilder
+                val vMap: Map[Int, Statistics] = v.toMap
+                builder.yAxisLabel(s"Step $step")
+                builder.xAxisLabel(s"Num workers ${vMap.size}")
+                for (workerId <- 0 until result.maxWorkerCount) {
+                  val numVertices : String = vMap.get(workerId) match {
+                    case Some(statistics) => (statistics.average * statistics.n).toString
+                    case None => "None"
+                  }
+                  builder.values(
+                    (workerId.toInt, numVertices, (0,0))
+                  )
+                }
+                multiDiagramFigure.addSubPlot(builder)
+            }
+            multiDiagramFigure.build()
+        }
+    }
+    ""
+  }
+
+  def createBytesReceivedPerStepDiagrams(fileName : String) : String = {
+    this.policyGrouped.foreach {
+      case (policyName, results) =>
+        results.zipWithIndex.foreach {
+          case (result, index) =>
+            val avpw = result.algorithmMetrics.bytesReceivedPerStepPerWorker
+            val multiDiagramFigure = MultiDiagramFigure.builder
+            multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
+              .diagramTitle(s"$fileName-$policyName-$index")
+            avpw.zipWithIndex.foreach{
+              case (v, step) =>
+                val builder = MultiDiagramFigure.diagramBuilder
+                val vMap: Map[Int, Statistics] = v.toMap
+                builder.yAxisLabel(s"Step $step")
+                builder.xAxisLabel(s"Num workers ${vMap.size}")
+                for (workerId <- 0 until result.maxWorkerCount) {
+                  val numVertices : String = vMap.get(workerId) match {
+                    case Some(statistics) => (statistics.average * statistics.n).toString
+                    case None => "None"
+                  }
+                  builder.values(
+                    (workerId.toInt, numVertices, (0,0))
+                  )
+                }
+                multiDiagramFigure.addSubPlot(builder)
+            }
+            multiDiagramFigure.build()
+        }
+    }
+    ""
+  }
+
+  def createOffHeapMemoryPerStepDiagrams(fileName : String) : String = {
+    this.policyGrouped.foreach {
+      case (policyName, results) =>
+        results.zipWithIndex.foreach {
+          case (result, index) =>
+            val avpw = result.algorithmMetrics.offHeapMemoryPerStepPerWorker
+            val multiDiagramFigure = MultiDiagramFigure.builder
+            multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
+              .diagramTitle(s"$fileName-$policyName-$index")
+            avpw.zipWithIndex.foreach{
+              case (v, step) =>
+                val builder = MultiDiagramFigure.diagramBuilder
+                val vMap: Map[Int, Statistics] = v.toMap
+                builder.yAxisLabel(s"Step $step")
+                builder.xAxisLabel(s"Num workers ${vMap.size}")
+                for (workerId <- 0 until result.maxWorkerCount) {
+                  val numVertices : String = vMap.get(workerId) match {
+                    case Some(statistics) => (statistics.average * statistics.n).toString
+                    case None => "None"
+                  }
+                  builder.values(
+                    (workerId.toInt, numVertices, (0,0))
+                  )
+                }
+                multiDiagramFigure.addSubPlot(builder)
+            }
+            multiDiagramFigure.build()
+        }
+    }
+    ""
+  }
+
+  def createWallClockPerStepDiagrams(fileName : String) : String = {
+    this.policyGrouped.foreach {
+      case (policyName, results) =>
+        results.zipWithIndex.foreach {
+          case (result, index) =>
+            val avpw = result.algorithmMetrics.wallClockPerStepPerWorker
+            val multiDiagramFigure = MultiDiagramFigure.builder
+            multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
+              .diagramTitle(s"$fileName-$policyName-$index")
+            avpw.zipWithIndex.foreach{
+              case (v, step) =>
+                val builder = MultiDiagramFigure.diagramBuilder
+                val vMap: Map[Int, Long] = v.toMap
+                builder.yAxisLabel(s"Step $step")
+                builder.xAxisLabel(s"Num workers ${vMap.size}")
+                for (workerId <- 0 until result.maxWorkerCount) {
+                  val numVertices : String = vMap.get(workerId) match {
+                    case Some(verticesCount) => verticesCount.toString
+                    case None => "None"
+                  }
+                  builder.values(
+                    (workerId.toInt, numVertices, (0,0))
+                  )
                 }
                 multiDiagramFigure.addSubPlot(builder)
             }
@@ -585,7 +720,7 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
           activeVerticesPerStep.maxBy(_._2)._2.toString
         )
         .logScale(true)
-        .diagramTitle("Active vertices per step for %s on %s".format(datasetName, algorithmName))
+//        .diagramTitle("Active vertices per step for %s on %s".format(datasetName, algorithmName))
 
     activeVerticesPerStep.foreach{
       case (activeVertices, step) => {

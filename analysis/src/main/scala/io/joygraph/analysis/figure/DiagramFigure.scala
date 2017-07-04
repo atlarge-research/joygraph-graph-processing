@@ -19,7 +19,7 @@ object DiagramFigure {
     private var _newVals : ArrayBuffer[PropertiesWithXMapped] = _
     private var _yAxisLabel : String = _
     private var _xAxisLabel : String = _
-    private var _diagramTitle : String = _
+    private var _diagramTitle : String = ""
     private var _sortByY : Boolean = true
     private var _manualAxis : Option[(String, String, String, String)] = None
     private var _manualXAxis : Option[(String, String)] = None
@@ -155,6 +155,8 @@ object DiagramFigure {
       val pyScript = s"""
         |import numpy as np
         |import matplotlib.pyplot as plt
+        |
+        |plt.rc('font', size=15)
         |
         |x = ${createXValues()}
         |y = ${createYValues()}
