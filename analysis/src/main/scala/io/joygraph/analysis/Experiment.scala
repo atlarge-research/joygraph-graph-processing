@@ -636,6 +636,38 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     ""
   }
 
+  def createAverageCPUPerStepDiagrams(fileName : String) : String = {
+    this.policyGrouped.foreach {
+      case (policyName, results) =>
+        results.zipWithIndex.foreach {
+          case (result, index) =>
+            val avpw = result.algorithmMetrics.averageLoadPerStepPerWorker
+            val multiDiagramFigure = MultiDiagramFigure.builder
+            multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
+              .diagramTitle(s"$fileName-$policyName-$index")
+            avpw.zipWithIndex.foreach{
+              case (v, step) =>
+                val builder = MultiDiagramFigure.diagramBuilder
+                val vMap: Map[Int, Statistics] = v.toMap
+                builder.yAxisLabel(s"Step $step")
+                builder.xAxisLabel(s"Num workers ${vMap.size}")
+                for (workerId <- 0 until result.maxWorkerCount) {
+                  val numVertices : String = vMap.get(workerId) match {
+                    case Some(statistics) => statistics.average.toString
+                    case None => "None"
+                  }
+                  builder.values(
+                    (workerId.toInt, numVertices, (0,0))
+                  )
+                }
+                multiDiagramFigure.addSubPlot(builder)
+            }
+            multiDiagramFigure.build()
+        }
+    }
+    ""
+  }
+
   def createOffHeapMemoryPerStepDiagrams(fileName : String) : String = {
     this.policyGrouped.foreach {
       case (policyName, results) =>
