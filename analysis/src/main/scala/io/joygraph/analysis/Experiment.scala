@@ -4,9 +4,11 @@ import io.joygraph.analysis.algorithm.Statistics
 import io.joygraph.analysis.autoscale.AutoscalerMetricCalculator
 import io.joygraph.analysis.autoscale.metrics.{AccuracyMetric, InstabilityMetric, WrongProvisioningMetric}
 import io.joygraph.analysis.figure._
+import io.joygraph.analysis.matplotlib.VariabilityBarPerStep
 import io.joygraph.analysis.performance.PerformanceMetric
 import io.joygraph.analysis.tournament.Tournament
 import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation}
+import org.apache.commons.math3.stat.descriptive.moment.{Mean, StandardDeviation}
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -540,7 +542,7 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     builder.build()
   }
 
-  def createVerticesPerStepDiagrams(fileName : String) : String = {
+  def createVerticesPerStepDiagramsNew(fileName : String) : String = {
     this.policyGrouped.foreach {
       case (policyName, results) =>
         results.zipWithIndex.foreach {
@@ -553,8 +555,6 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
               case (v, step) =>
                 val builder = MultiDiagramFigure.diagramBuilder
                 val vMap: Map[Int, Long] = v.toMap
-                builder.yAxisLabel(s"Step $step")
-                builder.xAxisLabel(s"Num workers ${vMap.size}")
                 for (workerId <- 0 until result.maxWorkerCount) {
                   val numVertices : String = vMap.get(workerId) match {
                     case Some(verticesCount) => verticesCount.toString
@@ -567,6 +567,40 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
                 multiDiagramFigure.addSubPlot(builder)
             }
             multiDiagramFigure.build()
+        }
+    }
+    ""
+  }
+
+  private def createStatisticsPerStep(data : Seq[Iterable[(Int, Long)]]) : Seq[(Int, Statistics)] = {
+    val std = new StandardDeviation(true)
+    val mean = new Mean()
+
+    data.zipWithIndex.map {
+      case (dataPerStepPerWorker, step) =>
+        val dataAsArray = dataPerStepPerWorker.map(_._2.toDouble).toArray
+        step -> Statistics(std.evaluate(dataAsArray), mean.evaluate(dataAsArray), dataAsArray.length)
+    }
+  }
+
+  private def createVariabilityBarPerStepFromStatisticsPerStep(statisticsPerStep : Seq[(Int, Statistics)]) : VariabilityBarPerStep = {
+    VariabilityBarPerStep(
+      statisticsPerStep.size,
+      statisticsPerStep.map(_._2.average),
+      statisticsPerStep.map(_._2.std)
+    )
+  }
+
+  def createVerticesPerStepDiagrams(fileName : String) : String = {
+    this.policyGrouped.foreach {
+      case (policyName, results) =>
+        results.zipWithIndex.foreach {
+          case (result, index) =>
+
+            val variabilityBarPerStep = createVariabilityBarPerStepFromStatisticsPerStep(
+              createStatisticsPerStep(result.algorithmMetrics.activeVerticesPerStepPerWorker)
+            )
+            variabilityBarPerStep.createChart(s"$fileName-$policyName-$index", "Step", "Mean active vertices")
         }
     }
     ""

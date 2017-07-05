@@ -46,7 +46,8 @@ object FigureGenerator extends App {
 //      sb.append(x.createBytesSentPerStepDiagrams("bytesSent-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
 //      sb.append(x.createBytesReceivedPerStepDiagrams("bytesReceived-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
 //      sb.append(x.createOffHeapMemoryPerStepDiagrams("offHeap-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
-      sb.append(x.createAverageCPUPerStepDiagrams("avgCPU-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+//      sb.append(x.createAverageCPUPerStepDiagrams("avgCPU-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      sb.append(x.createVerticesPerStepDiagrams("activeverticesperstepperworkernew-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
       val result = sb.toString()
       x.dataSet -> result
     }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))

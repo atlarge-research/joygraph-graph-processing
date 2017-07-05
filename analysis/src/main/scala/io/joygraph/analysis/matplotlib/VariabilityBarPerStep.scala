@@ -17,8 +17,7 @@ case class VariabilityBarPerStep
   (
     outputPath : String,
     xLabel : String,
-    yLabel : String,
-    yLegend : String
+    yLabel : String
   ) : Unit = {
     val meansPyArray = generatePyArray(means)
     val errorsPyArray = generatePyArray(errors)
@@ -31,9 +30,6 @@ case class VariabilityBarPerStep
          |yAverageProcSpeed = $meansPyArray
          |yProcSpeedError = $errorsPyArray
          |
-         |yProcSpeedError = list(map(lambda x: x / 1000, yProcSpeedError))
-         |yAverageProcSpeed = list(map(lambda x: x / 1000, yAverageProcSpeed))
-         |
          |barWidth = 0.35
          |steps = np.arange(0, numSupersteps, 1)
          |
@@ -41,11 +37,10 @@ case class VariabilityBarPerStep
          |barChart = fig.add_axes((0.1, 0.1, 0.8, 0.8))
          |barChart.set_xlim([-0.1, max(steps) + 0.5])
          |p1 = barChart.bar(steps, yAverageProcSpeed, barWidth, color='r', yerr = yProcSpeedError)
-         |barChart.set_xticks(steps + barWidth/2.)
+         |barChart.set_xticks(steps + barWidth/4.)
          |barChart.set_xticklabels(steps)
          |barChart.set_xlabel('$xLabel')
          |barChart.set_ylabel('$yLabel')
-         |barChart.legend((p1[0]), ('$yLegend'), loc = 0)
          |plt.savefig("$outputPath")
        """.stripMargin
 
