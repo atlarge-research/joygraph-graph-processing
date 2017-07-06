@@ -1,10 +1,19 @@
 package io.joygraph.analysis
 
+import java.io.FileInputStream
+import java.util.Properties
+
 import scala.collection.parallel.ParIterable
 import scala.reflect.io.{Directory, File}
 
 object FigureGenerator extends App {
-  val baseResultDirectory = "/home/sietse/Documents/experimental-results/elastic"
+  val propertiesConfig = {
+    val prop = new Properties()
+    prop.load(new FileInputStream("fig-generator.properties"))
+    prop
+  }
+
+  val baseResultDirectory = propertiesConfig.getProperty("basedir")
   val bfsResultDirs = baseResultDirectory + "/BFS"
   val prResultDirs = baseResultDirectory + "/PR"
   val wccResultDirs = baseResultDirectory + "/WCC"
@@ -18,8 +27,8 @@ object FigureGenerator extends App {
   ).map(Directory(_)).flatMap(_.dirs.map(_.toFile.toString()))
 
   val relativeFigPathDir = "elastic-figs"
-  val targetFigDir = s"/home/sietse/Documents/Thesis/LateX/$relativeFigPathDir"
-  val elasticityResultsTexFile = File("/home/sietse/Documents/Thesis/LateX/elasticityresults.tex")
+  val targetFigDir = s"${propertiesConfig.getProperty("targetfigdir")}/$relativeFigPathDir"
+  val elasticityResultsTexFile = File(propertiesConfig.getProperty("elasticityresultstex"))
 //  elasticityResultsTexFile.writeAll("") // empty file
 
   val results = ParseResultDirectories(resultsDirs)
