@@ -2,9 +2,9 @@ package io.joygraph.analysis.matplotlib
 
 import scala.reflect.io.File
 
-case class VariabilityBarPerStep
+case class VariabilityBarPerStepCramped
 (
-   numSuperSteps : Long,
+   xTickLabels : Iterable[String],
    means : Iterable[Double],
    errors : Iterable[Double]
 ) {
@@ -21,24 +21,24 @@ case class VariabilityBarPerStep
   ) : Unit = {
     val meansPyArray = generatePyArray(means)
     val errorsPyArray = generatePyArray(errors)
+    val xTickLabelsPyArray = generatePyArray(xTickLabels)
     val script =
       s"""
          |import numpy as np
          |import matplotlib.pyplot as plt
          |
-         |numSupersteps = $numSuperSteps
          |yAverageProcSpeed = $meansPyArray
          |yProcSpeedError = $errorsPyArray
          |
          |barWidth = 0.35
-         |steps = np.arange(0, numSupersteps, 1)
+         |steps = np.arange(0, ${xTickLabels.size}, 1)
          |
          |fig = plt.figure()
          |barChart = fig.add_axes((0.1, 0.1, 0.8, 0.8))
          |barChart.set_xlim([-0.1, max(steps) + 0.5])
          |p1 = barChart.bar(steps, yAverageProcSpeed, barWidth, color='r', yerr = yProcSpeedError)
          |barChart.set_xticks(steps)
-         |barChart.set_xticklabels(steps)
+         |barChart.set_xticklabels($xTickLabelsPyArray)
          |barChart.set_xlabel('$xLabel')
          |barChart.set_ylabel('$yLabel')
          |plt.savefig("$outputPath.pdf")

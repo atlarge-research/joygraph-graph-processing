@@ -37,11 +37,11 @@ case class VariabilityBarPerStep
          |barChart = fig.add_axes((0.1, 0.1, 0.8, 0.8))
          |barChart.set_xlim([-0.1, max(steps) + 0.5])
          |p1 = barChart.bar(steps, yAverageProcSpeed, barWidth, color='r', yerr = yProcSpeedError)
-         |barChart.set_xticks(steps + barWidth/4.)
+         |barChart.set_xticks(steps)
          |barChart.set_xticklabels(steps)
          |barChart.set_xlabel('$xLabel')
          |barChart.set_ylabel('$yLabel')
-         |plt.savefig("$outputPath")
+         |plt.savefig("$outputPath.pdf")
        """.stripMargin
 
     val scriptLocation = File.makeTemp()

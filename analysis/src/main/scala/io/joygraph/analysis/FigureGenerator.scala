@@ -4,7 +4,7 @@ import scala.collection.parallel.ParIterable
 import scala.reflect.io.{Directory, File}
 
 object FigureGenerator extends App {
-  val baseResultDirectory = "/home/sietse/thesis/experimental-results/elastic"
+  val baseResultDirectory = "/home/sietse/Documents/experimental-results/elastic"
   val bfsResultDirs = baseResultDirectory + "/BFS"
   val prResultDirs = baseResultDirectory + "/PR"
   val wccResultDirs = baseResultDirectory + "/WCC"
@@ -18,8 +18,8 @@ object FigureGenerator extends App {
   ).map(Directory(_)).flatMap(_.dirs.map(_.toFile.toString()))
 
   val relativeFigPathDir = "elastic-figs"
-  val targetFigDir = s"/home/sietse/thesis/Thesis/LateX/$relativeFigPathDir"
-  val elasticityResultsTexFile = File("/home/sietse/thesis/Thesis/LateX/elasticityresults.tex")
+  val targetFigDir = s"/home/sietse/Documents/Thesis/LateX/$relativeFigPathDir"
+  val elasticityResultsTexFile = File("/home/sietse/Documents/Thesis/LateX/elasticityresults.tex")
 //  elasticityResultsTexFile.writeAll("") // empty file
 
   val results = ParseResultDirectories(resultsDirs)
@@ -38,6 +38,15 @@ object FigureGenerator extends App {
     }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
   }
 
+  def buildBaseCrampedPerAlgorithm(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
+    experiments.map { x =>
+      val sb = StringBuilder.newBuilder
+      sb.append(x.createCramped("cramped-bar-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      val result = sb.toString()
+      x.dataSet -> result
+    }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
+  }
+
   def buildPerExperimentActiveVerticesPerStepPerWorker(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
     experiments.map { x =>
       val sb = StringBuilder.newBuilder
@@ -47,7 +56,12 @@ object FigureGenerator extends App {
 //      sb.append(x.createBytesReceivedPerStepDiagrams("bytesReceived-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
 //      sb.append(x.createOffHeapMemoryPerStepDiagrams("offHeap-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
 //      sb.append(x.createAverageCPUPerStepDiagrams("avgCPU-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
-      sb.append(x.createVerticesPerStepDiagrams("activeverticesperstepperworkernew-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      sb.append(x.createVerticesPerStepBarDiagrams("activeverticesperstepperworker-bar-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      sb.append(x.createWallClockPerStepBarDiagrams("wallclock-bar-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      sb.append(x.createBytesSentPerStepBarDiagrams("bytesSent-bar-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      sb.append(x.createBytesReceivedPerStepBarDiagrams("bytesReceived-bar-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      sb.append(x.createOffHeapMemoryPerStepBarDiagrams("offHeap-bar-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
+      sb.append(x.createAverageCPUPerStepBarDiagrams("avgCPU-bar-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
       val result = sb.toString()
       x.dataSet -> result
     }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))

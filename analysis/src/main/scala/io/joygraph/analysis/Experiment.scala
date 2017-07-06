@@ -4,13 +4,13 @@ import io.joygraph.analysis.algorithm.Statistics
 import io.joygraph.analysis.autoscale.AutoscalerMetricCalculator
 import io.joygraph.analysis.autoscale.metrics.{AccuracyMetric, InstabilityMetric, WrongProvisioningMetric}
 import io.joygraph.analysis.figure._
-import io.joygraph.analysis.matplotlib.VariabilityBarPerStep
+import io.joygraph.analysis.matplotlib.{VariabilityBarPerStep, VariabilityBarPerStepCramped}
 import io.joygraph.analysis.performance.PerformanceMetric
 import io.joygraph.analysis.tournament.Tournament
 import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation}
 import org.apache.commons.math3.stat.descriptive.moment.{Mean, StandardDeviation}
 
-import scala.collection.mutable
+import scala.collection.{immutable, mutable}
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.io.File
 import scala.util.{Failure, Success, Try}
@@ -591,31 +591,111 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     )
   }
 
-  def createVerticesPerStepDiagrams(fileName : String) : String = {
+  def createCramped[T]
+  (fileName: String,
+   xAxisLabel : String,
+   yAxisLabel : String
+  ) = {
+    val resultsByAlgorithm: Map[String, ArrayBuffer[GeneralResultProperties]] = this.baseLineResults.groupBy(_.algorithmName)
+    val mean = new Mean()
+    val std = new StandardDeviation(true)
+    val statisticsPerAlgorithm = resultsByAlgorithm.map {
+      case (algorithmName, results) => // there are 3 runs per algorithm (supposedly)
+        val triplets = results.zipWithIndex.map {
+          case (result, index) =>
+            val data = result.algorithmMetrics.wallClockPerStepPerWorker
+            val statisticsPerStep = data.map {
+              case (unitsPerStep) =>
+                val doubleArray = unitsPerStep.map(_._2.toDouble).toArray
+                Statistics(
+                  std.evaluate(doubleArray),
+                  mean.evaluate(doubleArray),
+                  doubleArray.length
+                )
+            }
+            val statisticsPerResult = {
+              val means = statisticsPerStep.map(_.average).toArray
+              Statistics(
+                std.evaluate(means),
+                mean.evaluate(means),
+                means.length
+              )
+            }
+
+            // create a tuple
+            algorithmName -> statisticsPerResult
+        }
+
+        // TODO AGGREGATE AGAIN
+        val averageOfAverages = mean.evaluate(triplets.map(_._2.average).toArray)
+        val averageOfStds = mean.evaluate(triplets.map(_._2.std).toArray)
+
+        (algorithmName, averageOfAverages, averageOfStds)
+    }
+  }
+
+  def createPerStepBarDiagramsLong
+  (fileName : String,
+   extractor : PolicyResultProperties => Seq[Iterable[(Int, Long)]],
+   xAxisLabel : String,
+   yAxisLabel : String
+  ) : String = {
     this.policyGrouped.foreach {
       case (policyName, results) =>
         results.zipWithIndex.foreach {
           case (result, index) =>
-
-            val variabilityBarPerStep = createVariabilityBarPerStepFromStatisticsPerStep(
-              createStatisticsPerStep(result.algorithmMetrics.activeVerticesPerStepPerWorker)
-            )
-            variabilityBarPerStep.createChart(s"$fileName-$policyName-$index", "Step", "Mean active vertices")
+            val data = extractor(result)
+            val statisticsPerStep = createStatisticsPerStep(data)
+            val variabilityBarPerStep = createVariabilityBarPerStepFromStatisticsPerStep(statisticsPerStep)
+            variabilityBarPerStep.createChart(s"$fileName-$policyName-$index", xAxisLabel, yAxisLabel)
         }
     }
     ""
   }
 
-  def createBytesSentPerStepDiagrams(fileName : String) : String = {
+  private def createStatisticsPerStepStatistics(data : Seq[Iterable[(Int, Statistics)]]) : Seq[(Int, Statistics)] = {
+    val std = new StandardDeviation(true)
+    val mean = new Mean()
+
+    data.zipWithIndex.map {
+      case (dataPerStepPerWorker, step) =>
+        val dataAsArray = dataPerStepPerWorker.map(_._2.average).toArray
+        step -> Statistics(std.evaluate(dataAsArray), mean.evaluate(dataAsArray), dataAsArray.length)
+    }
+  }
+
+  def createPerStepBarDiagramsStatistics
+  (fileName : String,
+   extractor : PolicyResultProperties => Seq[Iterable[(Int, Statistics)]],
+   xAxisLabel : String,
+   yAxisLabel : String
+  ) : String = {
     this.policyGrouped.foreach {
       case (policyName, results) =>
         results.zipWithIndex.foreach {
           case (result, index) =>
-            val avpw = result.algorithmMetrics.bytesSentPerStepPerWorker
+            val data = extractor(result)
+            val statisticsPerStep = createStatisticsPerStepStatistics(data)
+            val variabilityBarPerStep = createVariabilityBarPerStepFromStatisticsPerStep(statisticsPerStep)
+            variabilityBarPerStep.createChart(s"$fileName-$policyName-$index", xAxisLabel, yAxisLabel)
+        }
+    }
+    ""
+  }
+
+  def createDetailedPerStepDiagramsWithStatistics
+  (fileName : String,
+   extractor : PolicyResultProperties => Seq[Iterable[(Int, Statistics)]]
+  ) : String = {
+    this.policyGrouped.foreach {
+      case (policyName, results) =>
+        results.zipWithIndex.foreach {
+          case (result, index) =>
+            val data = extractor(result)
             val multiDiagramFigure = MultiDiagramFigure.builder
             multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
               .diagramTitle(s"$fileName-$policyName-$index")
-            avpw.zipWithIndex.foreach{
+            data.zipWithIndex.foreach{
               case (v, step) =>
                 val builder = MultiDiagramFigure.diagramBuilder
                 val vMap: Map[Int, Statistics] = v.toMap
@@ -638,112 +718,19 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     ""
   }
 
-  def createBytesReceivedPerStepDiagrams(fileName : String) : String = {
+  def createDetailedPerStepDiagramsLong
+  (fileName : String,
+   extractor : PolicyResultProperties => Seq[Iterable[(Int, Long)]]
+  ) : String = {
     this.policyGrouped.foreach {
       case (policyName, results) =>
         results.zipWithIndex.foreach {
           case (result, index) =>
-            val avpw = result.algorithmMetrics.bytesReceivedPerStepPerWorker
+            val data = extractor(result)
             val multiDiagramFigure = MultiDiagramFigure.builder
             multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
               .diagramTitle(s"$fileName-$policyName-$index")
-            avpw.zipWithIndex.foreach{
-              case (v, step) =>
-                val builder = MultiDiagramFigure.diagramBuilder
-                val vMap: Map[Int, Statistics] = v.toMap
-                builder.yAxisLabel(s"Step $step")
-                builder.xAxisLabel(s"Num workers ${vMap.size}")
-                for (workerId <- 0 until result.maxWorkerCount) {
-                  val numVertices : String = vMap.get(workerId) match {
-                    case Some(statistics) => (statistics.average * statistics.n).toString
-                    case None => "None"
-                  }
-                  builder.values(
-                    (workerId.toInt, numVertices, (0,0))
-                  )
-                }
-                multiDiagramFigure.addSubPlot(builder)
-            }
-            multiDiagramFigure.build()
-        }
-    }
-    ""
-  }
-
-  def createAverageCPUPerStepDiagrams(fileName : String) : String = {
-    this.policyGrouped.foreach {
-      case (policyName, results) =>
-        results.zipWithIndex.foreach {
-          case (result, index) =>
-            val avpw = result.algorithmMetrics.averageLoadPerStepPerWorker
-            val multiDiagramFigure = MultiDiagramFigure.builder
-            multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
-              .diagramTitle(s"$fileName-$policyName-$index")
-            avpw.zipWithIndex.foreach{
-              case (v, step) =>
-                val builder = MultiDiagramFigure.diagramBuilder
-                val vMap: Map[Int, Statistics] = v.toMap
-                builder.yAxisLabel(s"Step $step")
-                builder.xAxisLabel(s"Num workers ${vMap.size}")
-                for (workerId <- 0 until result.maxWorkerCount) {
-                  val numVertices : String = vMap.get(workerId) match {
-                    case Some(statistics) => statistics.average.toString
-                    case None => "None"
-                  }
-                  builder.values(
-                    (workerId.toInt, numVertices, (0,0))
-                  )
-                }
-                multiDiagramFigure.addSubPlot(builder)
-            }
-            multiDiagramFigure.build()
-        }
-    }
-    ""
-  }
-
-  def createOffHeapMemoryPerStepDiagrams(fileName : String) : String = {
-    this.policyGrouped.foreach {
-      case (policyName, results) =>
-        results.zipWithIndex.foreach {
-          case (result, index) =>
-            val avpw = result.algorithmMetrics.offHeapMemoryPerStepPerWorker
-            val multiDiagramFigure = MultiDiagramFigure.builder
-            multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
-              .diagramTitle(s"$fileName-$policyName-$index")
-            avpw.zipWithIndex.foreach{
-              case (v, step) =>
-                val builder = MultiDiagramFigure.diagramBuilder
-                val vMap: Map[Int, Statistics] = v.toMap
-                builder.yAxisLabel(s"Step $step")
-                builder.xAxisLabel(s"Num workers ${vMap.size}")
-                for (workerId <- 0 until result.maxWorkerCount) {
-                  val numVertices : String = vMap.get(workerId) match {
-                    case Some(statistics) => (statistics.average * statistics.n).toString
-                    case None => "None"
-                  }
-                  builder.values(
-                    (workerId.toInt, numVertices, (0,0))
-                  )
-                }
-                multiDiagramFigure.addSubPlot(builder)
-            }
-            multiDiagramFigure.build()
-        }
-    }
-    ""
-  }
-
-  def createWallClockPerStepDiagrams(fileName : String) : String = {
-    this.policyGrouped.foreach {
-      case (policyName, results) =>
-        results.zipWithIndex.foreach {
-          case (result, index) =>
-            val avpw = result.algorithmMetrics.wallClockPerStepPerWorker
-            val multiDiagramFigure = MultiDiagramFigure.builder
-            multiDiagramFigure.fileName(s"$fileName-$policyName-$index")
-              .diagramTitle(s"$fileName-$policyName-$index")
-            avpw.zipWithIndex.foreach{
+            data.zipWithIndex.foreach{
               case (v, step) =>
                 val builder = MultiDiagramFigure.diagramBuilder
                 val vMap: Map[Int, Long] = v.toMap
@@ -764,6 +751,67 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
         }
     }
     ""
+  }
+
+  def createVerticesPerStepDiagrams(fileName : String) : String = {
+    createDetailedPerStepDiagramsLong(fileName, x => x.algorithmMetrics.activeVerticesPerStepPerWorker)
+  }
+
+  def createBytesSentPerStepDiagrams(fileName : String) : String = {
+    createDetailedPerStepDiagramsWithStatistics(fileName, x => x.algorithmMetrics.bytesSentPerStepPerWorker)
+  }
+
+  def createBytesReceivedPerStepDiagrams(fileName : String) : String = {
+    createDetailedPerStepDiagramsWithStatistics(fileName, x => x.algorithmMetrics.bytesReceivedPerStepPerWorker)
+  }
+
+  def createAverageCPUPerStepDiagrams(fileName : String) : String = {
+    createDetailedPerStepDiagramsWithStatistics(fileName, x => x.algorithmMetrics.averageLoadPerStepPerWorker)
+  }
+
+  def createOffHeapMemoryPerStepDiagrams(fileName : String) : String = {
+    createDetailedPerStepDiagramsWithStatistics(fileName, x => x.algorithmMetrics.offHeapMemoryPerStepPerWorker)
+  }
+
+  def createWallClockPerStepDiagrams(fileName : String) : String = {
+    createDetailedPerStepDiagramsLong(fileName, x => x.algorithmMetrics.wallClockPerStepPerWorker)
+  }
+
+  def createVerticesPerStepBarDiagrams(fileName : String) : String = {
+    createPerStepBarDiagramsLong(fileName,
+      x => x.algorithmMetrics.activeVerticesPerStepPerWorker,
+      "Step", "Mean active vertices"
+    )
+  }
+
+  def createBytesSentPerStepBarDiagrams(fileName : String) : String = {
+    createPerStepBarDiagramsStatistics(fileName, x => x.algorithmMetrics.bytesSentPerStepPerWorker,
+      "Step", "Mean bytes sent"
+    )
+  }
+
+  def createBytesReceivedPerStepBarDiagrams(fileName : String) : String = {
+    createPerStepBarDiagramsStatistics(fileName, x => x.algorithmMetrics.bytesReceivedPerStepPerWorker,
+      "Step", "Mean bytes received"
+    )
+  }
+
+  def createAverageCPUPerStepBarDiagrams(fileName : String) : String = {
+    createPerStepBarDiagramsStatistics(fileName, x => x.algorithmMetrics.averageLoadPerStepPerWorker,
+      "Step", "Mean CPU load"
+    )
+  }
+
+  def createOffHeapMemoryPerStepBarDiagrams(fileName : String) : String = {
+    createPerStepBarDiagramsStatistics(fileName, x => x.algorithmMetrics.offHeapMemoryPerStepPerWorker,
+      "Step", "Mean off heap memory"
+    )
+  }
+
+  def createWallClockPerStepBarDiagrams(fileName : String) : String = {
+    createPerStepBarDiagramsLong(fileName, x => x.algorithmMetrics.wallClockPerStepPerWorker,
+      "Step", "Mean wallclock"
+    )
   }
 
   def createPerStepDiagrams(fileName : String): String = {
