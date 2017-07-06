@@ -4,13 +4,13 @@ import io.joygraph.analysis.algorithm.Statistics
 import io.joygraph.analysis.autoscale.AutoscalerMetricCalculator
 import io.joygraph.analysis.autoscale.metrics.{AccuracyMetric, InstabilityMetric, WrongProvisioningMetric}
 import io.joygraph.analysis.figure._
-import io.joygraph.analysis.matplotlib.{VariabilityBarPerStep, VariabilityBarPerStepCramped}
+import io.joygraph.analysis.matplotlib.VariabilityBarPerStep
 import io.joygraph.analysis.performance.PerformanceMetric
 import io.joygraph.analysis.tournament.Tournament
 import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation}
 import org.apache.commons.math3.stat.descriptive.moment.{Mean, StandardDeviation}
 
-import scala.collection.{immutable, mutable}
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.io.File
 import scala.util.{Failure, Success, Try}
@@ -591,11 +591,7 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
     )
   }
 
-  def createCramped[T]
-  (fileName: String,
-   xAxisLabel : String,
-   yAxisLabel : String
-  ) = {
+  def createCrampedWallClock() : Map[String, Statistics] = {
     val resultsByAlgorithm: Map[String, ArrayBuffer[GeneralResultProperties]] = this.baseLineResults.groupBy(_.algorithmName)
     val mean = new Mean()
     val std = new StandardDeviation(true)
@@ -626,12 +622,12 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
             algorithmName -> statisticsPerResult
         }
 
-        // TODO AGGREGATE AGAIN
         val averageOfAverages = mean.evaluate(triplets.map(_._2.average).toArray)
         val averageOfStds = mean.evaluate(triplets.map(_._2.std).toArray)
 
-        (algorithmName, averageOfAverages, averageOfStds)
+        algorithmName -> Statistics(averageOfStds, averageOfAverages, triplets.size)
     }
+    statisticsPerAlgorithm
   }
 
   def createPerStepBarDiagramsLong

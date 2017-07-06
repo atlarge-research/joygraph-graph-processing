@@ -30,12 +30,12 @@ case class VariabilityBarPerStepCramped
          |yAverageProcSpeed = $meansPyArray
          |yProcSpeedError = $errorsPyArray
          |
-         |barWidth = 0.35
+         |barWidth = 0.1
          |steps = np.arange(0, ${xTickLabels.size}, 1)
          |
          |fig = plt.figure()
-         |barChart = fig.add_axes((0.1, 0.1, 0.8, 0.8))
-         |barChart.set_xlim([-0.1, max(steps) + 0.5])
+         |barChart = fig.add_axes((0.15, 0.1, 0.8, 0.8))
+         |barChart.set_xlim([-0.15, max(steps) + 0.5])
          |p1 = barChart.bar(steps, yAverageProcSpeed, barWidth, color='r', yerr = yProcSpeedError)
          |barChart.set_xticks(steps)
          |barChart.set_xticklabels($xTickLabelsPyArray)

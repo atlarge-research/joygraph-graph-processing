@@ -1,7 +1,8 @@
 package io.joygraph.analysis
 
-import java.io.FileInputStream
 import java.util.Properties
+
+import io.joygraph.analysis.matplotlib.VariabilityBarPerStepCramped
 
 import scala.collection.parallel.ParIterable
 import scala.reflect.io.{Directory, File}
@@ -9,7 +10,7 @@ import scala.reflect.io.{Directory, File}
 object FigureGenerator extends App {
   val propertiesConfig = {
     val prop = new Properties()
-    prop.load(new FileInputStream("fig-generator.properties"))
+    prop.load(FigureGenerator.getClass.getResourceAsStream("/fig-generator.properties"))
     prop
   }
 
@@ -48,12 +49,25 @@ object FigureGenerator extends App {
   }
 
   def buildBaseCrampedPerAlgorithm(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
-    experiments.map { x =>
-      val sb = StringBuilder.newBuilder
-      sb.append(x.createCramped("cramped-bar-%s-%s".format(x.algorithm,x.dataSet))).append("\n")
-      val result = sb.toString()
-      x.dataSet -> result
-    }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
+    val statisticsPerDataSetPerAlgorithm = experiments.map { x =>
+      x.dataSet -> x.createCrampedWallClock()
+    }.toIndexedSeq
+      .groupBy(_._1).map{
+      case (dataSet, algorithmsMap) =>
+        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
+    }
+
+    statisticsPerDataSetPerAlgorithm.foreach{
+      case (dataSet, statisticsPerAlgorithm) =>
+        VariabilityBarPerStepCramped(
+          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
+          statisticsPerAlgorithm.values.map(_.average),
+          statisticsPerAlgorithm.values.map(_.std)
+        ).createChart(s"overview-wallclock-$dataSet", "Algorithms", "Wallclock")
+    }
+
+    // TODO Add not only wallclock but also graphalytics
+
   }
 
   def buildPerExperimentActiveVerticesPerStepPerWorker(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
@@ -105,7 +119,8 @@ object FigureGenerator extends App {
       val mainSb = StringBuilder.newBuilder
 //      mainSb.append("\\subsection{Active vertices per algorithm for %s}".format(dataSet)).append("\n")
 //      buildAlgorithmStatistics(experiments, mainSb)
-      buildPerExperimentActiveVerticesPerStepPerWorker(experiments, mainSb)
+//      buildPerExperimentActiveVerticesPerStepPerWorker(experiments, mainSb)
+      buildBaseCrampedPerAlgorithm(experiments, mainSb)
       mainSb.append("\\subsection")
       mainSb.append("\\subsubsection{Performance and elasticity metrics for %s}".format(dataSet)).append("\n")
 //      buildPerformanceAndElasticityMetrics(experiments, mainSb)
