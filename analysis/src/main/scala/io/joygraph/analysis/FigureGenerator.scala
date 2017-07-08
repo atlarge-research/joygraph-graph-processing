@@ -4,7 +4,8 @@ import java.util.Properties
 
 import io.joygraph.analysis.matplotlib.VariabilityBarPerStepCramped
 
-import scala.collection.parallel.ParIterable
+import scala.collection.parallel.{ParIterable, immutable}
+import scala.collection.parallel.immutable.ParMap
 import scala.reflect.io.{Directory, File}
 
 object FigureGenerator extends App {
@@ -33,7 +34,7 @@ object FigureGenerator extends App {
 //  elasticityResultsTexFile.writeAll("") // empty file
 
   val results = ParseResultDirectories(resultsDirs)
-  val groupedExperiments = results.experiments.groupBy(_.dataSet)
+  val groupedExperiments: ParMap[String, immutable.ParIterable[Experiment]] = results.experiments.groupBy(_.dataSet)
   val LATEXONLY = true
 
   def buildPerformanceAndElasticityMetrics(experiments : ParIterable[Experiment], mainSb : StringBuilder): Unit = {

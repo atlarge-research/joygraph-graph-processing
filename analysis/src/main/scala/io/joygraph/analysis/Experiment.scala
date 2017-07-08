@@ -10,7 +10,7 @@ import io.joygraph.analysis.tournament.Tournament
 import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation}
 import org.apache.commons.math3.stat.descriptive.moment.{Mean, StandardDeviation}
 
-import scala.collection.mutable
+import scala.collection.{immutable, mutable}
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.io.File
 import scala.util.{Failure, Success, Try}
@@ -589,6 +589,40 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
       statisticsPerStep.map(_._2.average),
       statisticsPerStep.map(_._2.std)
     )
+  }
+
+  def createCramped[T]
+  (results : Iterable[GeneralResultProperties],
+   dataExtractor : GeneralResultProperties => immutable.Seq[Iterable[(Int, T)]],
+   statisticsExtractor : immutable.Seq[Iterable[(Int, T)]] => Iterable[Statistics]) : Map[String, Statistics] = {
+    val resultsByAlgorithm: Map[String, Iterable[GeneralResultProperties]] = results.groupBy(_.algorithmName)
+    val mean = new Mean()
+    val std = new StandardDeviation(true)
+    val statisticsPerAlgorithm = resultsByAlgorithm.map {
+      case (algorithmName, algResults) => // there are 3 runs per algorithm (supposedly)
+        val triplets = algResults.zipWithIndex.map {
+          case (result, index) =>
+            val data = dataExtractor(result)
+            val statisticsPerStep = statisticsExtractor(data)
+            val statisticsPerResult = {
+              val means = statisticsPerStep.map(_.average).toArray
+              Statistics(
+                std.evaluate(means),
+                mean.evaluate(means),
+                means.length
+              )
+            }
+
+            // create a tuple
+            algorithmName -> statisticsPerResult
+        }
+
+        val averageOfAverages = mean.evaluate(triplets.map(_._2.average).toArray)
+        val averageOfStds = mean.evaluate(triplets.map(_._2.std).toArray)
+
+        algorithmName -> Statistics(averageOfStds, averageOfAverages, triplets.size)
+    }
+    statisticsPerAlgorithm
   }
 
   def createCrampedWallClock() : Map[String, Statistics] = {
