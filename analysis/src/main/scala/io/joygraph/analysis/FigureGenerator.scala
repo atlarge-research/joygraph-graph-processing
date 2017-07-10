@@ -4,8 +4,8 @@ import java.util.Properties
 
 import io.joygraph.analysis.matplotlib.VariabilityBarPerStepCramped
 
-import scala.collection.parallel.{ParIterable, immutable}
 import scala.collection.parallel.immutable.ParMap
+import scala.collection.parallel.{ParIterable, immutable}
 import scala.reflect.io.{Directory, File}
 
 object FigureGenerator extends App {
@@ -59,6 +59,24 @@ object FigureGenerator extends App {
     }
 
     statisticsPerDataSetPerAlgorithm.foreach{
+      case (dataSet, statisticsPerAlgorithm) =>
+        VariabilityBarPerStepCramped(
+          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
+          statisticsPerAlgorithm.values.map(_.average),
+          statisticsPerAlgorithm.values.map(_.std)
+        ).createChart(s"overview-wallclock-$dataSet", "Algorithms", "Wallclock")
+    }
+
+    experiments.map { x =>
+      x.dataSet -> Experiment.createCrampedStatistics(
+        x.baseLineResults,
+        _.algorithmMetrics.offHeapMemoryPerStepPerWorker
+      )
+    }.toIndexedSeq
+      .groupBy(_._1).map{
+      case (dataSet, algorithmsMap) =>
+        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
+    }.foreach{
       case (dataSet, statisticsPerAlgorithm) =>
         VariabilityBarPerStepCramped(
           statisticsPerAlgorithm.keys.map('"' + _ + '"'),
@@ -122,6 +140,7 @@ object FigureGenerator extends App {
 //      buildAlgorithmStatistics(experiments, mainSb)
 //      buildPerExperimentActiveVerticesPerStepPerWorker(experiments, mainSb)
       buildBaseCrampedPerAlgorithm(experiments, mainSb)
+      build
       mainSb.append("\\subsection")
       mainSb.append("\\subsubsection{Performance and elasticity metrics for %s}".format(dataSet)).append("\n")
 //      buildPerformanceAndElasticityMetrics(experiments, mainSb)

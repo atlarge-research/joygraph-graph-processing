@@ -1,6 +1,6 @@
 package io.joygraph.analysis.algorithm
 import akka.cluster.metrics.Metric
-import akka.cluster.metrics.StandardMetrics.SystemLoadAverage
+import akka.cluster.metrics.StandardMetrics.{HeapMemoryUsed, SystemLoadAverage}
 import io.joygraph.analysis.ElasticPolicyReader
 import io.joygraph.core.actor.metrics.{NetworkMetrics, OffHeapMemoryMetrics}
 import org.apache.commons.math3.stat.descriptive.moment.{Mean, StandardDeviation}
@@ -13,6 +13,7 @@ case class AlgorithmMetric
 (activeVerticesPerStep : immutable.Seq[Long],
  wallClockPerStepPerWorker : immutable.Seq[Iterable[(Int, Long)]],
  activeVerticesPerStepPerWorker : immutable.Seq[Iterable[(Int, Long)]],
+ heapMemoryUsedPerStepPerWorker : immutable.IndexedSeq[Iterable[(Int, Statistics)]],
  offHeapMemoryPerStepPerWorker : immutable.IndexedSeq[Iterable[(Int, Statistics)]],
  bytesReceivedPerStepPerWorker: immutable.IndexedSeq[Iterable[(Int, Statistics)]],
  bytesSentPerStepPerWorker: immutable.IndexedSeq[Iterable[(Int, Statistics)]],
@@ -137,6 +138,18 @@ object AlgorithmMetric {
         )
     }
 
+    val averageHeapMemoryPerStepPerWorker : immutable.IndexedSeq[Iterable[(Int, Statistics)]] = {
+      extractGeneralMetricsPerStepPerWorkerAggregateLong(policyMetricsReader,
+        metric =>
+          metric.name match {
+            case HeapMemoryUsed =>
+              Some[Long](metric.value.longValue())
+            case _ =>
+              None
+          }
+      )
+    }
+
     val bytesSentPerStepPerWorker: immutable.IndexedSeq[Iterable[(Int, Statistics)]] = {
       extractGeneralMetricsPerStepPerWorkerAggregateLong(policyMetricsReader,
         metric =>
@@ -177,6 +190,7 @@ object AlgorithmMetric {
       activeVerticesPerStep,
       wallClockPerStepPerWorker,
       activeVerticesPerStepPerWorker,
+      averageHeapMemoryPerStepPerWorker,
       averageOffHeapMemoryPerStepPerWorker,
       bytesReceivedPerStepPerWorker,
       bytesSentPerStepPerWorker,
