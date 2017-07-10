@@ -1,5 +1,7 @@
 package io.joygraph.analysis.matplotlib
 
+import io.joygraph.analysis.figure.PythonTools
+
 import scala.reflect.io.File
 
 case class VariabilityBarPerStepCramped
@@ -9,19 +11,15 @@ case class VariabilityBarPerStepCramped
    errors : Iterable[Double]
 ) {
 
-  private[this] def generatePyArray(arr : Iterable[Any]) : String = {
-    "[" + arr.map(_.toString).reduce(_ + "," + _) + "]"
-  }
-
   def createChart
   (
     outputPath : String,
     xLabel : String,
     yLabel : String
   ) : Unit = {
-    val meansPyArray = generatePyArray(means)
-    val errorsPyArray = generatePyArray(errors)
-    val xTickLabelsPyArray = generatePyArray(xTickLabels)
+    val meansPyArray = PythonTools.createPythonArray(means.map(_.toString))
+    val errorsPyArray = PythonTools.createPythonArray(errors.map(_.toString))
+    val xTickLabelsPyArray = PythonTools.createPythonArray(xTickLabels)
     val script =
       s"""
          |import numpy as np

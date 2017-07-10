@@ -140,7 +140,6 @@ object FigureGenerator extends App {
 //      buildAlgorithmStatistics(experiments, mainSb)
 //      buildPerExperimentActiveVerticesPerStepPerWorker(experiments, mainSb)
       buildBaseCrampedPerAlgorithm(experiments, mainSb)
-      build
       mainSb.append("\\subsection")
       mainSb.append("\\subsubsection{Performance and elasticity metrics for %s}".format(dataSet)).append("\n")
 //      buildPerformanceAndElasticityMetrics(experiments, mainSb)

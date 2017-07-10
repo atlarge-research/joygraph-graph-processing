@@ -16,6 +16,7 @@ import scala.reflect.io.File
 import scala.util.{Failure, Success, Try}
 
 object Experiment {
+
   def createCrampedStatistics
   (
     results : Iterable[GeneralResultProperties],
@@ -25,6 +26,18 @@ object Experiment {
       results,
       dataExtractor,
       Experiment.extractStatisticsForCramped[Statistics](_, _.average)
+    )
+  }
+
+  def createCrampedLong
+  (
+    results : Iterable[GeneralResultProperties],
+    dataExtractor : GeneralResultProperties => immutable.Seq[Iterable[(Int, Long)]]
+  ): Map[String, Statistics] = {
+    createCramped[Long](
+      results,
+      dataExtractor,
+      Experiment.extractStatisticsForCramped[Long](_, _.toDouble)
     )
   }
 
