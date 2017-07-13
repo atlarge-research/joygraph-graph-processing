@@ -4,13 +4,14 @@ import io.joygraph.analysis.algorithm.Statistics
 import io.joygraph.analysis.autoscale.AutoscalerMetricCalculator
 import io.joygraph.analysis.autoscale.metrics.{AccuracyMetric, InstabilityMetric, WrongProvisioningMetric}
 import io.joygraph.analysis.figure._
-import io.joygraph.analysis.matplotlib.VariabilityBarPerStep
+import io.joygraph.analysis.matplotlib.{VariabilityBarPerStep, VariabilityBarPerStepCramped}
 import io.joygraph.analysis.performance.PerformanceMetric
 import io.joygraph.analysis.tournament.Tournament
 import io.joygraph.core.actor.metrics.{SupplyDemandMetrics, WorkerOperation}
 import org.apache.commons.math3.stat.descriptive.moment.{Mean, StandardDeviation}
 
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.parallel.ParIterable
 import scala.collection.{immutable, mutable}
 import scala.reflect.io.File
 import scala.util.{Failure, Success, Try}
@@ -79,14 +80,77 @@ object Experiment {
   def extractStatisticsForCramped[T](data : immutable.Seq[Iterable[(Int, T)]], tToDouble : T => Double): immutable.Seq[Statistics] = {
     val std = new StandardDeviation(true)
     val mean = new Mean
-    data.map {
+    data.flatMap {
       case (unitsPerStep) =>
         val doubleArray = unitsPerStep.map(x => tToDouble(x._2)).toArray
-        Statistics(
-          std.evaluate(doubleArray),
-          mean.evaluate(doubleArray),
-          doubleArray.length
+        if (doubleArray.length > 0) {
+          Some(Statistics(
+            std.evaluate(doubleArray),
+            mean.evaluate(doubleArray),
+            doubleArray.length
+          ))
+        } else {
+          None
+        }
+
+    }
+  }
+
+  def longExtractor
+  (experiments : ParIterable[Experiment],
+   dataExtractor : GeneralResultProperties => scala.collection.immutable.Seq[Iterable[(Int, Long)]],
+   resultExtractor : Experiment => Iterable[GeneralResultProperties],
+   chartFileNamePrefix : String,
+   yLabel : String
+  ): Unit = {
+    experiments
+      .toIndexedSeq // remove parallelism
+      .sortBy(_.dataSet)
+      .map { x =>
+        x.dataSet -> Experiment.createCrampedLong(
+          resultExtractor(x),
+          dataExtractor
         )
+      }.toIndexedSeq
+      .groupBy(_._1).map{
+      case (dataSet, algorithmsMap) =>
+        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
+    }.foreach{
+      case (dataSet, statisticsPerAlgorithm) =>
+        VariabilityBarPerStepCramped(
+          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
+          statisticsPerAlgorithm.values.map(_.average),
+          statisticsPerAlgorithm.values.map(_.std)
+        ).createChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", yLabel)
+    }
+  }
+
+  def statisticsExtractor
+  (experiments : ParIterable[Experiment],
+   dataExtractor : GeneralResultProperties => scala.collection.immutable.Seq[Iterable[(Int, Statistics)]],
+   resultExtractor : Experiment => Iterable[GeneralResultProperties],
+   chartFileNamePrefix : String,
+   yLabel : String
+  ): Unit = {
+    experiments
+      .toIndexedSeq // remove parallelism
+      .sortBy(_.dataSet)
+      .map { x =>
+        x.dataSet -> Experiment.createCrampedStatistics(
+          resultExtractor(x),
+          dataExtractor
+        )
+      }.toIndexedSeq
+      .groupBy(_._1).map{
+      case (dataSet, algorithmsMap) =>
+        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
+    }.foreach{
+      case (dataSet, statisticsPerAlgorithm) =>
+        VariabilityBarPerStepCramped(
+          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
+          statisticsPerAlgorithm.values.map(_.average),
+          statisticsPerAlgorithm.values.map(_.std)
+        ).createChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", yLabel)
     }
   }
 }

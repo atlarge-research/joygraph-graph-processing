@@ -2,11 +2,8 @@ package io.joygraph.analysis
 
 import java.util.Properties
 
-import io.joygraph.analysis.matplotlib.VariabilityBarPerStepCramped
-
+import scala.collection.parallel.ParIterable
 import scala.collection.parallel.immutable.ParMap
-import scala.collection.parallel.{ParIterable, immutable}
-import scala.reflect.io.{Directory, File}
 
 object FigureGeneratorGraphalytics extends App {
   val propertiesConfig = {
@@ -17,51 +14,49 @@ object FigureGeneratorGraphalytics extends App {
 
   val graphalyticsdir = propertiesConfig.getProperty("graphalyticsjoygraphdir")
 
-
   val results = ParseResultDirectories(Iterable(graphalyticsdir))
-  val groupedExperiments: ParMap[String, immutable.ParIterable[Experiment]] = results.experiments.groupBy(_.dataSet)
+  val groupedExperiments: ParMap[String, ParIterable[Experiment]] = results.experiments.groupBy(_.dataSet)
 
   def buildBaseCrampedPerAlgorithm(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
-//    val statisticsPerDataSetPerAlgorithm = experiments.map { x =>
-//      x.dataSet -> x.createCrampedWallClock()
-//    }.toIndexedSeq
-//      .groupBy(_._1).map{
-//      case (dataSet, algorithmsMap) =>
-//        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
-//    }
+//    Experiment.longExtractor(
+//      experiments,
+//      _.algorithmMetrics.wallClockPerStepPerWorker,
+//      _.baseLineResults,
+//      "graphalytics-overview-wallclock",
+//      "Average WallClock"
+//    )
+
+    Experiment.longExtractor(
+      experiments,
+      _.algorithmMetrics.activeVerticesPerStepPerWorker,
+      _.baseLineResults,
+      "graphalytics-overview-active-vertices",
+      "Average Active vertices"
+    )
+
+//    Experiment.statisticsExtractor(
+//      experiments,
+//      _.algorithmMetrics.offHeapMemoryPerStepPerWorker,
+//      _.baseLineResults,
+//      "graphalytics-overview-offheap-memory",
+//      "Average OffHeap-Memory"
+//    )
 //
-//    statisticsPerDataSetPerAlgorithm.foreach{
-//      case (dataSet, statisticsPerAlgorithm) =>
-//        VariabilityBarPerStepCramped(
-//          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
-//          statisticsPerAlgorithm.values.map(_.average),
-//          statisticsPerAlgorithm.values.map(_.std)
-//        ).createChart(s"overview-wallclock-$dataSet", "Algorithms", "Wallclock")
-//    }
-
-    // TODO make this work
-    experiments
-        .toIndexedSeq // remove parallelism
-        .sortBy(_.dataSet)
-      .map { x =>
-      x.dataSet -> Experiment.createCrampedStatistics(
-        x.baseLineResults,
-        _.algorithmMetrics.offHeapMemoryPerStepPerWorker
-      )
-    }.toIndexedSeq
-      .groupBy(_._1).map{
-      case (dataSet, algorithmsMap) =>
-        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
-    }.foreach{
-      case (dataSet, statisticsPerAlgorithm) =>
-        VariabilityBarPerStepCramped(
-          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
-          statisticsPerAlgorithm.values.map(_.average),
-          statisticsPerAlgorithm.values.map(_.std)
-        ).createChart(s"overview-offheap-memory-$dataSet", "Algorithms", "Wallclock")
-    }
-
-
+//    Experiment.statisticsExtractor(
+//      experiments,
+//      _.algorithmMetrics.heapMemoryUsedPerStepPerWorker,
+//      _.baseLineResults,
+//      "graphalytics-overview-onheap-memory",
+//      "Average OnHeap-Memory"
+//    )
+//
+//    Experiment.statisticsExtractor(
+//      experiments,
+//      _.algorithmMetrics.averageLoadPerStepPerWorker,
+//      _.baseLineResults,
+//      "graphalytics-overview-cpu-load-memory",
+//      "Average CPU Load"
+//    )
   }
 
   groupedExperiments.foreach {

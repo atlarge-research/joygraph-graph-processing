@@ -39,18 +39,24 @@ object AlgorithmMetric {
   private def extractGeneralMetricsPerStepPerWorker[T, A]
   (elasticPolicyReader: ElasticPolicyReader,
    transformer : Metric => Option[T],
-   aggregator : Iterable[T] => A
+   aggregator : Iterable[T] => Option[A]
   ): immutable.IndexedSeq[Iterable[(Int, A)]] = {
     for (i <- 0 until elasticPolicyReader.totalNumberOfSteps())
       yield {
-        for (workerId <- elasticPolicyReader.workersForStep(i))
-          yield {
-            workerId -> {
-              aggregator(elasticPolicyReader.superStepWorkerMetrics(i, workerId).map { nodeMetrics =>
-                nodeMetrics.getMetrics.flatMap { transformer(_) }
-              }.foldLeft(Iterable.empty[T])(_ ++ _))
+        {
+          for (workerId <- elasticPolicyReader.workersForStep(i))
+            yield {
+              workerId -> {
+                aggregator(
+                  elasticPolicyReader.superStepWorkerMetrics(i, workerId).map { nodeMetrics =>
+                    nodeMetrics.getMetrics.flatMap {
+                      transformer(_)
+                    }
+                  }.foldLeft(Iterable.empty[T])(_ ++ _)
+                )
+              }
             }
-          }
+        }.filter(_._2.isDefined).map(x => x._1 -> x._2.get) // the regret of using for loop with yield
       }
   }
 
@@ -74,13 +80,15 @@ object AlgorithmMetric {
           case Failure(exception) =>
             throw exception;
           case Success(value) =>
-//            if (java.lang.Double.isNaN(value.std)
-//              || java.lang.Double.isNaN(value.average)) {
-//              throw new IllegalArgumentException("We got some shitty data here")
-//              Statistics(0, 0, value.n)
-//            } else {
-              value
-//            }
+            if (java.lang.Double.isNaN(value.std)
+              || java.lang.Double.isNaN(value.average)) {
+              if (value.n > 0) {
+                println("We got some shitty data here")
+              }
+              None
+            } else {
+              Some(value)
+            }
         }
 
       }

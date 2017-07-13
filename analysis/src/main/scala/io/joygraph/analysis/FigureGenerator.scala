@@ -2,8 +2,6 @@ package io.joygraph.analysis
 
 import java.util.Properties
 
-import io.joygraph.analysis.matplotlib.VariabilityBarPerStepCramped
-
 import scala.collection.parallel.immutable.ParMap
 import scala.collection.parallel.{ParIterable, immutable}
 import scala.reflect.io.{Directory, File}
@@ -47,46 +45,6 @@ object FigureGenerator extends App {
       sb.clear()
       x.algorithm -> result
     }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
-  }
-
-  def buildBaseCrampedPerAlgorithm(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
-    val statisticsPerDataSetPerAlgorithm = experiments.map { x =>
-      x.dataSet -> x.createCrampedWallClock()
-    }.toIndexedSeq
-      .groupBy(_._1).map{
-      case (dataSet, algorithmsMap) =>
-        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
-    }
-
-    statisticsPerDataSetPerAlgorithm.foreach{
-      case (dataSet, statisticsPerAlgorithm) =>
-        VariabilityBarPerStepCramped(
-          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
-          statisticsPerAlgorithm.values.map(_.average),
-          statisticsPerAlgorithm.values.map(_.std)
-        ).createChart(s"overview-wallclock-$dataSet", "Algorithms", "Wallclock")
-    }
-
-    experiments.map { x =>
-      x.dataSet -> Experiment.createCrampedStatistics(
-        x.baseLineResults,
-        _.algorithmMetrics.offHeapMemoryPerStepPerWorker
-      )
-    }.toIndexedSeq
-      .groupBy(_._1).map{
-      case (dataSet, algorithmsMap) =>
-        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
-    }.foreach{
-      case (dataSet, statisticsPerAlgorithm) =>
-        VariabilityBarPerStepCramped(
-          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
-          statisticsPerAlgorithm.values.map(_.average),
-          statisticsPerAlgorithm.values.map(_.std)
-        ).createChart(s"overview-wallclock-$dataSet", "Algorithms", "Wallclock")
-    }
-
-    // TODO Add not only wallclock but also graphalytics
-
   }
 
   def buildPerExperimentActiveVerticesPerStepPerWorker(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
@@ -133,6 +91,48 @@ object FigureGenerator extends App {
     }.toIndexedSeq.sortBy(_._1).foreach(x => mainSb.append(x._2).append("\n"))
   }
 
+  def buildBaseCrampedPerAlgorithm(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
+    Experiment.longExtractor(
+      experiments,
+      _.algorithmMetrics.wallClockPerStepPerWorker,
+      _.baseLineResults,
+      "base-overview-wallclock",
+      "Average WallClock"
+    )
+
+    Experiment.longExtractor(
+      experiments,
+      _.algorithmMetrics.activeVerticesPerStepPerWorker,
+      _.baseLineResults,
+      "base-overview-active-vertices",
+      "Average Active vertices"
+    )
+
+    Experiment.statisticsExtractor(
+      experiments,
+      _.algorithmMetrics.offHeapMemoryPerStepPerWorker,
+      _.baseLineResults,
+      "base-overview-offheap-memory",
+      "Average OffHeap-Memory"
+    )
+
+    Experiment.statisticsExtractor(
+      experiments,
+      _.algorithmMetrics.heapMemoryUsedPerStepPerWorker,
+      _.baseLineResults,
+      "base-overview-onheap-memory",
+      "Average OnHeap-Memory"
+    )
+
+    Experiment.statisticsExtractor(
+      experiments,
+      _.algorithmMetrics.averageLoadPerStepPerWorker,
+      _.baseLineResults,
+      "base-overview-cpu-load-memory",
+      "Average CPU Load"
+    )
+  }
+
   groupedExperiments.map {
     case (dataSet, experiments) =>
       val mainSb = StringBuilder.newBuilder
@@ -140,11 +140,11 @@ object FigureGenerator extends App {
 //      buildAlgorithmStatistics(experiments, mainSb)
 //      buildPerExperimentActiveVerticesPerStepPerWorker(experiments, mainSb)
       buildBaseCrampedPerAlgorithm(experiments, mainSb)
-      mainSb.append("\\subsection")
-      mainSb.append("\\subsubsection{Performance and elasticity metrics for %s}".format(dataSet)).append("\n")
+//      mainSb.append("\\subsection")
+//      mainSb.append("\\subsubsection{Performance and elasticity metrics for %s}".format(dataSet)).append("\n")
 //      buildPerformanceAndElasticityMetrics(experiments, mainSb)
-      mainSb.append("\\newpage")
-      mainSb.append("\\subsubsection{Supply-demand and variability plots for %s}".format(dataSet)).append("\n")
+//      mainSb.append("\\newpage")
+//      mainSb.append("\\subsubsection{Supply-demand and variability plots for %s}".format(dataSet)).append("\n")
 //      buildDiagrams(experiments, mainSb)
 
 //        sb.append(x.createTournamentScoreTableElastic()).append("\n")
