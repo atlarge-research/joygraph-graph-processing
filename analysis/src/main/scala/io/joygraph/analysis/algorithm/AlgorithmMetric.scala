@@ -74,7 +74,13 @@ object AlgorithmMetric {
           case Failure(exception) =>
             throw exception;
           case Success(value) =>
-            value
+//            if (java.lang.Double.isNaN(value.std)
+//              || java.lang.Double.isNaN(value.average)) {
+//              throw new IllegalArgumentException("We got some shitty data here")
+//              Statistics(0, 0, value.n)
+//            } else {
+              value
+//            }
         }
 
       }

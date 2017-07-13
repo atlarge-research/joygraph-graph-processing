@@ -22,25 +22,28 @@ object FigureGeneratorGraphalytics extends App {
   val groupedExperiments: ParMap[String, immutable.ParIterable[Experiment]] = results.experiments.groupBy(_.dataSet)
 
   def buildBaseCrampedPerAlgorithm(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
-    val statisticsPerDataSetPerAlgorithm = experiments.map { x =>
-      x.dataSet -> x.createCrampedWallClock()
-    }.toIndexedSeq
-      .groupBy(_._1).map{
-      case (dataSet, algorithmsMap) =>
-        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
-    }
-
-    statisticsPerDataSetPerAlgorithm.foreach{
-      case (dataSet, statisticsPerAlgorithm) =>
-        VariabilityBarPerStepCramped(
-          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
-          statisticsPerAlgorithm.values.map(_.average),
-          statisticsPerAlgorithm.values.map(_.std)
-        ).createChart(s"overview-wallclock-$dataSet", "Algorithms", "Wallclock")
-    }
+//    val statisticsPerDataSetPerAlgorithm = experiments.map { x =>
+//      x.dataSet -> x.createCrampedWallClock()
+//    }.toIndexedSeq
+//      .groupBy(_._1).map{
+//      case (dataSet, algorithmsMap) =>
+//        dataSet -> algorithmsMap.map(_._2).reduce(_ ++ _)
+//    }
+//
+//    statisticsPerDataSetPerAlgorithm.foreach{
+//      case (dataSet, statisticsPerAlgorithm) =>
+//        VariabilityBarPerStepCramped(
+//          statisticsPerAlgorithm.keys.map('"' + _ + '"'),
+//          statisticsPerAlgorithm.values.map(_.average),
+//          statisticsPerAlgorithm.values.map(_.std)
+//        ).createChart(s"overview-wallclock-$dataSet", "Algorithms", "Wallclock")
+//    }
 
     // TODO make this work
-    experiments.map { x =>
+    experiments
+        .toIndexedSeq // remove parallelism
+        .sortBy(_.dataSet)
+      .map { x =>
       x.dataSet -> Experiment.createCrampedStatistics(
         x.baseLineResults,
         _.algorithmMetrics.offHeapMemoryPerStepPerWorker
@@ -58,7 +61,6 @@ object FigureGeneratorGraphalytics extends App {
         ).createChart(s"overview-offheap-memory-$dataSet", "Algorithms", "Wallclock")
     }
 
-    // TODO Add not only wallclock but also graphalytics
 
   }
 

@@ -17,8 +17,14 @@ case class VariabilityBarPerStepCramped
     xLabel : String,
     yLabel : String
   ) : Unit = {
-    val meansPyArray = PythonTools.createPythonArray(means.map(_.toString))
-    val errorsPyArray = PythonTools.createPythonArray(errors.map(_.toString))
+
+    // TODO do we really want to cast NaN to float ('nan') ?
+    val meansPyArray = PythonTools.createPythonArray(means.map{ x =>
+      if (java.lang.Double.isNaN(x)) "float('nan')" else x.toString
+    })
+    val errorsPyArray = PythonTools.createPythonArray(errors.map{ x =>
+      if (java.lang.Double.isNaN(x)) "float('nan')" else x.toString
+    })
     val xTickLabelsPyArray = PythonTools.createPythonArray(xTickLabels)
     val script =
       s"""
@@ -44,6 +50,7 @@ case class VariabilityBarPerStepCramped
 
     val scriptLocation = File.makeTemp()
     scriptLocation.writeAll(script)
+    println(s"attempting to $scriptLocation")
     scriptLocation.setExecutable(executable = true)
     new ProcessBuilder().command("/usr/bin/python", scriptLocation.toString).start().waitFor()
   }
