@@ -180,7 +180,7 @@ object DiagramFigure {
       """.stripMargin
 
       /// execute pyscript
-      val scriptLocation = File.makeTemp()
+      val scriptLocation = File(s"${_name}.py")
       scriptLocation.writeAll(pyScript)
       scriptLocation.setExecutable(executable = true)
       new ProcessBuilder().command("/usr/bin/python", scriptLocation.toString).start().waitFor()
@@ -280,7 +280,7 @@ object DiagramFigure {
         |""".stripMargin
 
       /// execute pyscript
-      val scriptLocation = File.makeTemp()
+      val scriptLocation = File(s"${_name}.py")
       scriptLocation.writeAll(pyScript)
       scriptLocation.setExecutable(executable = true)
       new ProcessBuilder().command("/usr/bin/python", scriptLocation.toString).start().waitFor()

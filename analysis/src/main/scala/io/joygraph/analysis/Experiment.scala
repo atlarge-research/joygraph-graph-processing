@@ -101,7 +101,7 @@ object Experiment {
    dataExtractor : GeneralResultProperties => scala.collection.immutable.Seq[Iterable[(Int, Long)]],
    resultExtractor : Experiment => Iterable[GeneralResultProperties],
    chartFileNamePrefix : String,
-   yLabel : String
+   yUnit : String
   ): Unit = {
     experiments
       .toIndexedSeq // remove parallelism
@@ -121,7 +121,9 @@ object Experiment {
           statisticsPerAlgorithm.keys.map('"' + _ + '"'),
           statisticsPerAlgorithm.values.map(_.average),
           statisticsPerAlgorithm.values.map(_.std)
-        ).createChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", yLabel)
+        )
+          .createChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", s"Mean of $yUnit")
+          .createCVChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", s"CV of $yUnit")
     }
   }
 
@@ -130,7 +132,7 @@ object Experiment {
    dataExtractor : GeneralResultProperties => scala.collection.immutable.Seq[Iterable[(Int, Statistics)]],
    resultExtractor : Experiment => Iterable[GeneralResultProperties],
    chartFileNamePrefix : String,
-   yLabel : String
+   yUnit : String
   ): Unit = {
     experiments
       .toIndexedSeq // remove parallelism
@@ -150,7 +152,9 @@ object Experiment {
           statisticsPerAlgorithm.keys.map('"' + _ + '"'),
           statisticsPerAlgorithm.values.map(_.average),
           statisticsPerAlgorithm.values.map(_.std)
-        ).createChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", yLabel)
+        )
+          .createChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", s"Mean of $yUnit")
+          .createCVChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", s"CV of $yUnit")
     }
   }
 }

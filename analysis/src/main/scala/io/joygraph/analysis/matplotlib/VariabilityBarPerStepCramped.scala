@@ -11,12 +11,55 @@ case class VariabilityBarPerStepCramped
    errors : Iterable[Double]
 ) {
 
+  def createCVChart(
+       outputPath : String,
+       xLabel : String,
+       yLabel : String
+   ): VariabilityBarPerStepCramped = {
+    val coefficientsOfVariations: Iterable[Double] = (means zip errors).map{
+      case (mean, std) =>
+        std / mean
+    }
+    val cvPyArray =  PythonTools.createPythonArray(coefficientsOfVariations.map{ x =>
+      if (java.lang.Double.isNaN(x)) "float('nan')" else x.toString
+    })
+    val xTickLabelsPyArray = PythonTools.createPythonArray(xTickLabels)
+
+    val script =
+      s"""
+         |import numpy as np
+         |import matplotlib.pyplot as plt
+         |
+         |yAverageProcSpeed = $cvPyArray
+         |
+         |barWidth = 0.1
+         |steps = np.arange(0, ${xTickLabels.size}, 1)
+         |
+         |fig = plt.figure()
+         |barChart = fig.add_axes((0.15, 0.1, 0.8, 0.8))
+         |barChart.set_xlim([-0.15, max(steps) + 0.5])
+         |p1 = barChart.bar(steps, yAverageProcSpeed, barWidth, color='r')
+         |barChart.set_xticks(steps)
+         |barChart.set_xticklabels($xTickLabelsPyArray)
+         |barChart.set_xlabel('$xLabel')
+         |barChart.set_ylabel('$yLabel')
+         |plt.savefig("$outputPath-cv.pdf")
+       """.stripMargin
+
+    val scriptLocation = File(s"$outputPath-cv.py")
+    scriptLocation.writeAll(script)
+    println(s"attempting to $scriptLocation")
+    scriptLocation.setExecutable(executable = true)
+    new ProcessBuilder().command("/usr/bin/python", scriptLocation.toString).start().waitFor()
+    this
+  }
+
   def createChart
   (
     outputPath : String,
     xLabel : String,
     yLabel : String
-  ) : Unit = {
+  ) : VariabilityBarPerStepCramped = {
 
     // TODO do we really want to cast NaN to float ('nan') ?
     val meansPyArray = PythonTools.createPythonArray(means.map{ x =>
@@ -45,14 +88,15 @@ case class VariabilityBarPerStepCramped
          |barChart.set_xticklabels($xTickLabelsPyArray)
          |barChart.set_xlabel('$xLabel')
          |barChart.set_ylabel('$yLabel')
-         |plt.savefig("$outputPath.pdf")
+         |plt.savefig("$outputPath-meanstd.pdf")
        """.stripMargin
 
-    val scriptLocation = File.makeTemp()
+    val scriptLocation = File(s"$outputPath-meanstd.py")
     scriptLocation.writeAll(script)
     println(s"attempting to $scriptLocation")
     scriptLocation.setExecutable(executable = true)
     new ProcessBuilder().command("/usr/bin/python", scriptLocation.toString).start().waitFor()
+    this
   }
 
   def createLatex(relativeLatexPathPrefix: String, fileName : String, caption : String, label : String): Unit = {

@@ -5,7 +5,7 @@ import java.util.Properties
 import scala.collection.parallel.ParIterable
 import scala.collection.parallel.immutable.ParMap
 
-object FigureGeneratorGraphalyticsExtraBase extends App {
+object FigureGeneratorExtraBaseLine extends App {
   val propertiesConfig = {
     val prop = new Properties()
     prop.load(FigureGenerator.getClass.getResourceAsStream("/fig-generator.properties"))
@@ -23,7 +23,7 @@ object FigureGeneratorGraphalyticsExtraBase extends App {
       _.algorithmMetrics.wallClockPerStepPerWorker,
       _.baseLineResults,
       "graphalytics-overview-wallclock",
-      "Average WallClock"
+      "WallClock"
     )
 
     Experiment.longExtractor(
@@ -31,7 +31,7 @@ object FigureGeneratorGraphalyticsExtraBase extends App {
       _.algorithmMetrics.activeVerticesPerStepPerWorker,
       _.baseLineResults,
       "graphalytics-overview-active-vertices",
-      "Average Active vertices"
+      "Active vertices"
     )
 
     Experiment.statisticsExtractor(
@@ -39,7 +39,7 @@ object FigureGeneratorGraphalyticsExtraBase extends App {
       _.algorithmMetrics.offHeapMemoryPerStepPerWorker,
       _.baseLineResults,
       "graphalytics-overview-offheap-memory",
-      "Average OffHeap-Memory"
+      "OffHeap-Memory"
     )
 
     Experiment.statisticsExtractor(
@@ -47,7 +47,7 @@ object FigureGeneratorGraphalyticsExtraBase extends App {
       _.algorithmMetrics.heapMemoryUsedPerStepPerWorker,
       _.baseLineResults,
       "graphalytics-overview-onheap-memory",
-      "Average OnHeap-Memory"
+      "OnHeap-Memory"
     )
 
     Experiment.statisticsExtractor(
@@ -55,14 +55,30 @@ object FigureGeneratorGraphalyticsExtraBase extends App {
       _.algorithmMetrics.averageLoadPerStepPerWorker,
       _.baseLineResults,
       "graphalytics-overview-cpu-load-memory",
-      "Average CPU Load"
+      "CPU Load"
     )
   }
 
-  groupedExperiments.foreach {
+//  groupedExperiments.foreach {
+//    case (dataSet, experiments) =>
+//      val mainSb = StringBuilder.newBuilder
+//      buildBaseCrampedPerAlgorithm(experiments, mainSb)
+//      dataSet -> mainSb.toString
+//  }
+
+  groupedExperiments.map{
     case (dataSet, experiments) =>
-      val mainSb = StringBuilder.newBuilder
-      buildBaseCrampedPerAlgorithm(experiments, mainSb)
-      dataSet -> mainSb.toString
+      dataSet -> experiments.toIndexedSeq.groupBy(_.algorithm).map {
+        case (algorithm, algexperiments) =>
+          algorithm -> algexperiments(0)
+      }
+  }.foreach {
+    case (dataset, algorithmMap) => {
+      algorithmMap.foreach{
+        case (algorithm, experiment) => {
+          experiment.createPerStepDiagrams("activeverticesperstep-%s-%s".format(algorithm, dataset))
+        }
+      }
+    }
   }
 }
