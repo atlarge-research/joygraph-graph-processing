@@ -36,12 +36,65 @@ object FigureGeneratorGiraphExtraBaseLine extends App {
    yUnit : String,
    algorithmMetrics : Map[String, AlgorithmMetric],
    extractor : AlgorithmMetric => immutable.IndexedSeq[Iterable[(Int, Statistics)]] ) = {
+    generateChart[Statistics](
+      chartFileNamePrefix,
+      dataSet,
+      yUnit,
+      algorithmMetrics,
+      extractor,
+      _.average
+    )
+  }
+
+  def generateChartLong
+  (chartFileNamePrefix : String,
+   dataSet : String,
+   yUnit : String,
+   algorithmMetrics : Map[String, AlgorithmMetric],
+   extractor : AlgorithmMetric => immutable.Seq[Iterable[(Int, Long)]] ) = {
     val mean = new Mean()
     val std = new StandardDeviation(true)
 
     val relevantMetrics: Map[String, Statistics] = algorithmMetrics
       .mapValues(extractor)
-      .mapValues(Experiment.extractStatisticsForCramped[Statistics](_, _.average))
+      .mapValues(Experiment.extractStatisticsForCramped[Long](_, _.toDouble))
+      .mapValues { statistics =>
+        val statisticsPerStep = statistics
+        val statisticsPerResult = {
+          val means = statisticsPerStep.map(_.average).toArray
+          Statistics(
+            std.evaluate(means),
+            mean.evaluate(means),
+            means.length
+          )
+        }
+
+        statisticsPerResult
+      }
+
+    VariabilityBarPerStepCramped(
+      relevantMetrics.keys.map('"' + _ + '"'),
+      relevantMetrics.values.map(_.average),
+      relevantMetrics.values.map(_.std)
+    )
+      .createChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", s"Mean of $yUnit")
+      .createCVChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", s"CV of $yUnit")
+  }
+
+  def generateChart[T]
+  (chartFileNamePrefix : String,
+   dataSet : String,
+   yUnit : String,
+   algorithmMetrics : Map[String, AlgorithmMetric],
+   extractor : AlgorithmMetric => immutable.IndexedSeq[Iterable[(Int, T)]],
+   tToDouble : T => Double
+  ) = {
+    val mean = new Mean()
+    val std = new StandardDeviation(true)
+
+    val relevantMetrics: Map[String, Statistics] = algorithmMetrics
+      .mapValues(extractor)
+      .mapValues(Experiment.extractStatisticsForCramped[T](_, tToDouble))
       .mapValues { statistics =>
         val statisticsPerStep = statistics
         val statisticsPerResult = {
@@ -66,24 +119,25 @@ object FigureGeneratorGiraphExtraBaseLine extends App {
   }
 
   def buildBaseCrampedPerAlgorithm(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
-    Experiment.longExtractor(
-      experiments,
-      _.algorithmMetrics.wallClockPerStepPerWorker,
-      _.baseLineResults,
-      "graphalytics-overview-wallclock",
-      "WallClock"
+
+    generateChartLong(
+      "giraph-overview-wallclock",
+      "datagen-1000",
+      "WallClock",
+      metricsPerAlgorithm,
+      _.wallClockPerStepPerWorker
     )
 
-    Experiment.longExtractor(
-      experiments,
-      _.algorithmMetrics.activeVerticesPerStepPerWorker,
-      _.baseLineResults,
-      "graphalytics-overview-active-vertices",
-      "Active vertices"
+    generateChartLong(
+      "giraph-overview-active-vertices",
+      "datagen-1000",
+      "Active vertices",
+      metricsPerAlgorithm,
+      _.activeVerticesPerStepPerWorker
     )
 
     generateChartStatistics(
-      "graphalytics-overview-offheap-memory",
+      "giraph-overview-offheap-memory",
       "datagen-1000",
       "OnHeap-Memory",
       metricsPerAlgorithm,
@@ -91,43 +145,12 @@ object FigureGeneratorGiraphExtraBaseLine extends App {
     )
 
     generateChartStatistics(
-      "graphalytics-overview-cpu-load-memory",
+      "giraph-overview-cpu-load-memory",
       "datagen-1000",
       "CPU Load",
       metricsPerAlgorithm,
       _.averageLoadPerStepPerWorker
     )
-
-
-    Experiment.statisticsExtractor(
-      experiments,
-      _.algorithmMetrics.averageLoadPerStepPerWorker,
-      _.baseLineResults,
-      "graphalytics-overview-cpu-load-memory",
-      "CPU Load"
-    )
   }
 
-//  groupedExperiments.foreach {
-//    case (dataSet, experiments) =>
-//      val mainSb = StringBuilder.newBuilder
-//      buildBaseCrampedPerAlgorithm(experiments, mainSb)
-//      dataSet -> mainSb.toString
-//  }
-
-  groupedExperiments.map{
-    case (dataSet, experiments) =>
-      dataSet -> experiments.toIndexedSeq.groupBy(_.algorithm).map {
-        case (algorithm, algexperiments) =>
-          algorithm -> algexperiments(0)
-      }
-  }.foreach {
-    case (dataset, algorithmMap) => {
-      algorithmMap.foreach{
-        case (algorithm, experiment) => {
-          experiment.createPerStepDiagrams("activeverticesperstep-%s-%s".format(algorithm, dataset))
-        }
-      }
-    }
-  }
 }
