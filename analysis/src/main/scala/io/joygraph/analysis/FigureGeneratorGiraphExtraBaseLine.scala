@@ -118,39 +118,36 @@ object FigureGeneratorGiraphExtraBaseLine extends App {
       .createCVChart(s"$chartFileNamePrefix-$dataSet", "Algorithms", s"CV of $yUnit")
   }
 
-  def buildBaseCrampedPerAlgorithm(experiments : ParIterable[Experiment], mainSb : StringBuilder) : Unit = {
+  generateChartLong(
+    "giraph-overview-wallclock",
+    "datagen-1000",
+    "WallClock",
+    metricsPerAlgorithm,
+    _.wallClockPerStepPerWorker
+  )
 
-    generateChartLong(
-      "giraph-overview-wallclock",
-      "datagen-1000",
-      "WallClock",
-      metricsPerAlgorithm,
-      _.wallClockPerStepPerWorker
-    )
+  generateChartLong(
+    "giraph-overview-active-vertices",
+    "datagen-1000",
+    "Active vertices",
+    metricsPerAlgorithm,
+    _.activeVerticesPerStepPerWorker
+  )
 
-    generateChartLong(
-      "giraph-overview-active-vertices",
-      "datagen-1000",
-      "Active vertices",
-      metricsPerAlgorithm,
-      _.activeVerticesPerStepPerWorker
-    )
+  generateChartStatistics(
+    "giraph-overview-onheap-memory",
+    "datagen-1000",
+    "OnHeap-Memory",
+    metricsPerAlgorithm,
+    _.heapMemoryUsedPerStepPerWorker
+  )
 
-    generateChartStatistics(
-      "giraph-overview-offheap-memory",
-      "datagen-1000",
-      "OnHeap-Memory",
-      metricsPerAlgorithm,
-      _.heapMemoryUsedPerStepPerWorker
-    )
-
-    generateChartStatistics(
-      "giraph-overview-cpu-load-memory",
-      "datagen-1000",
-      "CPU Load",
-      metricsPerAlgorithm,
-      _.averageLoadPerStepPerWorker
-    )
-  }
+  generateChartStatistics(
+    "giraph-overview-cpu-load-memory",
+    "datagen-1000",
+    "CPU Load",
+    metricsPerAlgorithm,
+    _.averageLoadPerStepPerWorker
+  )
 
 }
