@@ -16,10 +16,10 @@ object GiraphMetrics {
     val (ssStart, ssStop) = colVals(2).toLong -> colVals(3).toLong
     val activeVertices = colVals(4).toLong
     val (cpuStart, cpuStop) = colVals(5).toDouble -> colVals(6).toDouble
-    val (memStart, memStop) = colVals(7).toLong -> colVals(8).toLong
-    val (wcStart, wcEnd) = colVals(7).toLong -> colVals(8).toLong
+    val (memStart, memStop) = colVals(7).toDouble.toLong -> colVals(8).toDouble.toLong
+    val (wcStart, wcEnd) = colVals(9).toLong -> colVals(10).toLong
 
-    Row(workerId, superStep, ssStop - ssStart, activeVertices, cpuStop - cpuStart, memStop + memStart / 2, wcEnd - wcStart )
+    Row(workerId, superStep, ssStop - ssStart, activeVertices, cpuStop - cpuStart, (memStop + memStart) / 2, wcEnd - wcStart )
   }
 
   def parseFile(path : String) : AlgorithmMetric = {
