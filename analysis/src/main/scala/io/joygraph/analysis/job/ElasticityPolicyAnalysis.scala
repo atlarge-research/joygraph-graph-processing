@@ -1,6 +1,5 @@
-package io.joygraph.analysis.algorithm.job
+package io.joygraph.analysis.job
 
-import io.joygraph.analysis.ElasticPolicyReader
 import io.joygraph.core.actor.elasticity.policies.ElasticPolicy
 import io.joygraph.core.message.AddressPair
 import io.joygraph.core.partitioning.impl.VertexHashPartitioner
