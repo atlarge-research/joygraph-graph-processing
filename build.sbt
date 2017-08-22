@@ -2,12 +2,12 @@ import sbt.Keys._
 import sbt._
 
 val HADOOP_VERSION = "2.7.2"
-val AKKA_VERSION = "2.4.4"
-val SCALA_VERSION = "2.12.0-M4"
+val AKKA_VERSION = "2.5.4"
+val SCALA_VERSION = "2.12.3"
 
 lazy val commonSettings = Seq(
   organization := "io.joygraph",
-  version := "0.1-SNAPSHOT",
+  version := "0.2-SNAPSHOT",
   scalaVersion := SCALA_VERSION,
   publishTo := Some(Resolver.file("file",  new File(Path.userHome.absolutePath+"/.m2/repository")))
   //  checksums := Seq("")
@@ -60,7 +60,9 @@ lazy val core = (project in file("core"))
       "com.typesafe" % "config" % "1.3.0",
       "com.esotericsoftware" % "kryo-shaded" % "3.0.3",
       "io.netty" % "netty-all" % "4.0.34.Final",
-      "io.kamon" % "sigar-loader" % "1.6.6-rev002" // hyperic sigar for enhanced CPU metrics
+      "io.kamon" % "sigar-loader" % "1.6.6-rev002", // hyperic sigar for enhanced CPU metrics
+      "org.caffinitas.ohc" % "ohc-core" % "0.6.1",
+      "org.caffinitas.ohc" % "ohc-core-j8" % "0.6.1"
       //  "net.openhft" % "chronicle-map" % "3.4.2-beta"
     ))
   .settings(
@@ -87,5 +89,5 @@ lazy val hadoopTestDependencies = Seq(
 )
 
 lazy val testDependencies = Seq(
-  "org.scalatest" %% "scalatest" % "3.0.0-M16-SNAP4" % "test"
+  "org.scalatest" %% "scalatest" % "3.0.2" % "test"
 )
