@@ -3,8 +3,6 @@ package io.joygraph.core.util.collection
 import java.lang.reflect.Field
 import java.nio.{Buffer, ByteBuffer}
 
-import com.esotericsoftware.kryo.Kryo
-import io.netty.util.internal.PlatformDependent
 import org.caffinitas.ohc.{CacheSerializer, Eviction, OHCache, OHCacheBuilder}
 import sun.misc.Unsafe
 
@@ -77,9 +75,7 @@ object OHCWrapper {
   }
 }
 
-// todo put DirectOutputStream to ByteBuffer
-
-class OHCWrapper[K](kryo : Kryo, keySerializer : CacheSerializer[K]) extends mutable.Map[K, ByteBuffer] {
+class OHCWrapper[K](keySerializer : CacheSerializer[K]) extends mutable.Map[K, ByteBuffer] {
 
   private[this] val resuseableByteBuffer = ByteBuffer.allocateDirect(1);
 
@@ -116,14 +112,6 @@ class OHCWrapper[K](kryo : Kryo, keySerializer : CacheSerializer[K]) extends mut
   }
 
   override def iterator : Iterator[(K,ByteBuffer)] = new OHCIterator(ohCache)
-
-  class LongCacheSerializer extends CacheSerializer[Long] {
-    override def serializedSize(value: Long): Int = 8
-
-    override def serialize(value: Long, buf: ByteBuffer): Unit = buf.putLong(value)
-
-    override def deserialize(buf: ByteBuffer): Long = buf.getLong
-  }
 
   class OHCIterator(private[this] val ohCache : OHCache[K,ByteBufferProxy]) extends Iterator[(K,ByteBuffer)] {
     private[this] val keyIterator : java.util.Iterator[K] = ohCache.keyIterator()
