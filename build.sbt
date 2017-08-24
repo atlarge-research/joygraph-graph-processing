@@ -1,14 +1,14 @@
 organization := "io.joygraph"
 name := "programs"
-version := "0.1-SNAPSHOT"
-scalaVersion := "2.12.0-M4"
+version := "0.2-SNAPSHOT"
+scalaVersion := "2.12.3"
 publishTo := Some(Resolver.file("file",  new File(Path.userHome.absolutePath+"/.m2/repository")))
 
 val HADOOP_VERSION = "2.7.2"
 
 libraryDependencies ++= Seq(
-  "io.joygraph" %% "hadoop" % "0.1-SNAPSHOT",
-  "org.scalatest" %% "scalatest" % "3.0.0-M16-SNAP4" % "test",
+  "io.joygraph" %% "hadoop" % "0.2-SNAPSHOT",
+  "org.scalatest" %% "scalatest" % "3.0.4" % "test",
   "org.apache.hadoop" % "hadoop-client" % HADOOP_VERSION % Test exclude("jline", "jline"),
   "org.apache.hadoop" % "hadoop-mapreduce-client-core" % HADOOP_VERSION % Test exclude("jline", "jline"),
   "org.apache.hadoop" % "hadoop-common" % HADOOP_VERSION % Test exclude("jline", "jline"),
