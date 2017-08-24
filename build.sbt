@@ -63,7 +63,6 @@ lazy val core = (project in file("core"))
       "io.kamon" % "sigar-loader" % "1.6.6-rev002", // hyperic sigar for enhanced CPU metrics
       "org.caffinitas.ohc" % "ohc-core" % "0.6.1",
       "org.caffinitas.ohc" % "ohc-core-j8" % "0.6.1"
-      //  "net.openhft" % "chronicle-map" % "3.4.2-beta"
     ))
   .settings(
     libraryDependencies ++= testDependencies
