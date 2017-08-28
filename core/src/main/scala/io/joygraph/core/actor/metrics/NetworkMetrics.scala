@@ -12,11 +12,11 @@ object NetworkMetrics {
   private val received : LongAdder = new LongAdder
   private val sent : LongAdder = new LongAdder
 
-  def getBytesReceivedAndReset : Long = {
-    received.sumThenReset()
+  def getBytesReceived : Long = {
+    received.sum()
   }
-  def getBytesSentAndReset : Long = {
-    sent.sumThenReset()
+  def getBytesSent : Long = {
+    sent.sum()
   }
 
   def bytesReceived(bytes : Long) = {

@@ -11,12 +11,12 @@ import com.esotericsoftware.kryo.io.{ByteBufferInput, Input, Output}
 import com.typesafe.config.Config
 import io.joygraph.core.actor.communication.impl.netty.{MessageReceiverNetty, MessageSenderNetty}
 import io.joygraph.core.actor.messaging.impl.TrieMapMessageStore
-import io.joygraph.core.actor.messaging.impl.serialized.{OpenHashMapSerializedMessageStore, TrieMapSerializedMessageStore}
+import io.joygraph.core.actor.messaging.impl.serialized.{OHCacheMessagesStore, OpenHashMapSerializedMessageStore, TrieMapSerializedMessageStore}
 import io.joygraph.core.actor.messaging.{Message, MessageStore}
 import io.joygraph.core.actor.service.RequestResponseService
 import io.joygraph.core.actor.state.GlobalState
 import io.joygraph.core.actor.vertices.impl.TrieMapVerticesStore
-import io.joygraph.core.actor.vertices.impl.serialized.{JavaHashMapSerializedVerticesStore, OpenHashMapSerializedVerticesStore, TrieMapSerializedVerticesStore}
+import io.joygraph.core.actor.vertices.impl.serialized.{JavaHashMapSerializedVerticesStore, OHCacheSerializedVerticesStore, OpenHashMapSerializedVerticesStore, TrieMapSerializedVerticesStore}
 import io.joygraph.core.actor.vertices.{VertexEdge, VerticesStore}
 import io.joygraph.core.config.JobSettings
 import io.joygraph.core.message._
@@ -90,6 +90,30 @@ object Worker{
         )
         messageStore = new OpenHashMapSerializedMessageStore(jobSettings.workerCores, jobSettings.maxFrameLength, exceptionReporter)
         elasticMessagesStore = new OpenHashMapSerializedMessageStore(jobSettings.workerCores, jobSettings.maxFrameLength, exceptionReporter)
+      }
+    }
+    worker.initialize()
+    worker
+  }
+
+  def workerWithSerializeOHCStore[I,V,E]
+  (config: Config,
+   programDefinition: ProgramDefinition[String, I,V,E],
+   partitioner : VertexPartitioner
+  ): Worker[I,V,E] = {
+    val worker = new Worker[I,V,E](config, programDefinition, partitioner) {
+      override def initialize(): Unit = {
+        super.initialize()
+
+        verticesStore = new OHCacheSerializedVerticesStore[I,V,E](
+          clazzI, clazzE, clazzV, jobSettings.workerCores, jobSettings.maxEdgeSize, exceptionReporter
+        )
+
+        elasticVerticesStore = new OHCacheSerializedVerticesStore[I,V,E](
+          clazzI, clazzE, clazzV, jobSettings.workerCores, jobSettings.maxEdgeSize, exceptionReporter
+        )
+        messageStore = new OHCacheMessagesStore(clazzI.asInstanceOf[Class[Any]], jobSettings.workerCores, jobSettings.maxFrameLength, exceptionReporter)
+        elasticMessagesStore = new OHCacheMessagesStore(clazzI.asInstanceOf[Class[Any]], jobSettings.workerCores, jobSettings.maxFrameLength, exceptionReporter)
       }
     }
     worker.initialize()

@@ -5,23 +5,23 @@ import java.util.concurrent.atomic.AtomicLong
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.ByteBufferInput
-import io.joygraph.core.actor.{PregelVertexComputation, QueryAnswerVertexComputation}
 import io.joygraph.core.actor.messaging.MessageStore
 import io.joygraph.core.actor.vertices.VerticesStore
 import io.joygraph.core.actor.vertices.impl.serialized.PartitionedVerticesStore.Partition
+import io.joygraph.core.actor.{PregelVertexComputation, QueryAnswerVertexComputation}
 import io.joygraph.core.partitioning.VertexPartitioner
 import io.joygraph.core.partitioning.impl.VertexHashPartitioner
 import io.joygraph.core.program.{Edge, Vertex, VertexImpl}
 import io.joygraph.core.util.buffers.KryoOutput
-import io.joygraph.core.util.{DirectByteBufferGrowingOutputStream, SimplePool, ThreadId}
 import io.joygraph.core.util.collection.ReusableIterable
 import io.joygraph.core.util.concurrency.PartitionWorker
 import io.joygraph.core.util.serde.AsyncSerializer
+import io.joygraph.core.util.{DirectByteBufferGrowingOutputStream, SimplePool, ThreadId}
 
 import scala.collection.mutable
 import scala.collection.parallel.ParIterable
-import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 
 // generalized from OpenHashMapSerializedVerticesStore.
 // TODO port the other implementations to extend this store to reduce duplication
@@ -114,6 +114,10 @@ object PartitionedVerticesStore {
 
     private[this] def edgeStream(vId : I) = _edges.getOrElseUpdate(vId, new DirectByteBufferGrowingOutputStream(0))
 
+    protected[this] def postAddEdge(src: I, os : DirectByteBufferGrowingOutputStream) = {
+      // noop by default
+    }
+
     def explicitlyScopedEdges[T](vId: I)(f : Iterable[Edge[I, E]] => T) : T = {
       val edges = _edges.get(vId) match  {
         case Some(os) =>
@@ -169,6 +173,7 @@ object PartitionedVerticesStore {
       val os = edgeStream(src)
       serializeEdge(dst, value, os)
       numEdges += 1
+      postAddEdge(src, os)
     }
 
     private[this] def serializeEdge(dst : I, value : E, os : DirectByteBufferGrowingOutputStream): Unit = {

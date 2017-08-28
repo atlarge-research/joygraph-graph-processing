@@ -11,12 +11,29 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
     protected ByteBuffer buf;
     private static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8;
 
+    public DirectByteBufferGrowingOutputStream() {
+        // you need to use setBuf to use it
+    }
+
     public DirectByteBufferGrowingOutputStream(int byteBufferSize) {
         buf = allocateDirectBufferZeroed(byteBufferSize);
     }
 
     public boolean isEmpty() {
         return buf.position() == 0;
+    }
+
+    /**
+     * Don't use unless you know what you're doing
+     * This is directly getting the buf instead of returning a duplicate
+     * Basically this doesn't create a new instance.
+     */
+    public ByteBuffer getBufDirect() {
+        return this.buf;
+    }
+
+    public void setBuf(ByteBuffer buf) {
+        this.buf = buf;
     }
 
     private static int hugeCapacity(int minCapacity) {

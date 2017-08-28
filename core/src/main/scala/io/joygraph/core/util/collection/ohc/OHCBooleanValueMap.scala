@@ -31,8 +31,8 @@ class OHCBooleanValueMap[K](private[this] val clazz: Class[K]) extends mutable.M
     this
   }
 
-  override def get(key: K) : Boolean = {
-    ohCache.get(key)
+  override def get(key: K) : Option[Boolean] = {
+    Option(ohCache.get(key))
   }
 
   override def iterator : Iterator[(K, Boolean)] = {

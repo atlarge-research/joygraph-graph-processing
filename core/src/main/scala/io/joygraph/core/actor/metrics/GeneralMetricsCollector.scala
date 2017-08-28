@@ -80,13 +80,13 @@ class GeneralMetricsCollector(address: Address, decayFactor: Double, sigar : Sig
 
   def bytesSent() : Option[Metric] = Metric.create(
     name = NetworkMetrics.BytesSent,
-    value = NetworkMetrics.getBytesSentAndReset,
+    value = NetworkMetrics.getBytesSent,
     decayFactor = None
   )
 
   def bytesReceived() : Option[Metric] = Metric.create(
     name = NetworkMetrics.BytesReceived,
-    value = NetworkMetrics.getBytesReceivedAndReset,
+    value = NetworkMetrics.getBytesReceived,
     decayFactor = None
   )
 

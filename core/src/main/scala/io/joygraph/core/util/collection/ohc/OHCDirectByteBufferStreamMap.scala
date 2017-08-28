@@ -13,7 +13,7 @@ class OHCDirectByteBufferStreamMap[K](clazzK : Class[K]) extends mutable.Map[K, 
 
 
   override def +=(kv: (K, DirectByteBufferGrowingOutputStream)) : this.type = {
-    ohCacheWrapped += kv._1 -> kv._2.buf
+    ohCacheWrapped += kv._1 -> kv._2.getBufDirect
     this
   }
 
@@ -28,9 +28,14 @@ class OHCDirectByteBufferStreamMap[K](clazzK : Class[K]) extends mutable.Map[K, 
     this
   }
 
-  override def get(key: K): DirectByteBufferGrowingOutputStream = {
-    reuseableOutputStream.setBuf(ohCacheWrapped.get(key))
-    reuseableOutputStream
+  override def get(key: K): Option[DirectByteBufferGrowingOutputStream] = {
+    ohCacheWrapped.get(key) match {
+      case Some(buf) =>
+        reuseableOutputStream.setBuf(buf)
+        Some(reuseableOutputStream)
+      case None =>
+        None
+    }
   }
 
   override def iterator : Iterator[(K, DirectByteBufferGrowingOutputStream)] = {
