@@ -84,7 +84,7 @@ class DLCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
           // create neighbours hashset
           val neighbours =  mutable.HashSet.empty[Long]
           v.edges.foreach(x => neighbours += x.dst)
-          v.value = ValuePOC2(0.0, neighbours.toSet)
+          v.value = new ValuePOC2(0.0, neighbours.toSet)
           sendAll(v, v.id)
           false
         }
@@ -207,7 +207,7 @@ class ULCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
           // create neighbours hashset
           val neighbours =  mutable.HashSet.empty[Long]
           v.edges.foreach(x => neighbours += x.dst)
-          v.value = ValuePOC2(0.0, neighbours.toSet)
+          v.value = new ValuePOC2(0.0, neighbours.toSet)
           sendAll(v, v.id)
           false
         }
@@ -263,8 +263,33 @@ class ULCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
   }
 }
 
-case class ValuePOC2(var lcc : Double, var neighboursSet : Set[Long]) {
+class ValuePOC2 extends KryoSerializable {
+  var lcc : Double = _
+  var neighboursSet : Set[Long] = _
+  def this(lcc : Double, neighboursSet : Set[Long]) = {
+    this()
+    this.lcc = lcc
+    this.neighboursSet = neighboursSet
+  }
+
   override def toString: String = lcc.toString
+
+  override def read(kryo: Kryo, input: Input): Unit = {
+    lcc = input.readDouble()
+    neighboursSet = Set.empty[Long]
+    val numNeighbours = input.readInt()
+    var i = 0
+    while (i < numNeighbours) {
+      neighboursSet += input.readLong()
+      i += 1
+    }
+  }
+
+  override def write(kryo: Kryo, output: Output): Unit = {
+    output.writeDouble(lcc)
+    output.writeInt(neighboursSet.size)
+    neighboursSet.foreach(output.writeLong)
+  }
 }
 
 class InquiryPOC2 extends KryoSerializable {
