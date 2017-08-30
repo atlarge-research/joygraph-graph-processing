@@ -19,7 +19,7 @@ object OHCWrapper {
     buf.capacity()
   }
 
-  def instantiate(address : Long, capacity : Int, position: Int, buff : ByteBuffer) : ByteBuffer = {
+  def instantiate(address : Long, capacity : Int, limit : Int, position: Int, buff : ByteBuffer) : ByteBuffer = {
     ByteBufferUtil.ADDRESS_FIELD.setLong(buff, address)
     ByteBufferUtil.CAPACITY_FIELD.setInt(buff, capacity)
     buff.limit(capacity)
@@ -46,6 +46,7 @@ class OHCWrapper[K](keySerializer : CacheSerializer[K]) extends mutable.Map[K, B
       ByteBufferProxy(
         OHCWrapper.directBufferAddress(byteBuffer),
         byteBuffer.capacity(),
+        byteBuffer.limit(),
         byteBuffer.position()
       )
     )) {
@@ -65,7 +66,7 @@ class OHCWrapper[K](keySerializer : CacheSerializer[K]) extends mutable.Map[K, B
   override def get(key: K) : Option[ByteBuffer] = {
     Option(ohCache.get(key)) match {
       case Some(bbProxy) =>
-        Some(OHCWrapper.instantiate(bbProxy.address, bbProxy.capacity, bbProxy.position, resuseableByteBuffer))
+        Some(OHCWrapper.instantiate(bbProxy.address, bbProxy.capacity, bbProxy.limit, bbProxy.position, resuseableByteBuffer))
       case None => None
     }
   }
@@ -79,24 +80,25 @@ class OHCWrapper[K](keySerializer : CacheSerializer[K]) extends mutable.Map[K, B
     override def next(): (K, ByteBuffer) = {
       val key = keyIterator.next()
       val bbProxy = ohCache.get(key)
-      val value = OHCWrapper.instantiate(bbProxy.address, bbProxy.capacity, bbProxy.position, resuseableByteBuffer)
+      val value = OHCWrapper.instantiate(bbProxy.address, bbProxy.capacity, bbProxy.limit, bbProxy.position, resuseableByteBuffer)
       (key, value)
     }
   }
 
   class ByteBufferProxySerializer extends CacheSerializer[ByteBufferProxy] {
-    override def serializedSize(value: ByteBufferProxy): Int = 16
+    override def serializedSize(value: ByteBufferProxy): Int = 20
 
     override def serialize(value: ByteBufferProxy, buf: ByteBuffer): Unit = {
       buf.putLong(value.address)
       buf.putInt(value.capacity)
+      buf.putInt(value.limit)
       buf.putInt(value.position)
     }
 
     override def deserialize(buf: ByteBuffer): ByteBufferProxy = {
-      ByteBufferProxy(buf.getLong,  buf.getInt, buf.getInt)
+      ByteBufferProxy(buf.getLong,  buf.getInt, buf.getInt, buf.getInt)
     }
   }
 
-  case class ByteBufferProxy(address : Long, capacity : Int, position : Int)
+  case class ByteBufferProxy(address : Long, capacity : Int, limit : Int, position : Int)
 }
