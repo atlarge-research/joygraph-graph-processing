@@ -487,6 +487,7 @@ abstract class Worker[I,V,E]
 
   private[this] def currentOutgoingMessageClass : Class[_] = currentSuperStepFunction match {
     case pregelSuperStepFunction : PregelSuperStepFunction[I,V,E,_,_] => pregelSuperStepFunction.clazzOut
+    case qap : QueryAnswerProcessSuperStepFunction[I,V,E,_,_,_] => null // there is no outgoing messaging after the step
   }
 
   private[this] def ifMessageToSelf(workerId : Int)(any : => Unit)(otherwise : => Unit) : Unit = {
