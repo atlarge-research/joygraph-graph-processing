@@ -128,10 +128,14 @@ class DLCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
           if (data.isEmpty) {
             v.value.lcc = 0.0
           } else {
-            val matches = data.sum
-            val numNeighbours : Double = v.value.lcc
-            val lcc = matches / numNeighbours / (numNeighbours - 1)
-            v.value.lcc = lcc
+            data.sum match {
+              case 0 =>
+                v.value.lcc = 0
+              case matches =>
+                val numNeighbours : Double = v.value.lcc
+                val lcc = matches / numNeighbours / (numNeighbours - 1)
+                v.value.lcc = lcc
+            }
           }
           true
         }
@@ -251,10 +255,14 @@ class ULCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
           if (data.isEmpty) {
             v.value.lcc = 0.0
           } else {
-            val matches = data.sum
-            val numNeighbours : Double = v.value.lcc
-            val lcc = matches / numNeighbours / (numNeighbours - 1)
-            v.value.lcc = lcc
+            data.sum match {
+              case 0 =>
+                v.value.lcc = 0
+              case matches =>
+                val numNeighbours : Double = v.value.lcc
+                val lcc = matches / numNeighbours / (numNeighbours - 1)
+                v.value.lcc = lcc
+            }
           }
           true
         }
