@@ -96,6 +96,8 @@ object YarnAMBaseActor {
          |akka.cluster.metrics.enabled = off
          |akka.cluster.metrics.collector.provider = ${classOf[GeneralMetricsCollector].getName}
          |akka.cluster.metrics.collector.fallback = false
+         |akka.cluster.metrics.collector.sample-interval = 0.5s
+         |akka.cluster.metrics.collector.gossip-interval = 0.5s
        """.stripMargin)
 
     // this is the configuration that the workers will get.
