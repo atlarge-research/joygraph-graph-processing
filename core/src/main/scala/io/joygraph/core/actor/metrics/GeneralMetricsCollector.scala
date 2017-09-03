@@ -7,6 +7,8 @@ import akka.cluster.Cluster
 import akka.cluster.metrics._
 import org.hyperic.sigar.SigarProxy
 
+import scala.collection.JavaConverters._
+
 object NonHeapMemoryMetrics {
   final val NonHeapMemoryUsed = "non-heap-memory-used"
   final val NonHeapMemoryCommitted = "non-heap-memory-committed"
@@ -18,6 +20,10 @@ object OffHeapMemoryMetrics {
   final val OffHeapMemoryMax = "off-heap-memory-max"
 }
 
+object GarbageCollectionMetrics {
+  final val CollectionTime = "garbage-collection-time"
+  final val CollectionCount = "garbage-collection-count"
+}
 
 /**
   * Based on SigarMetricsCollector
@@ -87,6 +93,18 @@ class GeneralMetricsCollector(address: Address, decayFactor: Double, sigar : Sig
   def bytesReceived() : Option[Metric] = Metric.create(
     name = NetworkMetrics.BytesReceived,
     value = NetworkMetrics.getBytesReceived,
+    decayFactor = None
+  )
+
+  def garbageCollectionCount() : Option[Metric] = Metric.create(
+    name = GarbageCollectionMetrics.CollectionTime,
+    value = ManagementFactory.getGarbageCollectorMXBeans.asScala.map{_.getCollectionCount}.sum,
+    decayFactor = None
+  )
+
+  def garbageCollectionTime() : Option[Metric] = Metric.create(
+    name = GarbageCollectionMetrics.CollectionTime,
+    value = ManagementFactory.getGarbageCollectorMXBeans.asScala.map{_.getCollectionTime}.sum,
     decayFactor = None
   )
 
