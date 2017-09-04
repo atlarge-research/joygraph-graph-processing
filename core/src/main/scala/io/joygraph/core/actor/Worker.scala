@@ -81,6 +81,8 @@ object Worker{
       override def initialize(): Unit = {
         super.initialize()
 
+        log.info("Using OpenHashMapSerializedVerticesStore, OpenHashMapSerializedMessageStore")
+
         verticesStore = new OpenHashMapSerializedVerticesStore[I,V,E](
           clazzI, clazzE, clazzV, jobSettings.workerCores, jobSettings.maxEdgeSize, exceptionReporter
         )
@@ -104,7 +106,7 @@ object Worker{
     val worker = new Worker[I,V,E](config, programDefinition, partitioner) {
       override def initialize(): Unit = {
         super.initialize()
-
+        log.info("Using OHCacheSerializedVerticesStore, OHCacheMessagesStore")
         verticesStore = new OHCacheSerializedVerticesStore[I,V,E](
           clazzI, clazzE, clazzV, jobSettings.workerCores, jobSettings.maxEdgeSize, exceptionReporter
         )

@@ -50,7 +50,8 @@ object YarnBaseActor {
         Master.initialize(master)
       }, () => {
 //        Worker.workerWithSerializeJavaHashMapStore(workerConf, definition, new VertexHashPartitioner)
-        Worker.workerWithSerializeOpenHashMapStore(workerConf, definition, new VertexHashPartitioner)
+//        Worker.workerWithSerializeOpenHashMapStore(workerConf, definition, new VertexHashPartitioner)
+        Worker.workerWithSerializeOHCStore(workerConf, definition, new VertexHashPartitioner)
       },
       None
     ))
