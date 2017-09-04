@@ -26,9 +26,9 @@ JOYGRAPH_PREBUILT=/var/scratch/${USERNAME}/graphalyticsrunner/app/graphalytics-p
 #ssh ${TARGET_SITE} "cd /var/scratch/${USERNAME}/graphalyticsrunner/app/yarn; wget http://apache.cs.uu.nl/hadoop/common/hadoop-2.7.2/hadoop-2.7.2.tar.gz"
 
 cd ${JOYGRAPH}
-sbt publish publish-local
+sbt clean publish publish-local
 cd ${PROGRAMS}
-sbt publish publish-local
+sbt clean publish publish-local
 
 cd ${GRAPHAYLTICS_DIR}
 git checkout v0.3
@@ -36,12 +36,12 @@ mvn install
 
 cd ${GRAPHALYTICS_PLATFORM_JOYGRAPH}
 git checkout alpha
-mvn install -DskipTests
+mvn clean install -DskipTests
 
 cd ${GRAPHALYTICS_JOYGRAPH}
-mvn package -DskipTests
+mvn clean package -DskipTests
 scp -C ${GRAPHALYTICS_JOYGRAPH}/graphalytics-${GRAPHALYTICS_VERSION}-joygraph-${PLATFORM_VERSION}-bin.tar.gz ${TARGET_SITE}:${JOYGRAPH_PREBUILT}/.
 
 cd ${GRAPHALYTICS_RUNNER_PROJECT}
-mvn package
+mvn clean package
 scp -C ${GRAPHALYTICS_RUNNER_PROJECT}/target/graphalytics-runner-1.0.jar ${TARGET_SITE}:/home/${USERNAME}/.
