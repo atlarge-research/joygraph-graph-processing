@@ -399,11 +399,15 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
       }
 
       val stdsSuperStepTimes = stdsSum.map{
+        case (step, 0.0) =>
+          step -> 0.0
         case (step, stdSum) =>
           step -> Math.sqrt(1.0 / (numResults.toDouble - 1.0) * stdSum.toDouble)
       }
 
       val stdsElasticSuperStepTimes = stdsElasticSum.map{
+        case (step, 0.0) =>
+          step -> 0.0
         case (step, stdElasticSum) =>
           step -> Math.sqrt(1.0 / (numResults.toDouble - 1.0) * stdElasticSum.toDouble)
       }

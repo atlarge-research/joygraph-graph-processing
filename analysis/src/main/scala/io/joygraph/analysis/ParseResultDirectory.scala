@@ -70,7 +70,14 @@ trait GeneralResultProperties extends BaseResultProperties {
   val files: IndexedSeq[File] = dir.files.toIndexedSeq
   val valid: Option[String] = Source.fromFile(benchmarkLog.jfile).getLines().find(_.contains("Validation successful"))
   if (valid.isEmpty) throw new IllegalArgumentException("Invalid Result")
-  val metrics = MetricsTransformer(metricsFile.jfile.getAbsolutePath)
+  val metrics = Try {
+    MetricsTransformer(metricsFile.jfile.getAbsolutePath)
+  } match {
+    case Failure(exception) =>
+      throw new Exception(s"Could not find metrics file for $getAlgorithmName $getDatasetName ${metricsFile.jfile.getAbsolutePath}")
+    case Success(value) =>
+      value
+  }
   val algorithmMetrics: AlgorithmMetric = AlgorithmMetric.calculate(metrics.policyMetricsReader, benchmarkId)
   val masterNodeStdout: Option[File] = nodeLogsDir.deepFiles.find(_.name == "appMaster.jar.stdout")
   val times: Iterator[Long] = Source.fromFile(benchmarkLog.jfile).getLines().flatMap(s =>
