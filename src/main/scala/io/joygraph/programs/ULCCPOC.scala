@@ -70,8 +70,8 @@ class DLCCPOC extends NewVertexProgram[Long, Double, Unit] {
 class DLCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
   private[this] val neighbours = mutable.HashSet.empty[Long]
   private[this] val inquiry = new InquiryPOC2(null.asInstanceOf[Long], null.asInstanceOf[Array[Long]])
-  private[this] val nullRef = null.asInstanceOf[Unit]
   private[this] val emptyIterable = Iterable.empty[(Long, InquiryPOC2)]
+  private[this] val neighboursPregelStep =  mutable.HashSet.empty[Long]
 
   override def load(conf: Config): Unit = {
     // noop
@@ -82,9 +82,9 @@ class DLCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
       new PregelSuperStepFunction(this, classOf[Unit], classOf[Long]) {
         override def func: (Vertex[Long, ValuePOC2, Unit], Iterable[Unit]) => Boolean = (v, m) => {
           // create neighbours hashset
-          val neighbours =  mutable.HashSet.empty[Long]
-          v.edges.foreach(x => neighbours += x.dst)
-          v.value = new ValuePOC2(0.0, neighbours.toSet)
+          neighboursPregelStep.clear()
+          v.edges.foreach(x => neighboursPregelStep += x.dst)
+          v.value = new ValuePOC2(0.0, neighboursPregelStep.toArray)
           sendAll(v, v.id)
           false
         }
@@ -103,7 +103,7 @@ class DLCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
 
             new Iterable[(Long, InquiryPOC2)] {
               override def iterator: Iterator[(Long, InquiryPOC2)] = new Iterator[(Long, InquiryPOC2)] {
-                val nIt =  neighbours.iterator
+                val nIt: Iterator[Long] =  neighbours.iterator
 
                 override def hasNext: Boolean = nIt.hasNext
 
@@ -199,6 +199,7 @@ class ULCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
   private[this] val neighbours = mutable.HashSet.empty[Long]
   private[this] val inquiry = new InquiryPOC2(null.asInstanceOf[Long], null.asInstanceOf[Array[Long]])
   private[this] val emptyIterable = Iterable.empty[(Long, InquiryPOC2)]
+  private[this] val neighboursPregelStep =  mutable.HashSet.empty[Long]
 
   override def load(conf: Config): Unit = {
     // noop
@@ -209,9 +210,9 @@ class ULCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
       new PregelSuperStepFunction(this, classOf[Unit], classOf[Long]) {
         override def func: (Vertex[Long, ValuePOC2, Unit], Iterable[Unit]) => Boolean = (v, m) => {
           // create neighbours hashset
-          val neighbours =  mutable.HashSet.empty[Long]
-          v.edges.foreach(x => neighbours += x.dst)
-          v.value = new ValuePOC2(0.0, neighbours.toSet)
+          neighboursPregelStep.clear()
+          v.edges.foreach(x => neighboursPregelStep += x.dst)
+          v.value = new ValuePOC2(0.0, neighboursPregelStep.toArray)
           sendAll(v, v.id)
           false
         }
@@ -273,8 +274,8 @@ class ULCCPOC2 extends NewVertexProgram[Long, ValuePOC2, Unit] {
 
 class ValuePOC2 extends KryoSerializable {
   var lcc : Double = _
-  var neighboursSet : Set[Long] = _
-  def this(lcc : Double, neighboursSet : Set[Long]) = {
+  var neighboursSet : Array[Long] = _
+  def this(lcc : Double, neighboursSet : Array[Long]) = {
     this()
     this.lcc = lcc
     this.neighboursSet = neighboursSet
@@ -284,18 +285,18 @@ class ValuePOC2 extends KryoSerializable {
 
   override def read(kryo: Kryo, input: Input): Unit = {
     lcc = input.readDouble()
-    neighboursSet = Set.empty[Long]
     val numNeighbours = input.readInt()
+    neighboursSet = new Array[Long](numNeighbours)
     var i = 0
     while (i < numNeighbours) {
-      neighboursSet += input.readLong()
+      neighboursSet(i) = input.readLong()
       i += 1
     }
   }
 
   override def write(kryo: Kryo, output: Output): Unit = {
     output.writeDouble(lcc)
-    output.writeInt(neighboursSet.size)
+    output.writeInt(neighboursSet.length)
     neighboursSet.foreach(output.writeLong)
   }
 }
