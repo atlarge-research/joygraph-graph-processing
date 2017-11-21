@@ -2,9 +2,13 @@ package io.joygraph.core.actor.elasticity.policies
 import io.joygraph.core.actor.metrics.{Network, WorkerOperation}
 import io.joygraph.core.message.AddressPair
 
+import scala.collection.mutable
+
 class NetworkPolicy extends DefaultAveragingPolicy[Double] {
 
   println("NetworkPolicy")
+
+  val bytesSentStepToWorker = mutable.Map.empty[Int, mutable.Map[Int, Long]]
 
   override protected[this] def calculateAverage(step: Int, currentWorkers: Iterable[Int]): Option[Double] = {
     Some(ElasticPolicy.average(individualWorkerValues(step, currentWorkers).map(_._2)))
@@ -18,28 +22,41 @@ class NetworkPolicy extends DefaultAveragingPolicy[Double] {
     val workerBytesSent = currentWorkers.flatMap { workerId =>
       // get processing time
       val metrics = metricsOf(step, workerId, WorkerOperation.RUN_SUPERSTEP).get
-
-      // get all workers
-      if (metrics.size < 2) {
-        None
-      } else {
-        val firstNetworkMetric = metrics(0) match {
-          case Network(address, timeStamp, bytesReceived, bytesSent) =>
-            Some(bytesSent)
-          case _ => None
-        }
-        val lastNetworkMetric = metrics.last match {
-          case Network(address, timeStamp, bytesReceived, bytesSent) =>
-            Some(bytesSent)
-          case _ => None
-        }
-
-        if (firstNetworkMetric.isEmpty || lastNetworkMetric.isEmpty) {
+      val bytesSentMetrics = metrics.flatMap {
+        case Network(_,_,_, bytesSent) =>
+          Some(bytesSent)
+        case _ =>
           None
-        } else {
-          Some(workerId -> (lastNetworkMetric.get - firstNetworkMetric.get))
-        }
       }
+
+      if (bytesSentMetrics.nonEmpty) {
+        val max = bytesSentMetrics.max
+        val prevValue = bytesSentStepToWorker
+          .getOrElseUpdate(step - 1, mutable.Map.empty[Int, Long])
+          .getOrElse(workerId, 0L)
+        if (max < prevValue) {
+          bytesSentStepToWorker
+            .getOrElseUpdate(step, mutable.Map.empty[Int, Long])
+            .put(workerId, prevValue)
+        } else {
+          bytesSentStepToWorker
+            .getOrElseUpdate(step, mutable.Map.empty[Int, Long])
+            .put(workerId, max)
+        }
+
+      }
+
+      val prevValue: Long = bytesSentStepToWorker
+        .getOrElseUpdate(step - 1, mutable.Map.empty[Int, Long])
+        .getOrElse(workerId, 0L)
+
+      val currentValue: Long = bytesSentStepToWorker
+        .getOrElseUpdate(step, mutable.Map.empty[Int, Long])
+        .getOrElse(workerId, 0L)
+
+      val diff = currentValue - prevValue
+
+      Some(workerId -> diff)
     }
 
     if (workerBytesSent.isEmpty) {
