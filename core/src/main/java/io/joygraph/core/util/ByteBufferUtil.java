@@ -7,6 +7,9 @@ import java.nio.ByteBuffer;
 public class ByteBufferUtil {
     public static Field ADDRESS_FIELD = null;
     public static Field CAPACITY_FIELD = null;
+    public static Field LIMIT_FIELD = null;
+    public static Field POSITION_FIELD = null;
+
     static {
         ByteBuffer direct = ByteBuffer.allocateDirect(1);
         try {
@@ -24,11 +27,27 @@ public class ByteBufferUtil {
         }
 
         try {
+            LIMIT_FIELD = Buffer.class.getDeclaredField("limit");
+            LIMIT_FIELD.setAccessible(true);
+        } catch (Throwable t){
+                // Failed to access the address field.
+            LIMIT_FIELD = null;
+        }
+
+        try {
+            POSITION_FIELD = Buffer.class.getDeclaredField("position");
+            POSITION_FIELD.setAccessible(true);
+        } catch (Throwable t){
+            // Failed to access the address field.
+            POSITION_FIELD = null;
+        }
+
+        try {
             CAPACITY_FIELD = Buffer.class.getDeclaredField("capacity");
             CAPACITY_FIELD.setAccessible(true);
         } catch (Throwable t){
-                // Failed to access the address field.
-                CAPACITY_FIELD = null;
+            // Failed to access the address field.
+            CAPACITY_FIELD = null;
         }
     }
 

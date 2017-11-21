@@ -1,12 +1,52 @@
 package io.joygraph.core.util;
 
+import io.joygraph.core.util.collection.OHCWrapper;
 import io.netty.util.internal.PlatformDependent;
+import sun.misc.Unsafe;
+import sun.misc.VM;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 
 public class DirectByteBufferGrowingOutputStream extends OutputStream {
+
+    private static Unsafe UNSAFE;
+    private static Method UNRESERVE;
+    private static Method RESERVE;
+
+    static {
+        try {
+            Unsafe unsafeInstance = null;
+            for (Field field : Unsafe.class.getDeclaredFields()) {
+                if (field.getType() == Unsafe.class) {
+                    field.setAccessible(true);
+                    unsafeInstance = (Unsafe) field.get(null);
+                    break;
+                }
+            }
+            if (unsafeInstance == null) throw new IllegalStateException("");
+            else UNSAFE = unsafeInstance;
+
+            try {
+                Class<?> bitsClass = Class.forName("java.nio.Bits");
+                UNRESERVE = bitsClass.getDeclaredMethod("unreserveMemory", Long.TYPE, Integer.TYPE);
+                UNRESERVE.setAccessible(true);
+
+                RESERVE = bitsClass.getDeclaredMethod("reserveMemory", Long.TYPE, Integer.TYPE);
+                RESERVE.setAccessible(true);
+
+            } catch (ClassNotFoundException | NoSuchMethodException e) {
+                e.printStackTrace();
+            }
+        } catch (Throwable t) {
+            throw new ExceptionInInitializerError(t);
+        }
+    }
+
 
     protected ByteBuffer buf;
     private static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8;
@@ -82,8 +122,52 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
         throw new UnsupportedOperationException("Unsupported write(int), use write(ByteBuffer)");
     }
 
+    private static void reserveMemory(long size, int cap) {
+        try {
+            RESERVE.invoke(null, size, cap);
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new RuntimeException("reserve failed");
+        }
+    }
+
+    private static void unreserveMemory(long size, int cap) {
+        try {
+            UNRESERVE.invoke(null, size, cap);
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new RuntimeException("unreserve failed");
+        }
+    }
+
     private ByteBuffer allocateDirectBufferZeroed(int capacity) {
-        return ByteBuffer.allocateDirect(capacity);
+        // No cleaner, we just do it ourselves
+        // but still keep track of memory usage
+        boolean pa = VM.isDirectMemoryPageAligned();
+        int ps = UNSAFE.pageSize();
+
+        long size = Math.max(1L, (long)capacity + (pa ? ps : 0));
+        reserveMemory(size, capacity);
+
+        long base = 0;
+        try {
+            base = PlatformDependent.allocateMemory(size);
+        } catch (OutOfMemoryError x) {
+            unreserveMemory(size, capacity);
+            throw x;
+        }
+
+
+        UNSAFE.setMemory(base, size, (byte) 0);
+
+        long address;
+
+        if (pa && (base % ps != 0)) {
+            // Round up to page boundary
+            address = base + ps - (base & (ps - 1));
+        } else {
+            address = base;
+        }
+
+        return OHCWrapper.instantiate(base, address, capacity);
     }
 
     synchronized public void trim() {
@@ -103,7 +187,7 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
     }
 
     synchronized public void destroy() {
-        PlatformDependent.freeDirectBuffer(buf);
+        OHCWrapper.destroy(buf);
     }
 
     public int size() {
