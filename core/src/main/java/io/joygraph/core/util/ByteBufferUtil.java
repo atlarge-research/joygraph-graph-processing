@@ -1,5 +1,6 @@
 package io.joygraph.core.util;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
@@ -9,6 +10,9 @@ public class ByteBufferUtil {
     public static Field CAPACITY_FIELD = null;
     public static Field LIMIT_FIELD = null;
     public static Field POSITION_FIELD = null;
+
+    public static Constructor<? extends ByteBuffer> BBCONSTRUCTOR = null;
+    public static Field ATTFIELD = null;
 
     static {
         ByteBuffer direct = ByteBuffer.allocateDirect(1);
@@ -48,6 +52,21 @@ public class ByteBufferUtil {
         } catch (Throwable t){
             // Failed to access the address field.
             CAPACITY_FIELD = null;
+        }
+
+        try {
+            ATTFIELD = direct.getClass().getDeclaredField("att");
+            ATTFIELD.setAccessible(true);
+        } catch (NoSuchFieldException e) {
+            System.out.println("fuck me");
+            ATTFIELD = null;
+        }
+
+        try {
+            BBCONSTRUCTOR = direct.getClass().getDeclaredConstructor(Long.TYPE, Integer.TYPE, Object.class);
+            BBCONSTRUCTOR.setAccessible(true);
+        } catch (NoSuchMethodException e) {
+            BBCONSTRUCTOR = null;
         }
     }
 

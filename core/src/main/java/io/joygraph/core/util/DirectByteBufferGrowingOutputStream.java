@@ -5,6 +5,7 @@ import io.netty.util.internal.PlatformDependent;
 import sun.misc.Unsafe;
 import sun.misc.VM;
 
+import javax.management.RuntimeErrorException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
@@ -103,7 +104,7 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
         long dstAddress = PlatformDependent.directBufferAddress(byteBuffer);
         PlatformDependent.copyMemory(srcAddress, dstAddress, buf.position());
         byteBuffer.position(buf.position());
-        PlatformDependent.freeDirectBuffer(buf);
+        destroy();
         buf = byteBuffer;
     }
 
@@ -167,7 +168,9 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
             address = base;
         }
 
-        return OHCWrapper.instantiate(base, address, capacity);
+        long[] baseAndSize = {base, size};
+
+        return OHCWrapper.instantiate(baseAndSize, address, capacity);
     }
 
     synchronized public void trim() {
@@ -187,7 +190,26 @@ public class DirectByteBufferGrowingOutputStream extends OutputStream {
     }
 
     synchronized public void destroy() {
-        OHCWrapper.destroy(buf);
+        // check if it has a cleaner... if it does we didn't allocate it. PROBABLY
+
+
+        // since we put base in att, we abuse it to get base addr
+        long[] baseAndSize;
+        try {
+            baseAndSize = (long[]) ByteBufferUtil.ATTFIELD.get(buf);
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException("Should never happen", e);
+        }
+        if (baseAndSize == null) {
+            PlatformDependent.freeDirectBuffer(buf);
+        } else {
+            PlatformDependent.freeMemory(baseAndSize[0]);
+            try {
+                UNRESERVE.invoke(null, baseAndSize[1], buf.capacity());
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                throw new RuntimeException("Should never happen", e);
+            }
+        }
     }
 
     public int size() {

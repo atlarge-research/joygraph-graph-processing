@@ -1,5 +1,5 @@
 package io.joygraph.core.actor.elasticity.policies
-import io.joygraph.core.actor.metrics.{Network, WorkerOperation}
+import io.joygraph.core.actor.metrics._
 import io.joygraph.core.message.AddressPair
 
 import scala.collection.mutable
@@ -15,12 +15,8 @@ class NetworkPolicy extends DefaultAveragingPolicy[Double] {
   }
 
   override protected[this] def individualWorkerValues(step: Int, currentWorkers: Iterable[Int]): Iterable[(Int, Double)] = {
-    // we want to check the average network load going down, so the average network load
-    // we must normalize against the relative load,
-    // so the relative load would be the load of a worker against the maximum load of a worker
-
-    val workerBytesSent = currentWorkers.flatMap { workerId =>
-      // get processing time
+    val workerBytesSent: Iterable[(Int, Double)] = currentWorkers.flatMap { workerId =>
+      // get metrics per worker during a superstep
       val metrics = metricsOf(step, workerId, WorkerOperation.RUN_SUPERSTEP).get
       val bytesSentMetrics = metrics.flatMap {
         case Network(_,_,_, bytesSent) =>
@@ -29,26 +25,29 @@ class NetworkPolicy extends DefaultAveragingPolicy[Double] {
           None
       }
 
+      println(s"worker $workerId got  ${bytesSentMetrics.size} bytesSent entries")
       if (bytesSentMetrics.nonEmpty) {
-        val max = bytesSentMetrics.max
-        val prevValue = bytesSentStepToWorker
-          .getOrElseUpdate(step - 1, mutable.Map.empty[Int, Long])
-          .getOrElse(workerId, 0L)
-        if (max < prevValue) {
-          bytesSentStepToWorker
-            .getOrElseUpdate(step, mutable.Map.empty[Int, Long])
-            .put(workerId, prevValue)
-        } else {
-          bytesSentStepToWorker
-            .getOrElseUpdate(step, mutable.Map.empty[Int, Long])
-            .put(workerId, max)
-        }
-
+        println(s"worker $workerId sent  ${bytesSentMetrics.max} bytes")
+      } else {
+        println(s"worker $workerId didn't have any updates during this step")
       }
 
-      val prevValue: Long = bytesSentStepToWorker
-        .getOrElseUpdate(step - 1, mutable.Map.empty[Int, Long])
-        .getOrElse(workerId, 0L)
+      val prevValue = bytesSentStepToWorker
+      .getOrElseUpdate(step - 1, mutable.Map.empty[Int, Long])
+      .getOrElse(workerId, 0L)
+
+      if (bytesSentMetrics.nonEmpty) {
+        // by definition the current step has >= bytesSent iff it has metrics
+        val max = bytesSentMetrics.max
+        bytesSentStepToWorker
+          .getOrElseUpdate(step, mutable.Map.empty[Int, Long])
+          .put(workerId, max)
+      } else {
+        // it's empty so we should use prev step's value
+        bytesSentStepToWorker
+          .getOrElseUpdate(step, mutable.Map.empty[Int, Long])
+          .put(workerId, prevValue)
+      }
 
       val currentValue: Long = bytesSentStepToWorker
         .getOrElseUpdate(step, mutable.Map.empty[Int, Long])
@@ -56,22 +55,16 @@ class NetworkPolicy extends DefaultAveragingPolicy[Double] {
 
       val diff = currentValue - prevValue
 
-      Some(workerId -> diff)
+      val result = Some(workerId -> diff.toDouble)
+      println(s"$workerId current value: $currentValue prev value: $prevValue")
+      result
     }
 
     if (workerBytesSent.isEmpty) {
       Iterable.empty
     } else {
-      val maxBytesSentByAWorker = workerBytesSent.maxBy(_._2)._2
-      workerBytesSent.map{
-        case (workerId, bytesSent) =>
-          val ratio = if (maxBytesSentByAWorker > 0L) {
-            bytesSent.toDouble / maxBytesSentByAWorker.toDouble
-          } else {
-            0.0
-          }
-          workerId -> ratio
-      }
+      // we want to find the maximum worker traffic
+      workerBytesSent
     }
   }
 

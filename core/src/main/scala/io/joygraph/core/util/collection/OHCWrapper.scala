@@ -11,27 +11,6 @@ import scala.collection.mutable
 
 object OHCWrapper {
 
-  private[this] var byteBufferConstructor : Constructor[ByteBuffer] = _
-  private[this] var dByteBufferAttField : Field = _
-
-  private[this] def initByteBufferAttField : Field = {
-    synchronized{
-      val dbbClass = ByteBuffer.allocateDirect(1).getClass
-      dByteBufferAttField = dbbClass.getDeclaredField("att")
-      dByteBufferAttField.setAccessible(true)
-      dByteBufferAttField
-    }
-  }
-
-  private[this] def initByteBufferConstructor : Constructor[_] = {
-    synchronized{
-      val dbbClass = ByteBuffer.allocateDirect(1).getClass
-      byteBufferConstructor = dbbClass.getDeclaredConstructor(java.lang.Long.TYPE, java.lang.Integer.TYPE, classOf[Object]).asInstanceOf[Constructor[ByteBuffer]]
-      byteBufferConstructor.setAccessible(true)
-      byteBufferConstructor
-    }
-  }
-
   def directBufferAddress(buf : ByteBuffer) : Long = {
     // TODO move netty dependencies out
     PlatformDependent.directBufferAddress(buf)
@@ -41,23 +20,8 @@ object OHCWrapper {
     buf.capacity()
   }
 
-  def instantiate(base : Long, address : Long, capacity : Int) : ByteBuffer = {
-    if (byteBufferConstructor == null) {
-      initByteBufferConstructor
-    }
-
-    byteBufferConstructor.newInstance(Long.box(address), Int.box(capacity), Long.box(base))
-  }
-
-  // don't do this at home, kids!
-  def destroy(byteBuffer : ByteBuffer): Unit = {
-
-    if (dByteBufferAttField == null) {
-      initByteBufferAttField
-    }
-    // since we put base in att, we abuse it to get base addr
-    val baseAddress = dByteBufferAttField.get(byteBuffer).asInstanceOf[java.lang.Long]
-    PlatformDependent.freeMemory(baseAddress)
+  def instantiate(baseAndSize : Array[Long], address : Long, capacity : Int) : ByteBuffer = {
+    ByteBufferUtil.BBCONSTRUCTOR.newInstance(Long.box(address), Int.box(capacity), baseAndSize)
   }
 
   def instantiate(address : Long, capacity : Int, limit : Int, position: Int, buff : ByteBuffer) : ByteBuffer = {
@@ -65,6 +29,9 @@ object OHCWrapper {
     ByteBufferUtil.CAPACITY_FIELD.setInt(buff, capacity)
     ByteBufferUtil.LIMIT_FIELD.setInt(buff, limit)
     ByteBufferUtil.POSITION_FIELD.setInt(buff, position)
+    // TODO add baseandsize
+    // we need it to destroy
+    //
     buff
   }
 }

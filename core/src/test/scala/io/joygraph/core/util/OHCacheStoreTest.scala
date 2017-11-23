@@ -2,6 +2,7 @@ package io.joygraph.core.util
 
 import io.joygraph.core.actor.vertices.impl.serialized.OHCacheSerializedVerticesStore
 import io.joygraph.core.program.Edge
+import io.joygraph.core.util.collection.OHCWrapper
 import org.scalatest.FunSuite
 
 import scala.collection.mutable
@@ -66,5 +67,13 @@ class OHCacheStoreTest extends FunSuite {
 
       }
     }
+  }
+
+  test ("Test some removal") {
+    for (i <- 0 until 10000) {
+      val os = new DirectByteBufferGrowingOutputStream(100000)
+      os.destroy()
+    }
+
   }
 }

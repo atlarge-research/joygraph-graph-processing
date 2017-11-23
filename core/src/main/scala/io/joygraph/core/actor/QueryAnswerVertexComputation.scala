@@ -209,7 +209,7 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
     val answerLatch = answersLatch.get(srcId)
     answerLatch.countDown()
     if (index == 0) { // there is only ONE index 0 due to atomicInteger
-      answersLatch.get(srcId).await()
+      answerLatch.await()
 
       // now we can pass the answers to the vertexComputation
       vertexComputation(srcId, partitionedVerticesStore, reusableVertex, answers)
@@ -317,6 +317,7 @@ class QueryAnswerVertexComputation[I,V,E,S,G,M]
   }
 
   def await(): Boolean = {
+    System.out.println(s"What are we waiting for?: ${vertexAnswers.size()} vertices")
     waitObject.await()
     allHalted
   }
