@@ -9,6 +9,7 @@ GRAPHALYTICS_JOYGRAPH=/home/sietse/Programming/IdeaProjects/graphalytics-platfor
 GRAPHALYTICS_RUNNER_PROJECT=/home/sietse/Programming/IdeaProjects/graphalytics-runner-fork
 #TARGET_SITE=das5tudelft
 TARGET_SITE=das5vu
+#TARGET_SITE=das5lu
 USERNAME=stau
 
 JOYGRAPH_PREBUILT=/var/scratch/${USERNAME}/graphalyticsrunner/app/graphalytics-prebuild/joygraph
@@ -16,7 +17,7 @@ JOYGRAPH_PREBUILT=/var/scratch/${USERNAME}/graphalyticsrunner/app/graphalytics-p
 # create directories
 #ssh ${TARGET_SITE} "mkdir -p /var/scratch/${USERNAME}/graphalyticsrunner/app"
 #ssh ${TARGET_SITE} "mkdir -p /var/scratch/${USERNAME}/graphalyticsrunner/report"
-#ssh ${TARGET_SITE} "mkdir -p /var/scratch/${USERNAME}/graphalyticsrunner/result"
+#ssh ${TARGET_SITE} "mkdir -p /var/scratch/${USERNAME}/graphalyticsrunner/result/tmp"
 #ssh ${TARGET_SITE} "mkdir -p ${JOYGRAPH_PREBUILT}"
 #
 ## create yarn directory
@@ -30,13 +31,13 @@ sbt clean publish publish-local
 cd ${PROGRAMS}
 sbt clean publish publish-local
 
-cd ${GRAPHAYLTICS_DIR}
-git checkout v0.3
-mvn install
-
-cd ${GRAPHALYTICS_PLATFORM_JOYGRAPH}
-git checkout alpha
-mvn clean install -DskipTests
+#cd ${GRAPHAYLTICS_DIR}
+#git checkout v0.3
+#mvn install
+#
+#cd ${GRAPHALYTICS_PLATFORM_JOYGRAPH}
+#git checkout alpha
+#mvn clean install -DskipTests
 
 cd ${GRAPHALYTICS_JOYGRAPH}
 mvn clean package -DskipTests
