@@ -236,6 +236,7 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
           val script =
             s"""
                |import matplotlib.pyplot as plt
+               |import numpy as np
                |
                |x1Supply = $supplyXPyArray
                |y1Supply = $supplyYPyArray
@@ -265,6 +266,10 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
                |
                |ax1.set_ylim([0.0, 21])
                |ax2.set_ylim([0.0, 21])
+               |ax2.yaxis.set_visible(False)
+               |
+               |ax1.grid(color='black', linestyle='--', linewidth=0.01, alpha=0.1)
+               |ax1.yaxis.set_ticks(np.arange(1, 21, 1))
                |
                |ax1.set_xlim([0.0, normMaxX])
                |supAxes.set_xlim([0.0, normMaxX])
