@@ -98,8 +98,11 @@ trait GeneralResultProperties extends BaseResultProperties {
   val machineProcessingTime: Long = machineProcessingTimeCalc() / 1000L
   val machineElasticOverheadTime: Long = machineElasticOverheadCalc() / 1000L
   val superStepTimeSum: Long = superStepTimeSumCalc() / 1000L
+  val elasticTime: Long = elasticTimeCalc() / 1000L
 
-  lazy val performanceMetrics = PerformanceMetric(processingTime, makeSpan, machineTime,
+  lazy val performanceMetrics = PerformanceMetric(processingTime, makeSpan,
+    elasticTime,
+    machineTime,
     vertices / processingTime, edges / processingTime,
     machineElasticOverheadTime,
     superStepTimeSum)
@@ -156,8 +159,11 @@ trait GeneralResultProperties extends BaseResultProperties {
   }
 
   private[this] def timeFromString(line : String) : String = {
+    val warnSec = "[WARN] [SECURITY]"
     if (line.startsWith("[E")) {
       line.substring(9, 32)
+    } else if (line.startsWith(warnSec)) {
+      line.substring(warnSec.length + 1, warnSec.length + 24)
     } else {
       line.substring(8, 31)
     }
@@ -229,6 +235,36 @@ trait GeneralResultProperties extends BaseResultProperties {
     } ++ Iterable(lastTime -> lastDemand)
 
     demands
+  }
+
+  def elasticTimeCalc() : Long = {
+    val reader = metrics.policyMetricsReader
+
+    // get grow or shrink
+    val growShrinks = reader.supplyDemands.flatMap{ x =>
+      val sign = math.signum(x.demand - x.supply)
+      if (sign == 0) {
+        None
+      } else {
+        Some(x.superStep -> (x.supply, x.demand))
+      }
+    }.toMap
+
+    val elasticTimes = for (step <- 0 to reader.totalNumberOfSteps()) yield {
+      val workers = reader.workersForStep(step)
+
+      val longestWorkerTime = growShrinks.get(step) match {
+        case Some(_) =>
+          workers.flatMap { worker =>
+            reader.timeOfOperation(step, worker, WorkerOperation.DISTRIBUTE_DATA)
+          }.max
+        case None =>
+          0
+      }
+      longestWorkerTime
+    }
+
+    elasticTimes.sum
   }
 
   def machineElasticOverheadTimes(): IndexedSeq[Long] = {
@@ -342,7 +378,7 @@ case class ParseResultDirectory(resultsDir : String) {
 }
 
 case class ParseResultDirectories(resultsDirs : Iterable[String]) {
-  val directories: Iterator[Directory] = resultsDirs.map(resultsDir => Directory(Path(resultsDir))).map(_.dirs).reduce(_ ++ _)
+  val directories: Array[Directory] = resultsDirs.map(resultsDir => Directory(Path(resultsDir))).map(_.dirs).reduce(_ ++ _).toArray
   val results: ParMap[(String, String), ParSeq[ExperimentalResult]] = directories.toIndexedSeq.par.flatMap{
     dir => Try[ExperimentalResult] {
       new ExperimentalResult(dir)

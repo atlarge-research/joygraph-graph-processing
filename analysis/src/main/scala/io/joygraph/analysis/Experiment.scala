@@ -237,6 +237,9 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
             s"""
                |import matplotlib.pyplot as plt
                |import numpy as np
+               |import matplotlib
+               |
+               |matplotlib.rcParams.update({'font.size': 28})
                |
                |x1Supply = $supplyXPyArray
                |y1Supply = $supplyYPyArray
@@ -259,9 +262,9 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
                |xTicksSuperStep = [xTicksSuperStep[i] for i in range(len(xTicksSuperStep)) if i % 2 == 0]
                |xTicksSuperStepLabels = [xTicksSuperStepLabels[i] for i in range(len(xTicksSuperStepLabels)) if i % 2 == 0]
                |
-               |fig = plt.figure()
-               |supAxes = fig.add_axes((0.1, 0.1, 0.8, 0.0))
-               |ax1 = fig.add_axes((0.1, 0.2, 0.8, 0.8))
+               |fig = plt.figure(figsize=(7, 7))
+               |supAxes = fig.add_axes((0.2, 0.15, 0.7, 0.0))
+               |ax1 = fig.add_axes((0.2, 0.3, 0.7, 0.7))
                |ax2 = ax1.twinx()
                |
                |ax1.set_ylim([0.0, 21])
@@ -269,13 +272,20 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
                |ax2.yaxis.set_visible(False)
                |
                |ax1.grid(color='black', linestyle='--', linewidth=0.01, alpha=0.1)
-               |ax1.yaxis.set_ticks(np.arange(1, 21, 1))
+               |ax1.yaxis.set_ticks(np.arange(0, 21, 1))
+               |
+               |#disable the labels
+               |for label in ax1.yaxis.get_ticklabels():
+               |    label.set_visible(False)
+               |
+               |for label in [ax1.yaxis.get_ticklabels()[i] for i in range(len(ax1.yaxis.get_ticklabels())) if i % 4 == 0]:
+               |    label.set_visible(True)
                |
                |ax1.set_xlim([0.0, normMaxX])
                |supAxes.set_xlim([0.0, normMaxX])
                |
-               |p1 = ax1.plot(x1Supply, y1Supply)
-               |p2 = ax2.plot(x2Demand, y2Demand, 'r')
+               |p1 = ax1.plot(x1Supply, y1Supply, linewidth=4.0)
+               |p2 = ax2.plot(x2Demand, y2Demand, 'r', linewidth=4.0)
                |
                |ax1.set_xlabel('time (s)')
                |# Make the y-axis label and tick labels match the line color.
@@ -286,6 +296,14 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
                |supAxes.set_xlabel('superstep')
                |supAxes.set_xticks(xTicksSuperStep)
                |supAxes.set_xticklabels(xTicksSuperStepLabels)
+               |
+               |for label in supAxes.xaxis.get_ticklabels():
+               |    label.set_visible(False)
+               |
+               |supAxes.xaxis.get_ticklabels()[0].set_visible(True)
+               |supAxes.xaxis.get_ticklabels()[int(len(xTicksSuperStepLabels) / 2)].set_visible(True)
+               |supAxes.xaxis.get_ticklabels()[-1].set_visible(True)
+               |
                |plt.savefig("$outputPath")
               """.stripMargin
 

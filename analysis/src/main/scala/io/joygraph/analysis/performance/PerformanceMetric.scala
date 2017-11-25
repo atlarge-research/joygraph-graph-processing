@@ -1,12 +1,13 @@
 package io.joygraph.analysis.performance
 
 // all in seconds
-case class PerformanceMetric(processingTime : Long, makeSpan : Long, machineTime : Long, verticesPerSecond : Long, edgesPerSecond: Long, elasticityOverhead : Long, superStepSumTime : Long) {
+case class PerformanceMetric(processingTime : Long, makeSpan : Long, elasticTime : Long, machineTime : Long, verticesPerSecond : Long, edgesPerSecond: Long, elasticityOverhead : Long, superStepSumTime : Long) {
 
   def +=(o : PerformanceMetric) : PerformanceMetric = {
     PerformanceMetric(
       processingTime + o.processingTime,
       makeSpan + o.makeSpan,
+      elasticTime + o.elasticTime,
       machineTime + o.machineTime,
       verticesPerSecond + o.verticesPerSecond,
       edgesPerSecond + o.edgesPerSecond,
@@ -19,6 +20,7 @@ case class PerformanceMetric(processingTime : Long, makeSpan : Long, machineTime
     PerformanceMetric(
       math.min(processingTime, o.processingTime),
       math.min(makeSpan, o.makeSpan),
+      math.min(elasticTime, o.elasticTime),
       math.min(machineTime, o.machineTime),
       math.min(verticesPerSecond, o.verticesPerSecond),
       math.min(edgesPerSecond, o.edgesPerSecond),
@@ -31,6 +33,7 @@ case class PerformanceMetric(processingTime : Long, makeSpan : Long, machineTime
     PerformanceMetric(
       math.max(processingTime, o.processingTime),
       math.max(makeSpan, o.makeSpan),
+      math.max(elasticTime, o.elasticTime),
       math.max(machineTime, o.machineTime),
       math.max(verticesPerSecond, o.verticesPerSecond),
       math.max(edgesPerSecond, o.edgesPerSecond),
@@ -43,6 +46,7 @@ case class PerformanceMetric(processingTime : Long, makeSpan : Long, machineTime
     PerformanceMetric(
       math.abs(processingTime - o.processingTime),
       math.abs(makeSpan - o.makeSpan),
+      math.abs(elasticTime - o.elasticTime),
       math.abs(machineTime - o.machineTime),
       math.abs(verticesPerSecond - o.verticesPerSecond),
       math.abs(edgesPerSecond - o.edgesPerSecond),
@@ -54,6 +58,7 @@ case class PerformanceMetric(processingTime : Long, makeSpan : Long, machineTime
   def normalizeBy(n : Long) = PerformanceMetric(
     processingTime / n,
     makeSpan / n,
+    elasticTime / n,
     machineTime / n,
     verticesPerSecond / n,
     edgesPerSecond / n,
