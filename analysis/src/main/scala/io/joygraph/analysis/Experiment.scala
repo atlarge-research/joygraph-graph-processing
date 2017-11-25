@@ -630,17 +630,22 @@ case class Experiment(dataSet : String, algorithm : String, experimentalResults 
       .algorithm(algorithm)
       .dataSet(dataSet)
 
-    val performanceMetrics = baseLineResults.map(_.performanceMetrics)
-    val meanPerformanceMetric = performanceMetrics.reduce(_ += _).normalizeBy(performanceMetrics.size)
+    val sortedAndGroupedBaseLineResults = baseLineResults.groupBy(_.initialNumberOfWorkers()).toSeq.sortBy(_._1)
+    sortedAndGroupedBaseLineResults.foreach{
+      case (numWorkers, baselineResultsLocal) =>
+        val performanceMetrics = baselineResultsLocal.map(_.performanceMetrics)
+        val meanPerformanceMetric = performanceMetrics.reduce(_ += _).normalizeBy(performanceMetrics.size)
 
-    val numReps = performanceMetrics.length
-    val processingTimes = performanceMetrics.map(_.processingTime)
-    val meanProc = meanPerformanceMetric.processingTime
-    val variance = processingTimes.map(_ - meanProc).map(x => x * x).sum / (numReps - 1).toDouble
-    val deviation = math.sqrt(variance)
-    val coefficientOfVariation = deviation / meanProc
+        val numReps = performanceMetrics.length
+        val processingTimes = performanceMetrics.map(_.processingTime)
+        val meanProc = meanPerformanceMetric.processingTime
+        val variance = processingTimes.map(_ - meanProc).map(x => x * x).sum / (numReps - 1).toDouble
+        val deviation = math.sqrt(variance)
+        val coefficientOfVariation = deviation / meanProc
 
-    builder.result("Baseline", meanPerformanceMetric, coefficientOfVariation)
+        builder.result(s"Baseline ($numWorkers)", meanPerformanceMetric, coefficientOfVariation)
+    }
+
 
     policyGrouped.foreach{
       case (policyName, results) =>

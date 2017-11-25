@@ -90,6 +90,10 @@ trait GeneralResultProperties extends BaseResultProperties {
     }
   )
 
+  def initialNumberOfWorkers() : Int = {
+    metrics.policyMetricsReader.workersForStep(0).size
+  }
+
   val experimentDate: Long = experimentDateCalc()
 
   val (processingTime, makeSpan) = (times.next / 1000L, times.next / 1000L)
